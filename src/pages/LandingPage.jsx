@@ -94,7 +94,7 @@ export default function LandingPage() {
         <h2 className="section-heading">ABOUT</h2>
         <p className="about-text">
           MealSetu Tiffin service is a premium food community committed to providing healthy, 
-          home-cooked meals.
+          home-cooked Mealsetu.
         </p>
       </section>
 
