@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 
 export default function Register() {
+<<<<<<< HEAD
   const [role, setRole] = useState('user'); 
   const [profilePic, setProfilePic] = useState(null); // State for image preview
   const navigate = useNavigate();
@@ -37,11 +38,27 @@ export default function Register() {
   navigate('/login');
 };
   return (
+=======
+  // role can now be 'user', 'vendor', or 'admin'
+  const [role, setRole] = useState('user'); 
+  const navigate = useNavigate();
+
+  const handleRegister = (e) => {
+    e.preventDefault();
+    // Static Redirection for MCA Project Demo
+    alert(`Account created successfully as a ${role.toUpperCase()}! Redirecting to Login...`);
+    navigate('/login');
+  };
+
+  return (
+    /* Dynamic class 'admin-mode' applied when Admin is selected */
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
     <div className={`page-center ${role === 'admin' ? 'admin-mode' : ''}`}>
       <div className="auth-card">
         <h1 className="brand-name">MealSetu</h1>
         <p className="auth-subtitle">Join the platform as a {role}.</p>
 
+<<<<<<< HEAD
         {/* --- CIRCULAR PROFILE UPLOAD START --- */}
         <div style={{ textAlign: 'center', marginBottom: '20px' }}>
           <label htmlFor="regImage" style={{ cursor: 'pointer', position: 'relative', display: 'inline-block' }}>
@@ -78,11 +95,39 @@ export default function Register() {
           <button className={`role-tab ${role === 'user' ? 'active' : ''}`} onClick={() => setRole('user')}>Customer</button>
           <button className={`role-tab ${role === 'vendor' ? 'active' : ''}`} onClick={() => setRole('vendor')}>Vendor</button>
           <button className={`role-tab ${role === 'admin' ? 'active' : ''}`} onClick={() => setRole('admin')}>Admin</button>
+=======
+        {/* Updated Role Selection Toggle with 3 Roles */}
+        <div className="role-container">
+          <button 
+            className={`role-tab ${role === 'user' ? 'active' : ''}`} 
+            onClick={() => setRole('user')}
+          >
+            Customer
+          </button>
+          <button 
+            className={`role-tab ${role === 'vendor' ? 'active' : ''}`} 
+            onClick={() => setRole('vendor')}
+          >
+            Vendor
+          </button>
+          <button 
+            className={`role-tab ${role === 'admin' ? 'active' : ''}`} 
+            onClick={() => setRole('admin')}
+          >
+            Admin
+          </button>
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
         </div>
 
         <form onSubmit={handleRegister}>
           <div className="input-group">
+<<<<<<< HEAD
             <label className="input-label">{role === 'vendor' ? 'Kitchen / Business Name' : 'Full Name'}</label>
+=======
+            <label className="input-label">
+              {role === 'vendor' ? 'Kitchen / Business Name' : 'Full Name'}
+            </label>
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
             <input type="text" className="form-input" placeholder="Enter name" required />
           </div>
 
@@ -91,6 +136,10 @@ export default function Register() {
             <input type="email" className="form-input" placeholder="name@example.com" required />
           </div>
 
+<<<<<<< HEAD
+=======
+          {/* Conditional Field for Vendors */}
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
           {role === 'vendor' && (
             <div className="input-group">
               <label className="input-label">FSSAI License Number</label>
@@ -98,6 +147,10 @@ export default function Register() {
             </div>
           )}
 
+<<<<<<< HEAD
+=======
+          {/* Conditional Field for Admin (Security Key) */}
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
           {role === 'admin' && (
             <div className="input-group">
               <label className="input-label">Security Access Key</label>
@@ -113,11 +166,22 @@ export default function Register() {
           <button type="submit" className="btn-primary">
             Register {role === 'admin' ? 'System Admin' : 'Account'}
           </button>
+<<<<<<< HEAD
+=======
+
+           
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
         </form>
 
         <p style={{ marginTop: '20px', textAlign: 'center', fontSize: '14px', color: '#64748b' }}>
           Already have an account? {' '}
+<<<<<<< HEAD
           <Link to="/login" style={{ color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none' }}>Login here</Link>
+=======
+          <Link to="/login" style={{ color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none' }}>
+            Login here
+          </Link>
+>>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
         </p>
       </div>
     </div>
