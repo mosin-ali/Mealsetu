@@ -6,7 +6,7 @@ import Register from './pages/Register';
 import UserDashboard from './pages/UserDashboard';
 import VendorDashboard from './pages/VendorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
-
+import OrderPage from './pages/OrderPage';
 function App() {
   return (
     <Router>
@@ -20,6 +20,7 @@ function App() {
         <Route path="/user-dashboard" element={<UserDashboard />} />
         <Route path="/vendor-dashboard" element={<VendorDashboard />} />
         <Route path="/admin-dashboard" element={<AdminDashboard />} />
+         <Route path="/order" element={<OrderPage />} />
       </Routes>
     </Router>
   );

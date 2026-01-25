@@ -42,6 +42,7 @@ export default function LandingPage() {
           <a href="#about">About</a>
           <a href="#gallery">Gallery</a>
           <a href="#contact">Contact Us</a>
+          <Link to="/login" className="nav-login-btn">Login</Link>
         </div>
       </nav>
 
@@ -53,7 +54,7 @@ export default function LandingPage() {
           </div>
           <br />
           <center> 
-            <Link to="/login" className="nav-login-btn">2 Days Free Trial</Link>
+            <Link to="/login" className="nav-free-btn">2 Days Free Trial</Link>
           </center>
         </div>
       </header>
