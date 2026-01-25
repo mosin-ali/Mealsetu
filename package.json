@@ -10,11 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-<<<<<<< HEAD
+
     "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
-=======
->>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
+
+
     "lucide-react": "^0.563.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -1,36 +1,50 @@
-<<<<<<< HEAD
+// 1. ALL imports MUST be at the very top
 import React, { useState, useRef } from 'react'; 
 import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
+// 2. ONLY ONE export default per file
 export default function OrderPage() {
   const navigate = useNavigate();
   const invoiceRef = useRef(); 
   
-  // States
+  // --- All States grouped together ---
   const [step, setStep] = useState(1);
   const [planType, setPlanType] = useState('monthly');
   const [startDate, setStartDate] = useState(''); 
   const [selectedSabji, setSelectedSabji] = useState('Paneer Butter Masala');
   const [paymentMethod, setPaymentMethod] = useState('upi');
   const [isOrdered, setIsOrdered] = useState(false); 
+  const [address, setAddress] = useState({
+    area: 'Auto-detecting...',
+    pincode: '382010',
+    phone: '9876543210'
+  });
 
+  // --- Data Objects ---
   const vendor = {
     name: "Annapurna Kitchen",
     address: "123, Food Street, Himatnagar, Gujarat",
     contact: "+91 98765 43210",
+    fssai: "12345678901234",
     menu: {
       today: ["Paneer Butter Masala", "Dal Fry", "Jeera Rice", "3 Rotis", "Salad"],
-      alternatives: ["Mix Veg", "Aloo Gobhi", "Sev Tameta", "Bhindi Fry"]
+      alternatives: ["Mix Veg", "Aloo Gobhi", "Sev Tameta", "Bhindi Fry"],
+      special: "Gulab Jamun"
     }
   };
 
   const prices = { oneday: 80, weekly: 500, monthly: 2000 };
 
+  // --- Functions ---
+  const handleAutoLocation = () => {
+    alert("Location Detected: Sector 21, Gandhinagar");
+    setAddress({ ...address, area: "Sector 21, Gandhinagar" });
+  };
+
   const handleDownloadPDF = async () => {
     const element = invoiceRef.current;
-    // Higher scale (3) ensures the watermark and text are crisp
     const canvas = await html2canvas(element, { scale: 3 });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
@@ -40,50 +54,12 @@ export default function OrderPage() {
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
     pdf.save(`MealSetu_Bill_${Date.now()}.pdf`);
     alert("Official Bill Downloaded!");
-=======
-// 1. IMPORT useState HERE
-import React, { useState } from 'react'; 
-import { useNavigate } from 'react-router-dom';
-
-export default function OrderPage() {
-  const navigate = useNavigate();
-  
-  // 2. Now this line will work perfectly
-  const [step, setStep] = useState(1);
-  const [planType, setPlanType] = useState('monthly');
-  const [startDate, setStartDate] = useState(''); 
-  const [preferences, setPreferences] = useState({
-    jain: false,
-    noGarlic: false,
-    alterSabji: false
-  });
-  const [address, setAddress] = useState({
-    area: 'Auto-detecting...',
-    pincode: '382010',
-    phone: '9876543210'
-  });
-
-  // Mock Vendor Data
-  const vendor = {
-    name: "Annapurna Kitchen",
-    fssai: "12345678901234",
-    menu: {
-      today: ["Paneer Butter Masala", "Dal Fry", "Jeera Rice", "3 Rotis", "Salad"],
-      special: "Gulab Jamun"
-    }
-  };
-
-  const handleAutoLocation = () => {
-    alert("Location Detected: Sector 21, Gandhinagar");
-    setAddress({ ...address, area: "Sector 21, Gandhinagar" });
->>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
   };
 
   return (
     <div className="page-bg">
       <div className="order-container">
-        
-<<<<<<< HEAD
+        {/* Header */}
         <div className="order-header">
           <button 
             onClick={() => isOrdered ? setIsOrdered(false) : (step === 1 ? navigate('/user-dashboard') : setStep(step - 1))} 
@@ -96,6 +72,7 @@ export default function OrderPage() {
 
         <div className="order-content">
           {isOrdered ? (
+            /* SUCCESS VIEW */
             <div style={{ textAlign: 'center', padding: '40px 20px' }}>
               <div style={{ fontSize: '60px', color: '#22c55e', marginBottom: '20px' }}>✅</div>
               <h2 style={{ marginBottom: '10px' }}>Payment Successful!</h2>
@@ -110,6 +87,7 @@ export default function OrderPage() {
               </button>
             </div>
           ) : (
+            /* STEPPER VIEW */
             <>
               <div className="progress-bar">
                 <div className={`step ${step >= 1 ? 'active' : ''}`}>1. Plan</div>
@@ -180,39 +158,25 @@ export default function OrderPage() {
         </div>
       </div>
 
-      {/* --- IMPROVED INVOICE TEMPLATE WITH DARKER WATERMARK --- */}
+      {/* --- HIDDEN INVOICE TEMPLATE FOR PDF GENERATION --- */}
       <div style={{ position: 'absolute', left: '-9999px' }}>
         <div ref={invoiceRef} style={{ width: '210mm', minHeight: '297mm', padding: '20mm', background: 'white', position: 'relative', color: '#333', fontFamily: 'Arial' }}>
           
-          {/* DARKER WATERMARK */}
-          <div style={{ 
-            position: 'absolute', 
-            top: '50%', 
-            left: '50%', 
-            transform: 'translate(-50%, -50%) rotate(-45deg)', 
-            fontSize: '90px', 
-            color: 'rgba(0, 0, 0, 0.12)', // Increased opacity for a darker look
-            zIndex: 0, 
-            fontWeight: '900', 
-            pointerEvents: 'none',
-            whiteSpace: 'nowrap',
-            border: '10px solid rgba(0, 0, 0, 0.08)',
-            padding: '20px'
-          }}>
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%) rotate(-45deg)', fontSize: '90px', color: 'rgba(0, 0, 0, 0.12)', zIndex: 0, fontWeight: '900', pointerEvents: 'none', whiteSpace: 'nowrap', border: '10px solid rgba(0, 0, 0, 0.08)', padding: '20px' }}>
             MEALSETU OFFICIAL
           </div>
 
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-               <div>
-                 <h1 style={{ color: '#f26522', margin: 0, fontSize: '40px' }}>MealSetu</h1>
-                 <p style={{ margin: 0, fontSize: '14px', color: '#666' }}>Quality Food, Delivered with Care</p>
-               </div>
-               <div style={{ textAlign: 'right' }}>
-                 <h2 style={{ margin: 0, color: '#444' }}>TAX INVOICE</h2>
-                 <p style={{ margin: 0 }}><b>Invoice #:</b> MS-{Math.floor(1000 + Math.random()*9000)}</p>
-                 <p style={{ margin: 0 }}><b>Date:</b> {new Date().toLocaleDateString()}</p>
-               </div>
+                <div>
+                  <h1 style={{ color: '#f26522', margin: 0, fontSize: '40px' }}>MealSetu</h1>
+                  <p style={{ margin: 0, fontSize: '14px', color: '#666' }}>Quality Food, Delivered with Care</p>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <h2 style={{ margin: 0, color: '#444' }}>TAX INVOICE</h2>
+                  <p style={{ margin: 0 }}><b>Invoice #:</b> MS-{Math.floor(1000 + Math.random()*9000)}</p>
+                  <p style={{ margin: 0 }}><b>Date:</b> {new Date().toLocaleDateString()}</p>
+                </div>
             </div>
             
             <hr style={{ margin: '20px 0', border: '0.5px solid #ddd' }} />
@@ -256,9 +220,6 @@ export default function OrderPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}>
                   <span>Subtotal:</span><span>₹{prices[planType]}.00</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #eee' }}>
-                  <span>Tax (0%):</span><span>₹0.00</span>
-                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', color: '#f26522', fontWeight: 'bold', fontSize: '20px' }}>
                   <span>Grand Total:</span><span>₹{prices[planType]}.00</span>
                 </div>
@@ -267,78 +228,8 @@ export default function OrderPage() {
 
             <div style={{ marginTop: '100px', textAlign: 'center', fontSize: '12px', color: '#888', borderTop: '1px solid #eee', paddingTop: '20px' }}>
               <p>Thank you for using MealSetu. This is a computer-generated receipt.</p>
-              <p style={{ fontWeight: 'bold' }}>MealSetu - Connecting Hearts through Tiffins</p>
             </div>
           </div>
-=======
-        {/* Header */}
-        <div className="order-header">
-          <button onClick={() => navigate('/user-dashboard')} className="back-btn">← Back</button>
-          <h2>Order from {vendor.name}</h2>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="progress-bar">
-          <div className={`step ${step >= 1 ? 'active' : ''}`}>1. Menu</div>
-          <div className={`step ${step >= 2 ? 'active' : ''}`}>2. Plan</div>
-          <div className={`step ${step >= 3 ? 'active' : ''}`}>3. Payment</div>
-        </div>
-
-        <div className="order-content">
-          
-          {/* STEP 1: MENU */}
-          {step === 1 && (
-            <div className="step-content">
-              <h3>Today's Menu</h3>
-              <div className="menu-card">
-                <ul>{vendor.menu.today.map((item, i) => <li key={i}>{item}</li>)}</ul>
-                <div className="special-item">Special: {vendor.menu.special}</div>
-              </div>
-              <button className="btn-primary full-width" onClick={() => setStep(2)}>Next: Select Plan</button>
-            </div>
-          )}
-
-          {/* STEP 2: PLAN & DATE */}
-          {step === 2 && (
-            <div className="step-content">
-              <h3>Select Plan</h3>
-              <div className="plan-options">
-                <button className={`plan-card ${planType === 'monthly' ? 'selected' : ''}`} onClick={() => setPlanType('monthly')}>
-                  <h4>Monthly</h4><p>₹2400</p>
-                </button>
-                <button className={`plan-card ${planType === 'weekly' ? 'selected' : ''}`} onClick={() => setPlanType('weekly')}>
-                  <h4>Weekly</h4><p>₹700</p>
-                </button>
-              </div>
-
-              <div className="input-group">
-                <label>Start Date</label>
-                {/* 3. This input uses the state */}
-                <input 
-                  type="date" 
-                  className="form-input" 
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)} 
-                />
-              </div>
-
-              <button className="btn-primary full-width" onClick={() => setStep(3)}>Next: Payment</button>
-            </div>
-          )}
-
-          {/* STEP 3: PAYMENT */}
-          {step === 3 && (
-            <div className="step-content">
-              <h3>Payment Summary</h3>
-              <div className="summary-box">
-                <div className="row"><span>Total</span><span>₹2400</span></div>
-              </div>
-              <button className="btn-primary full-width" onClick={() => alert("Order Placed Successfully!")}>
-                Pay Now
-              </button>
-            </div>
-          )}
->>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
         </div>
       </div>
     </div>

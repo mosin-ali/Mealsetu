@@ -7,10 +7,7 @@ import UserDashboard from './pages/UserDashboard';
 import VendorDashboard from './pages/VendorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import OrderPage from './pages/OrderPage';
-<<<<<<< HEAD
-=======
 
->>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
 function App() {
   return (
     <Router>
@@ -24,11 +21,11 @@ function App() {
         <Route path="/user-dashboard" element={<UserDashboard />} />
         <Route path="/vendor-dashboard" element={<VendorDashboard />} />
         <Route path="/admin-dashboard" element={<AdminDashboard />} />
-<<<<<<< HEAD
+
          <Route path="/order" element={<OrderPage />} />
-=======
+
         <Route path="/order" element={<OrderPage />} />
->>>>>>> 60e34e24bf17a8a4c7a18ec8c59b0351036d0460
+
       </Routes>
     </Router>
   );
