@@ -8,7 +8,7 @@ export default function UserDashboard() {
   const [user, setUser] = useState({
     name: localStorage.getItem('userName') || "Mosin Ali",
     email: localStorage.getItem('userEmail') || "mosin@example.com",
-    phone: "9876543210",
+    phone: localStorage.getItem('userPhone') || "9876543210", // Added Phone to state
     address: "Himatnagar, Gujarat",
     pincode: "383001",
     profilePic: localStorage.getItem('userAvatar') || "https://via.placeholder.com/150",
@@ -31,6 +31,10 @@ export default function UserDashboard() {
   const [otpInput, setOtpInput] = useState('');
   const [generatedOtp, setGeneratedOtp] = useState('');
 
+
+  
+  
+
   // FEATURE STATE: ACTIVE TAB
   const [activeTab, setActiveTab] = useState('services'); 
 
@@ -41,7 +45,27 @@ export default function UserDashboard() {
 
   // --- FUNCTIONS ---
 
-  // NEW: INVOICE DOWNLOAD LOGIC
+  // Handle Photo Change
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setUser({ ...user, profilePic: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveProfile = () => {
+    localStorage.setItem('userName', user.name);
+    localStorage.setItem('userEmail', user.email);
+    localStorage.setItem('userPhone', user.phone);
+    localStorage.setItem('userAvatar', user.profilePic);
+    setShowProfileModal(false);
+    alert("Profile updated successfully!");
+  };
+
   const handleDownloadInvoice = (historyItem) => {
     const invoiceContent = `
       INVOICE - MealSetu
@@ -165,8 +189,10 @@ export default function UserDashboard() {
     { id: 'MS-9921', date: '2026-01-20', plan: 'Monthly', amount: 2000, status: 'Paid' },
   ];
 
-  const offers = [
-    { code: 'MEALSETU20', desc: '20% OFF on first Monthly Plan', color: '#f26522' },
+  const offersList = [
+    { code: 'MEALSETU20', desc: 'Get 20% OFF on your first Monthly Plan subscription.', color: '#f26522', tag: 'Limited Time' },
+    { code: 'WELCOMESETU', desc: 'Flat ₹100 discount on your very first order over ₹500.', color: '#16a34a', tag: 'New User' },
+    { code: 'WEEKEND50', desc: 'Enjoy 50% discount on every Sunday dinner tiffin.', color: '#334155', tag: 'Special' },
   ];
 
   return (
@@ -208,6 +234,7 @@ export default function UserDashboard() {
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
             <button className="btn-primary" style={{ width: 'auto', padding: '10px 20px' }} onClick={handleAutoLocation}>📍 Detect Location</button>
             <button className="tag" style={securityBtnStyle} onClick={() => { setForgotStep('login'); setShowPasswordModal(true); }}>Security Settings</button>
+            
           </div>
         </div>
 
@@ -219,14 +246,12 @@ export default function UserDashboard() {
                 <div style={{ fontSize: '40px' }}>🍱</div>
                 <h3>{t.name}</h3>
                 <p style={{ color: '#64748b' }}>{t.type} • ⭐ {t.rating}</p>
-                
                 <button 
                    style={{ background: 'none', border: 'none', color: '#f26522', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px', marginBottom: '10px' }}
                    onClick={() => { setSelectedVendor(t); setShowAllReviewsModal(true); }}
                 >
                   View {t.reviews.length} Reviews
                 </button>
-
                 <div style={{ margin: '10px 0', fontSize: '12px', color: '#475569', background: '#f1f5f9', padding: '8px', borderRadius: '8px' }}>
                   <div>📅 {t.workingDays}</div>
                   <div>⏰ {t.timings}</div>
@@ -239,6 +264,7 @@ export default function UserDashboard() {
           </div>
         )}
 
+        {/* ... Other Tabs remain same ... */}
         {activeTab === 'subscription' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={contentCardStyle}>
@@ -249,7 +275,6 @@ export default function UserDashboard() {
               </div>
               <button className="btn-primary" style={{ marginTop: '15px', width: '100%' }} onClick={handleExtendSubscription}>🚀 Extend Subscription</button>
             </div>
-
             <div style={contentCardStyle}>
               <h3>Schedule Leave / Pause</h3>
               <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
@@ -307,9 +332,91 @@ export default function UserDashboard() {
             </table>
           </div>
         )}
+
+        {activeTab === 'offers' && (
+          <div style={gridStyle}>
+            {offersList.map((offer, idx) => (
+              <div key={idx} style={{ ...contentCardStyle, borderLeft: `6px solid ${offer.color}`, position: 'relative' }}>
+                <span style={{ 
+                  position: 'absolute', top: '15px', right: '15px', 
+                  fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase',
+                  background: offer.color, color: 'white', padding: '2px 8px', borderRadius: '5px' 
+                }}>{offer.tag}</span>
+                <h2 style={{ color: offer.color, margin: '0 0 10px 0' }}>{offer.code}</h2>
+                <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>{offer.desc}</p>
+                <button 
+                  className="btn-primary" 
+                  style={{ background: offer.color, width: 'auto', padding: '8px 20px', fontSize: '13px' }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(offer.code);
+                    alert(`Promo code ${offer.code} copied to clipboard!`);
+                  }}
+                >
+                  📋 Copy Code
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'safety' && (
+          <div style={contentCardStyle}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>🛡️ Safety & Hygiene Protocols</h3>
+            <p style={{ color: '#64748b' }}>Your health is our priority. MealSetu ensures all vendors follow strict safety standards.</p>
+            <div style={{ marginTop: '20px' }}>
+              <div style={{ padding: '15px', background: '#f0fdf4', borderRadius: '12px', marginBottom: '10px', border: '1px solid #16a34a' }}>
+                <strong style={{ color: '#16a34a' }}>✓ FSSAI Verified Kitchens</strong>
+                <p style={{ margin: '5px 0 0 0', fontSize: '13px' }}>Every tiffin provider on our platform is licensed by the Food Safety and Standards Authority of India.</p>
+              </div>
+              <div style={{ padding: '15px', background: '#f8fafc', borderRadius: '12px', marginBottom: '10px', border: '1px solid #e2e8f0' }}>
+                <strong>✓ Daily Sanitization</strong>
+                <p style={{ margin: '5px 0 0 0', fontSize: '13px' }}>Kitchens are cleaned and sanitized twice daily to ensure a germ-free environment.</p>
+              </div>
+              <div style={{ padding: '15px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <strong>✓ Temperature Checks</strong>
+                <p style={{ margin: '5px 0 0 0', fontSize: '13px' }}>Delivery staff and kitchen members undergo regular temperature screenings.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* --- MODALS --- */}
+      
+      {/* UPDATED EDIT PROFILE MODAL */}
+      {showProfileModal && (
+        <div style={modalOverlayStyle}>
+          <div style={{...modalContentStyle, maxWidth: '450px'}}>
+            <h3 style={{ marginBottom: '20px', textAlign: 'center' }}>Edit Profile</h3>
+            
+            {/* Profile Picture Upload Display */}
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <img src={user.profilePic} style={{ width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #f26522', marginBottom: '10px' }} alt="Avatar Preview" />
+              <label style={{ display: 'block', fontSize: '12px', color: '#f26522', cursor: 'pointer', fontWeight: 'bold' }}>
+                Change Photo
+                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhotoChange} />
+              </label>
+            </div>
+
+            <label style={labelStyle}>Full Name</label>
+            <input type="text" style={inputStyle} value={user.name} onChange={(e) => setUser({...user, name: e.target.value})} placeholder="Enter Full Name" />
+            
+            <label style={labelStyle}>Email Address</label>
+            <input type="email" style={inputStyle} value={user.email} onChange={(e) => setUser({...user, email: e.target.value})} placeholder="Enter Email" />
+
+            <label style={labelStyle}>Phone Number</label>
+            <input type="tel" style={inputStyle} value={user.phone} onChange={(e) => setUser({...user, phone: e.target.value})} placeholder="Enter Phone Number" />
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={handleSaveProfile}>Save Changes</button>
+              <button className="tag" style={{ flex: 1, border: '1px solid #ddd' }} onClick={() => setShowProfileModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OTHER MODALS ... */}
       {showAllReviewsModal && (
         <div style={modalOverlayStyle}>
           <div style={{...modalContentStyle, maxWidth: '500px'}}>
@@ -345,17 +452,6 @@ export default function UserDashboard() {
               <button className="btn-primary" style={{ flex: 2 }} onClick={submitReview}>Submit</button>
               <button className="tag" style={{ flex: 1 }} onClick={() => setShowReviewModal(false)}>Cancel</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {showProfileModal && (
-        <div style={modalOverlayStyle}>
-          <div style={modalContentStyle}>
-            <h3>Edit Profile</h3>
-            <input type="text" style={inputStyle} value={user.name} onChange={(e) => setUser({...user, name: e.target.value})} />
-            <input type="email" style={inputStyle} value={user.email} onChange={(e) => setUser({...user, email: e.target.value})} />
-            <button className="btn-primary" style={{ width: '100%' }} onClick={() => setShowProfileModal(false)}>Save Changes</button>
           </div>
         </div>
       )}
