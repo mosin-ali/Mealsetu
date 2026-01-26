@@ -23,14 +23,26 @@ export default function UserDashboard() {
   const [mealType, setMealType] = useState('both'); 
 
   // MODAL & OTP STATES
+  // const [showProfileModal, setShowProfileModal] = useState(false);
+  // const [showPasswordModal, setShowPasswordModal] = useState(false);
+  // const [showReviewModal, setShowReviewModal] = useState(false);
+  // const [showAllReviewsModal, setShowAllReviewsModal] = useState(false);
+  // const [forgotStep, setForgotStep] = useState('login'); 
+  // const [otpInput, setOtpInput] = useState('');
+  // const [generatedOtp, setGeneratedOtp] = useState('');
+
+  
+// MODAL & OTP STATES
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showAllReviewsModal, setShowAllReviewsModal] = useState(false);
+  
+  // IMPLEMENTED FORGOT PASSWORD STATES
   const [forgotStep, setForgotStep] = useState('login'); 
   const [otpInput, setOtpInput] = useState('');
   const [generatedOtp, setGeneratedOtp] = useState('');
-
+  const [newPass, setNewPass] = useState('');
 
   
   
@@ -87,6 +99,34 @@ export default function UserDashboard() {
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+  };
+
+  // --- FORGOT PASSWORD NEW FUNCTIONS ---
+  const sendEmailOtp = () => {
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    setGeneratedOtp(otp);
+    alert(`OTP sent to ${user.email}: ${otp}`); // Simulating Email send
+    setForgotStep('otp');
+  };
+
+  const verifyOtp = () => {
+    if(otpInput === generatedOtp) {
+        setForgotStep('create');
+    } else {
+        alert("Invalid OTP! Please check again.");
+    }
+  };
+
+  const finalizeNewPassword = () => {
+    if(newPass.length < 6) {
+        alert("Password too short!");
+        return;
+    }
+    alert("Password updated successfully via Email OTP!");
+    setShowPasswordModal(false);
+    setForgotStep('login');
+    setNewPass('');
+    setOtpInput('');
   };
 
   const handleApplyLeave = () => {
@@ -456,7 +496,7 @@ export default function UserDashboard() {
         </div>
       )}
 
-      {showPasswordModal && (
+      {/* {showPasswordModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3>Security Settings</h3>
@@ -464,6 +504,46 @@ export default function UserDashboard() {
             <input type="password" style={inputStyle} placeholder="New Password" />
             <button className="btn-primary" style={{ width: '100%' }} onClick={() => setShowPasswordModal(false)}>Update</button>
             <button className="tag" style={{ width: '100%', marginTop: '10px' }} onClick={() => setShowPasswordModal(false)}>Close</button>
+          </div>
+        </div>
+      )} */}
+  {/* UPDATED SECURITY MODAL WITH FORGOT PASSWORD IMPLEMENTATION */}
+      {showPasswordModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={{textAlign: 'center', marginBottom: '15px'}}>Security Settings</h3>
+            
+            {forgotStep === 'login' && (
+                <>
+                    <input type="password" style={inputStyle} placeholder="Current Password" />
+                    <input type="password" style={inputStyle} placeholder="New Password" />
+                    <button className="btn-primary" style={{ width: '100%' }} onClick={() => setShowPasswordModal(false)}>Update</button>
+                    <button 
+                        style={{background:'none', border:'none', color:'#f26522', cursor:'pointer', display:'block', margin:'10px auto', fontSize:'13px', textDecoration:'underline'}}
+                        onClick={sendEmailOtp}
+                    >
+                        Forgot Password? (Email OTP)
+                    </button>
+                </>
+            )}
+
+            {forgotStep === 'otp' && (
+                <>
+                    <p style={{fontSize:'13px', textAlign:'center'}}>Enter OTP sent to {user.email}</p>
+                    <input type="text" style={{...inputStyle, textAlign:'center', letterSpacing:'5px'}} maxLength="4" value={otpInput} onChange={(e)=>setOtpInput(e.target.value)} placeholder="0000" />
+                    <button className="btn-primary" style={{ width: '100%' }} onClick={verifyOtp}>Verify OTP</button>
+                </>
+            )}
+
+            {forgotStep === 'create' && (
+                <>
+                    <p style={{fontSize:'13px', textAlign:'center'}}>Create New Password</p>
+                    <input type="password" style={inputStyle} value={newPass} onChange={(e)=>setNewPass(e.target.value)} placeholder="New Password" />
+                    <button className="btn-primary" style={{ width: '100%', background:'#16a34a' }} onClick={finalizeNewPassword}>Save New Password</button>
+                </>
+            )}
+
+            <button className="tag" style={{ width: '100%', marginTop: '10px' }} onClick={() => {setShowPasswordModal(false); setForgotStep('login');}}>Close</button>
           </div>
         </div>
       )}
