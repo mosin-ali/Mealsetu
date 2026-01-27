@@ -249,11 +249,11 @@ export default function UserDashboard() {
           </div>
         </div>
         <nav style={sidebarNavStyle}>
-          <button style={activeTab === 'services' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('services')}>🍱 Order Meals</button>
-          <button style={activeTab === 'subscription' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('subscription')}>⏳ Subscription</button>
-          <button style={activeTab === 'history' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('history')}>📜 History</button>
-          <button style={activeTab === 'offers' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('offers')}>🎁 Offers</button>
-          <button style={activeTab === 'safety' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('safety')}>🛡️ Safety</button>
+          <button style={activeTab === 'services' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('services')}> Order Meals</button>
+          <button style={activeTab === 'subscription' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('subscription')}> Subscription</button>
+          <button style={activeTab === 'history' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('history')}> History</button>
+          <button style={activeTab === 'offers' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('offers')}> Offers</button>
+          <button style={activeTab === 'safety' ? sidebarActiveTab : sidebarTab} onClick={() => setActiveTab('safety')}> Safety</button>
           <div style={{ marginTop: 'auto', paddingBottom: '20px' }}>
             <button style={sidebarLogoutBtn} onClick={handleLogout}>Logout</button>
           </div>
@@ -272,7 +272,7 @@ export default function UserDashboard() {
              </div>
           </div>
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button className="btn-primary" style={{ width: 'auto', padding: '10px 20px' }} onClick={handleAutoLocation}>📍 Detect Location</button>
+            <button className="btn-primary" style={{ width: 'auto', padding: '10px 20px' }} onClick={handleAutoLocation}> Detect Location</button>
             <button className="tag" style={securityBtnStyle} onClick={() => { setForgotStep('login'); setShowPasswordModal(true); }}>Security Settings</button>
             
           </div>
@@ -293,8 +293,8 @@ export default function UserDashboard() {
                   View {t.reviews.length} Reviews
                 </button>
                 <div style={{ margin: '10px 0', fontSize: '12px', color: '#475569', background: '#f1f5f9', padding: '8px', borderRadius: '8px' }}>
-                  <div>📅 {t.workingDays}</div>
-                  <div>⏰ {t.timings}</div>
+                  <div> {t.workingDays}</div>
+                  <div> {t.timings}</div>
                 </div>
                 <h4 style={{ color: '#f26522' }}>₹{t.price} / meal</h4>
                 <button className="btn-primary" style={{ width: '100%', marginBottom: '10px' }} onClick={() => navigate('/order')}>Order Now</button>
@@ -313,7 +313,7 @@ export default function UserDashboard() {
                 <p style={{ color: '#64748b', marginBottom: '5px' }}>Subscription Valid Until</p>
                 <h2 style={{ margin: 0, color: '#f26522' }}>{user.expiryDate}</h2>
               </div>
-              <button className="btn-primary" style={{ marginTop: '15px', width: '100%' }} onClick={handleExtendSubscription}>🚀 Extend Subscription</button>
+              <button className="btn-primary" style={{ marginTop: '15px', width: '100%' }} onClick={handleExtendSubscription}> Extend Subscription</button>
             </div>
             <div style={contentCardStyle}>
               <h3>Schedule Leave / Pause</h3>
@@ -333,7 +333,7 @@ export default function UserDashboard() {
                 <option value="lunch">Lunch Only</option>
                 <option value="dinner">Dinner Only</option>
               </select>
-              <button className="btn-primary" style={{ width: '100%', background: '#334155' }} onClick={handleApplyLeave}>⏸️ Apply Leave & Extend Plan</button>
+              <button className="btn-primary" style={{ width: '100%', background: '#334155' }} onClick={handleApplyLeave}>⏸ Apply Leave & Extend Plan</button>
             </div>
           </div>
         )}
@@ -363,7 +363,7 @@ export default function UserDashboard() {
                         style={{ background: '#f26522', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '5px', cursor: 'pointer', fontSize: '12px' }}
                         onClick={() => handleDownloadInvoice(h)}
                       >
-                        📥 Download
+                         Download
                       </button>
                     </td>
                   </tr>
@@ -392,7 +392,7 @@ export default function UserDashboard() {
                     alert(`Promo code ${offer.code} copied to clipboard!`);
                   }}
                 >
-                  📋 Copy Code
+                   Copy Code
                 </button>
               </div>
             ))}
@@ -401,7 +401,7 @@ export default function UserDashboard() {
 
         {activeTab === 'safety' && (
           <div style={contentCardStyle}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>🛡️ Safety & Hygiene Protocols</h3>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}> Safety & Hygiene Protocols</h3>
             <p style={{ color: '#64748b' }}>Your health is our priority. MealSetu ensures all vendors follow strict safety standards.</p>
             <div style={{ marginTop: '20px' }}>
               <div style={{ padding: '15px', background: '#f0fdf4', borderRadius: '12px', marginBottom: '10px', border: '1px solid #16a34a' }}>

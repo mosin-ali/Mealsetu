@@ -31,7 +31,7 @@ const VendorDashboard = () => {
       { id: 1, name: "Mosin Ali", phone: "+91 98XXX-X0010", plan: "Monthly", expiry: "2026-02-15", pref: "No Garlic" },
       { id: 2, name: "Priya Sharma", phone: "+91 91XXX-X5521", plan: "Weekly", expiry: "2026-01-28", pref: "Regular" },
       { id: 3, name: "Rahul Varma", phone: "+91 88XXX-X9910", plan: "Monthly", expiry: "2026-01-24", pref: "Jain" },
-      { id: 4, name: "Sneha Kapur", phone: "+91 77XXX-X2233", plan: "Trial", expiry: "2026-01-30", pref: "Swaminarayan" },
+      { id: 4, name: "Sneha Kapur", phone: "+91 77XXX-X2233", plan: "Trial", expiry: "2026-01-30", pref: "jain" },
     ];
     const today = new Date("2026-01-26"); 
     return customers.map(sub => {
@@ -142,7 +142,7 @@ const VendorDashboard = () => {
                 </div>
                 <div>
                     <h2 style={{ margin: 0, color: '#2b3674' }}>{profile.kitchenName}</h2>
-                    <p style={{ margin: '5px 0 0 0', color: '#a3aed0', fontSize: '14px' }}>📍 {profile.address}</p>
+                    <p style={{ margin: '5px 0 0 0', color: '#a3aed0', fontSize: '14px' }}> {profile.address}</p>
                 </div>
             </div>
 
@@ -172,7 +172,7 @@ const VendorDashboard = () => {
                 <hr style={{ border: 'none', borderTop: '1px solid #f4f7fe', margin: '15px 0' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}><span>Regular Thali</span><span style={{ fontWeight: '700' }}>52</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}><span>Jain Thali</span><span style={{ fontWeight: '700' }}>24</span></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}><span>Swaminarayan Thali</span><span style={{ fontWeight: '700' }}>9</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}><span></span><span style={{ fontWeight: '700' }}>9</span></div>
               </div>
               <div className="v-card">
                 <h3>Kitchen Status</h3>
@@ -201,7 +201,7 @@ const VendorDashboard = () => {
               <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Main Sabji</label><input className="v-input" placeholder="e.g. Paneer Butter Masala" /></div>
               <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Alternative Sabji</label><input className="v-input" placeholder="e.g. Mix Veg Fry" /></div>
               <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Sweet Item</label><input className="v-input" placeholder="e.g. Gulab Jamun" /></div>
-              <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Dietary Category</label><select className="v-input"><option>Regular</option><option>Jain</option><option>Swaminarayan</option></select></div>
+              <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Dietary Category</label><select className="v-input"><option>Regular</option><option>Jain</option></select></div>
             </div>
             <button className="v-nav-btn" style={{ background: '#f26522', color: 'white', width: 'auto', padding: '15px 40px', marginTop: '30px', justifyContent: 'center' }}>Update {menuCycle} Menu</button>
           </div>
@@ -360,15 +360,15 @@ const VendorDashboard = () => {
       <aside className="v-sidebar">
         <h2 style={{ color: '#f26522', fontWeight: '800', marginBottom: '30px' }}>MealSetu</h2>
         <nav style={{ flex: 1 }}>
-          <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Overview</button>
-          <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}>🍴 Menu Planner</button>
-          <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}>📦 Order Tracking</button>
-          <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>👥 My Customers</button>
-          <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}>📜 Reports & PDF</button>
+          <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Overview</button>
+          <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}> Menu Planner</button>
+          <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}> Order Tracking</button>
+          <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}> My Customers</button>
+          <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}> Reports & PDF</button>
           {/* NEW BUTTONS ADDED TO SIDEBAR */}
-          <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}>⭐ Reviews</button>
-          <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}>📜 Compliance</button>
-          <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}>⚙️ Edit Profile</button>
+          <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}> Reviews</button>
+          <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}> Compliance</button>
+          <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}> Edit Profile</button>
         </nav>
         <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>🚪 Logout Session</button>
       </aside>
