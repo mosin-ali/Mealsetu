@@ -1,69 +1,120 @@
+/* Sidebar Container */
 .sidebar {
   width: 260px;
-  background: white;
+  background: #ffffff;
   height: 100vh;
-  box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
+/* --- HEADER SECTION --- */
 .sidebar-header {
-  padding: 20px;
-  text-align: center;
+  padding: 30px 20px 10px 20px; /* Top, Right, Bottom, Left */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
 }
 
+/* Logo Title */
 .sidebar-title {
   color: #f26522;
+  font-size: 28px;
   font-weight: 800;
-  margin-bottom: 30px;
+  margin: 0 0 25px 0; /* Space between logo and profile */
+  letter-spacing: -0.5px;
+  text-transform: uppercase;
 }
 
+/* Profile Container */
 .sidebar-profile {
-  margin-bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+  margin-bottom: 20px;
 }
 
+/* Avatar Image - Double Border Effect */
 .sidebar-avatar {
-  width: 80px;
-  height: 80px;
+  width: 90px;
+  height: 90px;
   border-radius: 50%;
   object-fit: cover;
-  border: 3px solid #f26522;
+  /* Creates the white gap + orange ring effect */
+  border: 4px solid #ffffff; 
+  outline: 3px solid #f26522;
+  box-shadow: 0 8px 20px rgba(242, 101, 34, 0.2);
+  margin-bottom: 15px;
+  transition: transform 0.3s ease;
 }
 
+.sidebar-avatar:hover {
+  transform: scale(1.05);
+}
+
+/* User Name */
 .sidebar-profile h4 {
-  margin: 10px 0 5px 0;
+  margin: 5px 0;
+  color: #1e293b;
+  font-size: 18px;
+  font-weight: 700;
 }
 
+/* Edit Profile Link */
 .edit-profile-link {
-  background: none;
+  background: transparent;
   border: none;
-  color: #f26522;
-  cursor: pointer;
+  color: #94a3b8;
   font-size: 13px;
-  font-weight: bold;
-  text-decoration: underline;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 15px;
+  transition: all 0.2s ease;
+  text-decoration: none; /* Removed underline for cleaner look */
 }
 
+.edit-profile-link:hover {
+  color: #f26522;
+  background-color: #fff3ed;
+}
+
+/* --- NAVIGATION SECTION --- */
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  padding: 0 15px;
+  padding: 10px 15px;
   flex: 1;
+  overflow-y: auto; /* Scroll if menu is long */
 }
 
 .sidebar-tab {
-  padding: 12px 20px;
-  margin: 5px 0;
+  padding: 14px 20px;
+  margin: 4px 0;
   border: none;
-  background: none;
+  background: transparent;
   text-align: left;
   color: #64748b;
   cursor: pointer;
   font-weight: 600;
-  border-radius: 10px;
   font-size: 15px;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-tab:hover {
+  background: #f8fafc;
+  color: #f26522;
+  padding-left: 25px; /* Slight movement effect */
 }
 
 .sidebar-tab.active {
@@ -71,18 +122,25 @@
   color: #f26522;
 }
 
+/* --- FOOTER --- */
 .sidebar-footer {
-  margin-top: auto;
-  padding-bottom: 20px;
+  padding: 20px;
+  border-top: 1px solid #f1f5f9;
 }
 
 .sidebar-logout {
-  padding: 12px 20px;
+  padding: 14px;
   width: 100%;
   border: none;
   background: #334155;
   color: white;
-  border-radius: 10px;
+  border-radius: 12px;
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.2s;
+}
+
+.sidebar-logout:hover {
+  background: #1e293b;
+  box-shadow: 0 4px 12px rgba(51, 65, 85, 0.3);
 }
