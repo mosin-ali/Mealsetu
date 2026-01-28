@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
 import AdminSidebar from "../components/dashboard/admin/AdminSidebar";
-import VendorRequests from '../components/dashboard/admin/VendorRequests';
+import VendorManagement from '../components/dashboard/admin/VendorManagement';
+import UserManagement from '../components/dashboard/admin/UserManagement';
+import Reports from '../components/dashboard/admin/Reports';
+import AdminProfile from '../components/dashboard/admin/AdminProfile';
 import './AdminDashboard.css';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('requests');
 
-  const vendors = [
-    { id: 1, name: 'Annapurna Kitchen', fssai: '12456789012345' }
-  ];
+  const [vendors, setVendors] = useState([
+    { id: 1, name: 'Annapurna Kitchen', fssai: '12456789012345', status: 'pending' },
+    { id: 2, name: 'Tasty Bites', fssai: '98765432109876', status: 'pending' }
+  ]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -19,19 +23,31 @@ export default function AdminDashboard() {
   };
 
   const handleApprove = (vendorId) => {
+    setVendors(vendors.map(vendor =>
+      vendor.id === vendorId ? { ...vendor, status: 'approved' } : vendor
+    ));
     alert(`Vendor ${vendorId} approved!`);
+  };
+
+  const handleReject = (vendorId) => {
+    setVendors(vendors.map(vendor =>
+      vendor.id === vendorId ? { ...vendor, status: 'rejected' } : vendor
+    ));
+    alert(`Vendor ${vendorId} rejected!`);
   };
 
   const renderContent = () => {
     switch (activeTab) {
       case 'requests':
-        return <VendorRequests vendors={vendors} onApprove={handleApprove} />;
+        return <VendorManagement />;
       case 'users':
-        return <div>User Management - Coming Soon</div>;
+        return <UserManagement />;
       case 'commission':
-        return <div>Commission Setup - Coming Soon</div>;
+        return <Reports />;
+      case 'profile':
+        return <AdminProfile />;
       default:
-        return <VendorRequests vendors={vendors} onApprove={handleApprove} />;
+        return <VendorManagement />;
     }
   };
 
