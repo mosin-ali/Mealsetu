@@ -1,0 +1,42 @@
+.offers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 25px;
+}
+
+.offer-card {
+  background: white;
+  padding: 25px;
+  border-radius: 20px;
+  border: 1px solid #eef2f6;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+  position: relative;
+}
+
+.orange-border {
+  border-left: 6px solid #f26522;
+}
+
+.green-border {
+  border-left: 6px solid #16a34a;
+}
+
+.gray-border {
+  border-left: 6px solid #334155;
+}
+
+.offer-tag {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+
+.copy-btn {
+  cursor: pointer;
+}

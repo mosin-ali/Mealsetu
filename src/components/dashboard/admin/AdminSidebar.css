@@ -1,0 +1,38 @@
+.admin-sidebar {
+  background: #0f172a;
+  width: 260px;
+  padding: 30px 20px;
+  color: white;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-title {
+  color: #3b82f6;
+  margin-bottom: 40px;
+  font-weight: 800;
+}
+
+.admin-nav {
+  flex: 1;
+}
+
+.admin-nav-item {
+  margin-bottom: 15px;
+  cursor: pointer;
+  padding: 10px 0;
+  opacity: 0.7;
+  transition: opacity 0.3s;
+}
+
+.admin-nav-item:hover,
+.admin-nav-item.active {
+  opacity: 1;
+}
+
+.admin-logout {
+  color: #f87171;
+  cursor: pointer;
+  margin-top: auto;
+}

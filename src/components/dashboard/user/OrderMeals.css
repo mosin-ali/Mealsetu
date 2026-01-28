@@ -1,0 +1,76 @@
+.order-meals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 25px;
+}
+
+.meal-card {
+  background: white;
+  padding: 20px;
+  border-radius: 20px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+  text-align: center;
+  border: 1px solid #f1f5f9;
+  position: relative;
+}
+
+.fssai-badge {
+  background: #f0fdf4;
+  color: #16a34a;
+  border-bottom: 1px solid #16a34a;
+  padding: 5px;
+  font-weight: bold;
+  font-size: 10px;
+  margin-bottom: 10px;
+}
+
+.meal-icon {
+  font-size: 40px;
+}
+
+.meal-card h3 {
+  margin: 10px 0;
+}
+
+.meal-type {
+  color: #64748b;
+  margin-bottom: 10px;
+}
+
+.view-reviews-link {
+  background: none;
+  border: none;
+  color: #f26522;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.meal-details {
+  margin: 10px 0;
+  font-size: 12px;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.meal-price {
+  color: #f26522;
+  margin: 10px 0;
+}
+
+.order-btn {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.write-review-btn {
+  background: none;
+  border: none;
+  color: #f26522;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+}
