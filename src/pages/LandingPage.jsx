@@ -1,15 +1,29 @@
-import React, { useState } from 'react'; // Added useState
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import './LandingPage.css';
+
+// 1. Import your banner image
+import heroBannerImg from './image/image.png'; 
 
 export default function LandingPage() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Sidebar state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Function to close sidebar when a link is clicked
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+
+  // 2. Define the inline style for the banner
+  const bannerStyle = {
+    height: '100vh',
+    background: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${heroBannerImg})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  };
 
   return (
     <div className="landing-wrapper">
-      {/* SIDEBAR MENU (New Additive Section) */}
+      {/* SIDEBAR MENU */}
       <div className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} onClick={toggleSidebar}>
         <div className="sidebar-menu" onClick={(e) => e.stopPropagation()}>
           <div className="sidebar-header">
@@ -31,7 +45,6 @@ export default function LandingPage() {
       {/* HEADER / NAV */}
       <nav className="landing-nav">
         <div className="logo-section">
-          {/* Hamburger Icon to open Sidebar */}
           <button className="menu-toggle-btn" onClick={toggleSidebar}>
             ☰
           </button>
@@ -42,26 +55,19 @@ export default function LandingPage() {
           <a href="#about">About</a>
           <a href="#gallery">Gallery</a>
           <a href="#contact">Contact Us</a>
-
           <Link to="/login" className="nav-login-btn">Login</Link>
-
-
         </div>
       </nav>
 
-      {/* HERO SECTION */}
-      <header id="home" className="hero-banner">
+      {/* HERO SECTION - Updated with bannerStyle */}
+      <header id="home" style={bannerStyle}>
         <div className="hero-content">
           <div className="hero-text-bg">
-            <h1>Mealsetu from tiffin Service Management</h1>
+            <h1>Mealsetu tiffin Service </h1>
           </div>
           <br />
           <center> 
-
             <Link to="/login" className="nav-free-btn">2 Days Free Trial</Link>
-
-            
-
           </center>
         </div>
       </header>
@@ -78,7 +84,6 @@ export default function LandingPage() {
 
       {/* GALLERY & CONTACT WRAPPER */}
       <div className="flex-container">
-        {/* PHOTO GALLERY */}
         <section id="gallery" className="sub-section">
           <h2 className="section-heading">PHOTO GALLERY</h2>
           <div className="image-gallery">
@@ -88,7 +93,6 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* CONTACT US */}
         <section id="contact" className="sub-section">
           <h2 className="section-heading">CONTACT US</h2>
           <div className="contact-grid">

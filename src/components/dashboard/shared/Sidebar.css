@@ -144,3 +144,63 @@
   background: #1e293b;
   box-shadow: 0 4px 12px rgba(51, 65, 85, 0.3);
 }
+/* src/components/dashboard/shared/Sidebar.css */
+.sidebar-container {
+  width: 280px;
+  background: var(--sidebar-navy);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  padding: 40px 0;
+  position: relative;
+}
+
+.sidebar-logo {
+  padding: 0 30px;
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--primary-orange);
+  margin-bottom: 50px;
+  letter-spacing: -1px;
+}
+
+.sidebar-user-section {
+  padding: 0 30px 40px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 30px;
+}
+
+.sidebar-link {
+  padding: 14px 30px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  color: #94a3b8;
+  text-decoration: none;
+  font-weight: 500;
+  transition: 0.3s;
+  border-left: 4px solid transparent;
+}
+
+.sidebar-link:hover,
+.sidebar-link.active {
+  color: white;
+  background: rgba(242, 101, 34, 0.1);
+  border-left-color: var(--primary-orange);
+}
+
+.logout-container {
+  margin-top: auto;
+  padding: 20px 30px;
+}
+
+.logout-btn {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f87171;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: bold;
+}
