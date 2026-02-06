@@ -19,6 +19,8 @@ const menuSchema = new mongoose.Schema({
     type: String, 
     enum: ['Daily', 'Weekly'] 
   }
+  ,
+  isLive: { type: Boolean, default: true }
 });
 
 module.exports = mongoose.model('Menu', menuSchema);

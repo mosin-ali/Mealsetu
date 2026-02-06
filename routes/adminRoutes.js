@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getPendingVendors, updateVendorStatus, getAllUsers } = require('../controllers/adminController');
+const { getPlatformSettings, updateCommissionRate, getPendingVendors, updateVendorStatus, getAllUsers } = require('../controllers/adminController');
 
 const router = express.Router();
 
@@ -8,6 +8,8 @@ const router = express.Router();
 router.use(protect);
 router.use(authorize('admin'));
 
+router.get('/settings', getPlatformSettings);
+router.put('/settings/commission', updateCommissionRate);
 router.get('/vendors/pending', getPendingVendors);
 router.put('/vendors/:id/status', updateVendorStatus);
 router.get('/users', getAllUsers);

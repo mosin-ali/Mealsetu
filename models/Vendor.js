@@ -25,6 +25,12 @@ const vendorSchema = new mongoose.Schema({
   submittedDate: { type: Date, default: Date.now },
   
   walletBalance: { type: Number, default: 0 } // Stores "Pending Payout"
+  ,
+  // Optional display fields
+  menuPrice: { type: Number, default: 80 },
+  rating: { type: Number, default: 4.5 },
+  workingDays: { type: String, default: 'Mon - Sat' },
+  timings: { type: String, default: '11:00 AM - 09:00 PM' }
 });
 
 module.exports = mongoose.model('Vendor', vendorSchema);

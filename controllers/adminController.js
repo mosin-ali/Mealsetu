@@ -1,5 +1,38 @@
 const Vendor = require('../models/Vendor');
 const User = require('../models/User');
+const PlatformSetting = require('../models/PlatformSetting');
+
+// @desc    Get platform settings (commission rate, etc)
+// @route   GET /api/admin/settings
+const getPlatformSettings = async (req, res) => {
+  try {
+    let settings = await PlatformSetting.findOne();
+    if (!settings) {
+      settings = await PlatformSetting.create({ commissionRate: 10 });
+    }
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Update commission rate
+// @route   PUT /api/admin/settings/commission
+const updateCommissionRate = async (req, res) => {
+  try {
+    const { commissionRate } = req.body;
+    let settings = await PlatformSetting.findOne();
+    if (!settings) {
+      settings = await PlatformSetting.create({ commissionRate });
+    } else {
+      settings.commissionRate = commissionRate;
+      await settings.save();
+    }
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
 
 // @desc    Get all Vendor Requests (Pending)
 // @route   GET /api/admin/vendors/pending
@@ -41,4 +74,4 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-module.exports = { getPendingVendors, updateVendorStatus, getAllUsers };
+module.exports = { getPlatformSettings, updateCommissionRate, getPendingVendors, updateVendorStatus, getAllUsers };

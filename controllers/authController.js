@@ -83,31 +83,46 @@ const registerUser = async (req, res) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 const loginUser = async (req, res) => {
-  const { email, password, role } = req.body;
+  const { email, password, role, adminKey } = req.body;
 
   try {
+    // Validate inputs
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
     const user = await User.findOne({ email });
 
-    if (user && (await bcrypt.compare(password, user.password))) {
-        
-        // Ensure user is logging in with correct role
-        if (user.role !== role) {
-            return res.status(401).json({ message: `Please login via the ${user.role} portal.` });
-        }
-
-        res.json({
-            _id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            profilePic: user.profilePic,
-            token: generateToken(user._id, user.role),
-        });
-    } else {
-        res.status(401).json({ message: 'Invalid email or password' });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
+
+    // Check if role matches
+    if (user.role !== role) {
+      return res.status(401).json({ message: `This account is registered as ${user.role}. Please login via the ${user.role} portal.` });
+    }
+
+    // If admin, verify admin key
+    if (role === 'admin' && adminKey !== 'admin123') {
+      return res.status(401).json({ message: 'Invalid admin key' });
+    }
+
+    // Generate token and return user data
+    const token = generateToken(user._id, user.role);
+    
+    res.status(200).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      profilePic: user.profilePic,
+      token: token,
+      message: 'Login successful'
+    });
+
   } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error during login' });
   }
 };
 
