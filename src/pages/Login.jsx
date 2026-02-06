@@ -1,21 +1,80 @@
-import React, { useState, useRef } from 'react'; // Added useRef
+import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import './Login.css';
 
 export default function Login() {
   const [role, setRole] = useState('user');
+  const [email, setEmail] = useState(''); // Added state for email
+  const [password, setPassword] = useState(''); // Added state for password
+  const [adminKey, setAdminKey] = useState(''); // Admin key field
   const [showForgot, setShowForgot] = useState(false);
   const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
 
   // Refs for OTP auto-focus
   const otpRefs = [useRef(), useRef(), useRef(), useRef()];
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (role === 'admin') navigate('/admin-dashboard');
-    else if (role === 'vendor') navigate('/vendor-dashboard');
-    else navigate('/user-dashboard');
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      // Prepare request body
+      const body = { email, password, role };
+      if (role === 'admin') {
+        body.adminKey = adminKey;
+      }
+
+      // Make the API call to your backend
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body), 
+      });
+
+      const data = await response.json();
+      console.log('Login response:', data); // Debug log
+
+      if (response.ok && data.token) {
+        // 1. Store the token
+        localStorage.setItem('token', data.token);
+        
+        // 2. Store user data
+        const userData = {
+          _id: data._id,
+          name: data.name,
+          email: data.email,
+          role: data.role,
+          profilePic: data.profilePic
+        };
+        localStorage.setItem('user', JSON.stringify(userData));
+
+        // 3. Show success
+        console.log('Login successful, redirecting...');
+
+        // 4. Navigate based on role
+        if (role === 'admin') {
+          navigate('/admin-dashboard');
+        } else if (role === 'vendor') {
+          navigate('/vendor-dashboard');
+        } else {
+          navigate('/user-dashboard');
+        }
+      } else {
+        // Handle backend errors
+        setErrorMsg(data.message || "Login failed. Please check your credentials.");
+      }
+    } catch (error) {
+      console.error("Login Error:", error);
+      setErrorMsg("Unable to connect to the server. Is the backend running?");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Logic to move cursor to next box
@@ -40,14 +99,43 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleLogin}>
+          {errorMsg && (
+            <div style={{
+              backgroundColor: '#fee',
+              color: '#c33',
+              padding: '10px',
+              borderRadius: '4px',
+              marginBottom: '15px',
+              fontSize: '14px'
+            }}>
+              {errorMsg}
+            </div>
+          )}
+
           <div className="input-group">
             <label className="input-label">Email Address</label>
-            <input type="email" className="form-input" placeholder="e.g. user@gmail.com" required />
+            <input 
+              type="email" 
+              className="form-input" 
+              placeholder="e.g. user@gmail.com" 
+              required 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+            />
           </div>
           
           <div className="input-group">
             <label className="input-label">Password</label>
-            <input type="password" className="form-input" placeholder="••••••••" required />
+            <input 
+              type="password" 
+              className="form-input" 
+              placeholder="••••••••" 
+              required 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={loading}
+            />
             
             {/* Moved Forgot Password below the field */}
             {role !== 'admin' && (
@@ -62,8 +150,23 @@ export default function Login() {
             )}
           </div>
 
-          <button type="submit" className="btn-primary">
-            {role === 'admin' ? 'Authorize Login' : 'Sign In'}
+          {role === 'admin' && (
+            <div className="input-group">
+              <label className="input-label">Admin Key</label>
+              <input 
+                type="password" 
+                className="form-input" 
+                placeholder="Enter admin key" 
+                required 
+                value={adminKey}
+                onChange={(e) => setAdminKey(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+          )}
+
+          <button type="submit" className="btn-primary" disabled={loading}>
+            {loading ? 'Logging in...' : (role === 'admin' ? 'Authorize Login' : 'Sign In')}
           </button>
         </form>
 

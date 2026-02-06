@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AdminSidebar from "../components/dashboard/admin/AdminSidebar";
 import VendorManagement from '../components/dashboard/admin/VendorManagement';
 import UserManagement from '../components/dashboard/admin/UserManagement';
@@ -8,33 +9,42 @@ import './AdminDashboard.css';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('requests');
+  const [loading, setLoading] = useState(false);
+  const [adminData, setAdminData] = useState(null);
+  const navigate = useNavigate();
 
-  const [vendors, setVendors] = useState([
-    { id: 1, name: 'Annapurna Kitchen', fssai: '12456789012345', status: 'pending' },
-    { id: 2, name: 'Tasty Bites', fssai: '98765432109876', status: 'pending' }
-  ]);
+  // Verify admin is logged in
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+
+    if (!token || !user) {
+      navigate('/login');
+      return;
+    }
+
+    const userData = JSON.parse(user);
+    if (userData.role !== 'admin') {
+      navigate('/');
+      return;
+    }
+
+    setAdminData(userData);
+  }, [navigate]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
   };
 
   const handleLogout = () => {
-    window.location.href = '/login';
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    navigate('/login');
   };
 
-  const handleApprove = (vendorId) => {
-    setVendors(vendors.map(vendor =>
-      vendor.id === vendorId ? { ...vendor, status: 'approved' } : vendor
-    ));
-    alert(`Vendor ${vendorId} approved!`);
-  };
-
-  const handleReject = (vendorId) => {
-    setVendors(vendors.map(vendor =>
-      vendor.id === vendorId ? { ...vendor, status: 'rejected' } : vendor
-    ));
-    alert(`Vendor ${vendorId} rejected!`);
-  };
+  if (!adminData) {
+    return <div>Loading...</div>;
+  }
 
   const renderContent = () => {
     switch (activeTab) {
@@ -52,11 +62,11 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="admin-layout">
+    <div className="admin-dashboard">
       <AdminSidebar activeTab={activeTab} onTabChange={handleTabChange} onLogout={handleLogout} />
-      <main className="admin-main">
+      <div className="admin-content">
         {renderContent()}
-      </main>
+      </div>
     </div>
   );
 }

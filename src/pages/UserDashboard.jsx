@@ -11,24 +11,28 @@ import ProfileModal from '../components/dashboard/user/ProfileModal';
 import ReviewModal from '../components/dashboard/user/ReviewModal';
 import AllReviewsModal from '../components/dashboard/user/AllReviewsModal';
 import PasswordModal from '../components/dashboard/user/PasswordModal';
+import { getCurrentUser, updateUserProfile, changePassword, getUserOrders, getMenus, placeOrder, addReview } from '../utils/api';
 
 export default function UserDashboard() {
   const navigate = useNavigate();
 
   // 1. INITIALIZE STATE
   const [user, setUser] = useState({
-    name: localStorage.getItem('userName') || "Mosin Ali",
-    email: localStorage.getItem('userEmail') || "mosin@example.com",
-    phone: localStorage.getItem('userPhone') || "9876543210",
-    address:localStorage.getItem('address')|| "Himatnagr , Gujarat",
-    pincode:localStorage.getItem('pincode')||"3830010",
-    // address: "Himatnagar, Gujarat",
-    // pincode: "383001",
-    profilePic: localStorage.getItem('userAvatar') || "https://via.placeholder.com/150",
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    pincode: "",
+    profilePic: "https://via.placeholder.com/150",
     autoRenew: false,
-    expiryDate: localStorage.getItem('expiryDate') || "2026-03-15",
-    pausedDays: JSON.parse(localStorage.getItem('pausedDates')) || []
+    expiryDate: "2026-03-15",
+    pausedDays: []
   });
+
+  const [orders, setOrders] = useState([]);
+  const [tiffins, setTiffins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   // LEAVE FORM STATE
   const [leaveStart, setLeaveStart] = useState('');
@@ -49,6 +53,66 @@ export default function UserDashboard() {
   const [userRating, setUserRating] = useState(5);
   const [userComment, setUserComment] = useState("");
 
+  // Load user data on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+
+    if (!token || !userData) {
+      navigate('/login');
+      return;
+    }
+
+    const parsedUser = JSON.parse(userData);
+    if (parsedUser.role !== 'user') {
+      navigate('/');
+      return;
+    }
+
+    fetchUserData();
+  }, [navigate]);
+
+  const fetchUserData = async () => {
+    try {
+      setLoading(true);
+      const userData = await getCurrentUser();
+      setUser({
+        ...user,
+        ...userData,
+        pausedDays: user.pausedDays
+      });
+      
+      const userOrders = await getUserOrders();
+      setOrders(userOrders || []);
+      try {
+        const menus = await getMenus();
+        // Map menus to tiffins UI shape
+        const mapped = (menus || []).map(m => {
+          // Backend returns vendor-enriched fields already (vendorId may be an id string)
+          return {
+            vendorId: m.vendorId || null,
+            name: m.kitchenName || (m.vendorId && m.vendorId.kitchenName) || 'Partner Kitchen',
+            price: m.menuPrice || m.price || 80,
+            rating: m.rating || 4.5,
+            type: m.dietaryCategory || 'Regular',
+            fssai: m.fssaiNumber || '',
+            workingDays: m.workingDays || 'Mon - Sat',
+            timings: m.timings || '11:00 AM - 9:00 PM',
+            reviews: []
+          };
+        });
+        if (mapped.length > 0) setTiffins(mapped);
+      } catch (e) {
+        console.warn('Failed to load menus', e);
+      }
+    } catch (err) {
+      console.error('Error fetching user data:', err);
+      setError('Failed to load user data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // --- FUNCTIONS ---
 
   // Handle Photo Change
@@ -63,14 +127,18 @@ export default function UserDashboard() {
     }
   };
 
-  const handleSaveProfile = (profileData) => {
-    setUser({ ...user, ...profileData });
-    localStorage.setItem('userName', profileData.name);
-    localStorage.setItem('userEmail', profileData.email);
-    localStorage.setItem('userPhone', profileData.phone);
-    localStorage.setItem('userAvatar', user.profilePic);
-    setShowProfileModal(false);
-    alert("Profile updated successfully!");
+  const handleSaveProfile = async (profileData) => {
+    try {
+      const userData = JSON.parse(localStorage.getItem('user'));
+      const updated = await updateUserProfile(userData._id, profileData);
+      setUser({ ...user, ...updated });
+      localStorage.setItem('user', JSON.stringify(updated));
+      setShowProfileModal(false);
+      alert("Profile updated successfully!");
+    } catch (err) {
+      console.error('Error updating profile:', err);
+      alert('Failed to update profile: ' + err.message);
+    }
   };
 
   const handleDownloadInvoice = (historyItem) => {
@@ -142,7 +210,11 @@ export default function UserDashboard() {
     }
   };
 
-  const handleLogout = () => navigate('/login');
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    navigate('/login');
+  };
 
   const handleAutoLocation = () => {
     setUser({ ...user, address: "Detecting...", pincode: "..." });
@@ -152,9 +224,37 @@ export default function UserDashboard() {
   };
 
   const submitReview = (vendor, rating, comment) => {
-    alert(`Review for ${vendor.name} submitted!`);
-    setShowReviewModal(false);
-    setUserComment("");
+    (async () => {
+      try {
+        await addReview(vendor.vendorId || vendor.vendorId || vendor._id || vendor.id, rating, comment);
+        alert('Review submitted');
+        setShowReviewModal(false);
+        setUserComment('');
+      } catch (e) {
+        alert('Failed to submit review: ' + e.message);
+      }
+    })();
+  };
+
+  const handleOrder = async (vendor) => {
+    try {
+      const vendorId = vendor.vendorId || vendor._id || vendor.id;
+      if (!vendorId) return alert('Unable to place order: missing vendor id');
+
+      const amount = parseInt(vendor.price || vendor.menuPrice || 80, 10);
+      if (!amount || amount <= 0) return alert('Unable to place order: invalid amount');
+
+      // Ensure mealPreference matches backend enum: 'Regular' or 'Jain'
+      const mealPrefRaw = (vendor.type || '').toString();
+      const mealPreference = /jain/i.test(mealPrefRaw) ? 'Jain' : 'Regular';
+      await placeOrder(vendorId, [], amount, 'Lunch', mealPreference);
+      alert('Order placed successfully');
+      const userOrders = await getUserOrders();
+      setOrders(userOrders || []);
+    } catch (e) {
+      // If backend returned structured error, show it
+      alert('Failed to place order: ' + (e.message || JSON.stringify(e)));
+    }
   };
 
   const handleExtendSubscription = () => {
@@ -167,35 +267,7 @@ export default function UserDashboard() {
   };
 
   // --- DATA ---
-  const tiffins = [
-    {
-      name: "Annapurna Kitchen",
-      price: "80",
-      rating: "4.8",
-      type: "Pure Veg",
-      fssai: "20240011002233",
-      workingDays: "Mon - Sat",
-      timings: "11:00 AM - 10:00 PM",
-      reviews: [
-        { user: "Rahul", comment: "Excellent home taste!", stars: 5 },
-        { user: "Sonal", comment: "Very hygienic and fresh.", stars: 4 },
-        { user: "Deepak", comment: "Good portion size.", stars: 5 }
-      ]
-    },
-    {
-      name: "Mom's Magic",
-      price: "100",
-      rating: "4.9",
-      type: "Veg/Jain",
-      fssai: "20240055006677",
-      workingDays: "All Days",
-      timings: "09:00 AM - 09:00 PM",
-      reviews: [
-        { user: "Amit", comment: "The Jain food is amazing.", stars: 5 },
-        { user: "Priya", comment: "Tastes just like home.", stars: 5 }
-      ]
-    }
-  ];
+  // All tiffin/menu data now comes from backend via `tiffins` state
 
   const paymentHistory = [
     { id: 'MS-9921', date: '2026-01-20', plan: 'Monthly', amount: 2000, status: 'Paid' },
@@ -221,6 +293,14 @@ export default function UserDashboard() {
     onEditProfile: () => setShowProfileModal(true)
   };
 
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>Loading...</div>;
+  }
+
+  if (error) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', color: 'red' }}>Error: {error}</div>;
+  }
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'sans-serif' }}>
       <Sidebar
@@ -243,7 +323,7 @@ export default function UserDashboard() {
         {activeTab === 'services' && (
           <OrderMeals
             tiffins={tiffins}
-            onOrder={() => navigate('/order')}
+            onOrder={(vendor) => handleOrder(vendor)}
             onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
             onWriteReview={(vendor) => { setSelectedVendor(vendor); setShowReviewModal(true); }}
           />
@@ -265,7 +345,7 @@ export default function UserDashboard() {
 
         {activeTab === 'history' && (
           <History
-            paymentHistory={paymentHistory}
+            paymentHistory={(orders || []).map(o => ({ id: o._id, date: new Date(o.orderDate).toLocaleDateString('en-IN'), plan: 'Tiffin', amount: o.amount || 0, status: o.paymentStatus || 'Paid' }))}
             onDownloadInvoice={handleDownloadInvoice}
           />
         )}

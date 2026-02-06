@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react'; 
+import React, { useState, useMemo, useEffect } from 'react'; 
 import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './VendorDashboard.css';
+import { getVendorProfile, updateVendorProfile, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports } from '../utils/api';
 
 const VendorDashboard = () => {
   const navigate = useNavigate();
@@ -10,20 +11,87 @@ const VendorDashboard = () => {
   const [kitchenOpen, setKitchenOpen] = useState(true);
   const [menuCycle, setMenuCycle] = useState('Daily');
   const [reportFilter, setReportFilter] = useState('Daily Overview');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // --- NEW STATE HOOKS ADDED ---
-  const [reviews] = useState([
-    { id: 1, user: "Mosin Ali", rating: 5, comment: "Amazing Jain food! Very hygienic.", date: "2026-01-25" },
-    { id: 2, user: "Priya Sharma", rating: 4, comment: "Quantity is good, maybe add more spice?", date: "2026-01-24" }
-  ]);
+  // --- PROFILE STATE ---
+  const [profile, setProfile] = useState({
+    kitchenName: "",
+    address: "",
+    phone: "",
+    image: null 
+  });
+
+  const [reviews, setReviews] = useState([]);
+  const [vendorOrders, setVendorOrders] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [complaints, setComplaints] = useState([]);
 
   const [notifications, setNotifications] = useState([
     { id: 1, text: "New Order received from Aryan Patel!", type: "order" },
     { id: 2, text: "Menu for next week is now live.", type: "menu" }
   ]);
 
-  const [isApproved, setIsApproved] = useState(false); // Admin approval state
+  const [isApproved, setIsApproved] = useState(false);
   const [documents, setDocuments] = useState({ fssai: null, gst: null });
+
+  // Load vendor data on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+
+    if (!token || !userData) {
+      navigate('/login');
+      return;
+    }
+
+    const parsedUser = JSON.parse(userData);
+    if (parsedUser.role !== 'vendor') {
+      navigate('/');
+      return;
+    }
+
+    fetchVendorData();
+  }, [navigate]);
+
+  const fetchVendorData = async () => {
+    try {
+      setLoading(true);
+      const vendorData = await getVendorProfile();
+      setProfile({
+        kitchenName: vendorData.kitchenName,
+        address: vendorData.address,
+        phone: vendorData.ownerId?.phone || "",
+        image: vendorData.profileImage
+      });
+      setIsApproved(vendorData.approvalStatus === 'Approved');
+
+      const orders = await getVendorOrders();
+      setVendorOrders(orders || []);
+
+      const reviewsData = await getVendorReviews();
+      setReviews(reviewsData || []);
+      // customers & complaints
+      try {
+        const cust = await getVendorCustomers();
+        setCustomers(cust || []);
+      } catch (e) {
+        console.warn('Failed to load customers', e);
+      }
+
+      try {
+        const comp = await getVendorComplaints();
+        setComplaints(comp || []);
+      } catch (e) {
+        console.warn('Failed to load complaints', e);
+      }
+    } catch (err) {
+      console.error('Error fetching vendor data:', err);
+      setError('Failed to load vendor data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // --- SUBSCRIPTION DATA GENERATOR ---
   const activeSubscriptions = useMemo(() => {
@@ -51,14 +119,6 @@ const VendorDashboard = () => {
     });
   }, []);
 
-  // --- PROFILE STATE ---
-  const [profile, setProfile] = useState({
-    kitchenName: "Annapurna Home Kitchen",
-    address: "123, Foodie Lane, Near Metro Station, Mumbai",
-    phone: "+91 9876543210",
-    image: null 
-  });
-
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
     setProfile(prev => ({ ...prev, [name]: value }));
@@ -72,6 +132,19 @@ const VendorDashboard = () => {
         setProfile(prev => ({ ...prev, image: reader.result }));
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    try {
+      await updateVendorProfile({
+        kitchenName: profile.kitchenName,
+        address: profile.address,
+        phone: profile.phone
+      });
+      alert('Profile updated successfully!');
+    } catch (err) {
+      alert('Failed to update profile: ' + err.message);
     }
   };
 
@@ -127,6 +200,8 @@ const VendorDashboard = () => {
 
   const handleLogout = () => {
     if (window.confirm("Are you sure you want to logout?")) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
       navigate('/login');
     }
   };
@@ -203,7 +278,17 @@ const VendorDashboard = () => {
               <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Sweet Item</label><input className="v-input" placeholder="e.g. Gulab Jamun" /></div>
               <div><label style={{ fontSize: '14px', fontWeight: '600' }}>Dietary Category</label><select className="v-input"><option>Regular</option><option>Jain</option></select></div>
             </div>
-            <button className="v-nav-btn" style={{ background: '#f26522', color: 'white', width: 'auto', padding: '15px 40px', marginTop: '30px', justifyContent: 'center' }}>Update {menuCycle} Menu</button>
+            <button className="v-nav-btn" style={{ background: '#f26522', color: 'white', width: 'auto', padding: '15px 40px', marginTop: '30px', justifyContent: 'center' }} onClick={async () => {
+              // Build a simple menu payload from inputs
+              const inputs = document.querySelectorAll('.v-card .v-input');
+              const payload = { date: new Date(), mainSabji: inputs[0]?.value || '', altSabji: inputs[1]?.value || '', sweetItem: inputs[2]?.value || '', dietaryCategory: inputs[3]?.value || menuCycle };
+              try {
+                await addMenu(payload);
+                alert('Menu added');
+              } catch (e) {
+                alert('Failed to add menu: ' + e.message);
+              }
+            }}>Update {menuCycle} Menu</button>
           </div>
         );
 
@@ -217,7 +302,24 @@ const VendorDashboard = () => {
             <table className="v-table">
               <thead><tr><th>Order ID</th><th>Customer Name</th><th>Meal Preference</th><th>Delivery Slot</th><th>Status</th></tr></thead>
               <tbody>
-                <tr><td>#MS-771</td><td>Aryan Patel</td><td>Jain</td><td>Today (Lunch)</td><td><span className="status-tag" style={{ background: '#fff3ed', color: '#f26522' }}>In Kitchen</span></td></tr>
+                {vendorOrders.map(o => (
+                  <tr key={o._id}>
+                    <td>#{o._id.slice(-6)}</td>
+                    <td>{o.userId?.name || 'Customer'}</td>
+                    <td>{o.mealPreference}</td>
+                    <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
+                    <td>
+                      <select defaultValue={o.orderStatus} onChange={async (e) => {
+                        try {
+                          await updateOrderStatus(o._id, e.target.value);
+                          fetchVendorData();
+                        } catch (err) { alert('Failed to update order'); }
+                      }}>
+                        {['Preparing','In Kitchen','Out for Delivery','Delivered','Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -231,15 +333,14 @@ const VendorDashboard = () => {
               <div style={{ background: '#fff3ed', color: '#f26522', padding: '5px 15px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>Total: {activeSubscriptions.filter(s => s.status !== "Expired").length}</div>
             </div>
             <table className="v-table">
-              <thead><tr><th>Name</th><th>Contact</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
+              <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Total Orders</th></tr></thead>
               <tbody>
-                {activeSubscriptions.map((sub) => (
-                  <tr key={sub.id}>
-                    <td><div style={{ fontWeight: 'bold' }}>{sub.name}</div><div style={{ fontSize: '11px', color: '#a3aed0' }}>{sub.pref}</div></td>
-                    <td>{sub.phone}</td>
-                    <td><span style={{ background: '#f4f7fe', padding: '4px 8px', borderRadius: '5px', fontSize: '12px' }}>{sub.plan}</span></td>
-                    <td>{new Date(sub.expiry).toLocaleDateString('en-IN')}</td>
-                    <td><span className="status-tag" style={{ background: sub.statusColor + '15', color: sub.statusColor, border: `1px solid ${sub.statusColor}` }}>{sub.status}</span></td>
+                {customers.map((c) => (
+                  <tr key={c._id}>
+                    <td style={{ fontWeight: 'bold' }}>{c.name}</td>
+                    <td>{c.phone}</td>
+                    <td>{c.email}</td>
+                    <td>-</td>
                   </tr>
                 ))}
               </tbody>
@@ -351,9 +452,56 @@ const VendorDashboard = () => {
           </div>
         );
 
+      case 'complaints':
+        return (
+          <div className="v-card">
+            <h3>Customer Complaints</h3>
+            <div style={{ marginTop: '20px' }}>
+              {complaints.length === 0 && <div style={{ color: '#a3aed0' }}>No complaints</div>}
+              {complaints.map(c => (
+                <div key={c._id} style={{ padding: '12px', borderBottom: '1px solid #f4f7fe' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong>{c.userId?.name}</strong>
+                    <span style={{ color: '#a3aed0' }}>{new Date(c.createdAt).toLocaleString()}</span>
+                  </div>
+                  <p style={{ margin: '8px 0' }}>{c.message}</p>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={async () => {
+                      const resp = prompt('Reply to complaint (will mark Resolved):');
+                      if (resp !== null) {
+                        try {
+                          await resolveVendorComplaint(c._id, 'Resolved', resp);
+                          alert('Complaint resolved');
+                          fetchVendorData();
+                        } catch (e) { alert('Failed to resolve'); }
+                      }
+                    }} style={{ background: '#16a34a', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Resolve</button>
+                    <button onClick={async () => {
+                      const resp = prompt('Reject reason (optional):');
+                      try {
+                        await resolveVendorComplaint(c._id, 'Rejected', resp || 'Rejected by vendor');
+                        alert('Complaint rejected');
+                        fetchVendorData();
+                      } catch (e) { alert('Failed to reject'); }
+                    }} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+
       default: return null;
     }
   };
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>Loading vendor data...</div>;
+  }
+
+  if (error) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', color: 'red' }}>Error: {error}</div>;
+  }
 
   return (
     <div className="vendor-container">
@@ -368,6 +516,7 @@ const VendorDashboard = () => {
           {/* NEW BUTTONS ADDED TO SIDEBAR */}
           <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}> Reviews</button>
           <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}> Compliance</button>
+          <button className={`v-nav-btn ${activeTab === 'complaints' ? 'active' : ''}`} onClick={() => setActiveTab('complaints')}> Complaints</button>
           <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}> Edit Profile</button>
         </nav>
         <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>🚪 Logout Session</button>
