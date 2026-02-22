@@ -8,6 +8,7 @@ const subscriptionSchema = new mongoose.Schema({
   planType: { type: String, enum: ['Weekly', 'Monthly', 'Trial'], required: true },
   startDate: { type: Date, required: true },
   expiryDate: { type: Date, required: true },
+  leaveDate: { type: Date }, // Date when leave was marked
   status: { type: String, enum: ['active', 'expired', 'paused'], default: 'active' },
   autoRenew: { type: Boolean, default: false },
 

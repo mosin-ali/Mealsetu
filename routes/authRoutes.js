@@ -1,5 +1,5 @@
 const express = require('express');
-const { registerUser, loginUser } = require('../controllers/authController');
+const { registerUser, loginUser, forgotPassword, resetPassword, sendOTP, verifyOTP, resetPasswordWithOTP } = require('../controllers/authController');
 const upload = require('../middleware/uploadMiddleware');
 const router = express.Router();
 
@@ -12,5 +12,14 @@ const uploadFields = upload.fields([
 
 router.post('/register', uploadFields, registerUser);
 router.post('/login', loginUser);
+
+// OTP-based Password Reset Routes
+router.post('/forgot-password/send-otp', sendOTP);
+router.post('/forgot-password/verify-otp', verifyOTP);
+router.post('/forgot-password/reset-password', resetPasswordWithOTP);
+
+// Legacy routes (kept for backward compatibility)
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password/:token', resetPassword);
 
 module.exports = router;

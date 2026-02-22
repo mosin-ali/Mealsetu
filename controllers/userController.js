@@ -3,14 +3,319 @@ const Order = require('../models/Order');
 const Review = require('../models/Review');
 const Vendor = require('../models/Vendor');
 const User = require('../models/User');
+const Subscription = require('../models/Subscription');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
+
+// Helper function to transform profilePic path to full URL
+const transformProfilePic = (profilePic, protocol, host) => {
+  if (!profilePic) return null;
+  if (profilePic.startsWith('http://') || profilePic.startsWith('https://')) {
+    return profilePic;
+  }
+  return `${protocol}://${host}/${profilePic}`;
+};
+
+// Helper function to send email
+const sendEmail = async (to, subject, html) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      service: process.env.EMAIL_SERVICE || 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      to,
+      subject,
+      html
+    };
+
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error('Email sending error:', error);
+    throw error;
+  }
+};
+
+// @desc    Get user active subscription
+// @route   GET /api/users/subscription
+const getUserSubscription = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    const subscription = await Subscription.findOne({ 
+      userId: userId, 
+      status: 'active' 
+    }).populate('vendorId', 'kitchenName address');
+
+    if (!subscription) {
+      return res.status(404).json({ message: 'No active subscription found' });
+    }
+
+    const now = new Date();
+    const expiryDate = new Date(subscription.expiryDate);
+    const isExpired = expiryDate < now;
+
+    res.json({
+      subscription: subscription,
+      isActive: !isExpired,
+      isExpired: isExpired,
+      daysRemaining: isExpired ? 0 : Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24))
+    });
+  } catch (error) {
+    console.error('Get subscription error:', error);
+    res.status(500).json({ message: 'Error getting subscription', error: error.message });
+  }
+};
+
+// @desc    Apply leave and extend subscription
+// @route   POST /api/users/apply-leave
+const applyLeave = async (req, res) => {
+  try {
+    const { leaveDate, leaveEndDate, mealType } = req.body;
+    const userId = req.user._id;
+
+    if (!leaveDate) {
+      return res.status(400).json({ message: 'Leave date is required' });
+    }
+
+    const subscription = await Subscription.findOne({ 
+      userId: userId, 
+      status: 'active' 
+    });
+
+    if (!subscription) {
+      return res.status(404).json({ message: 'No active subscription found' });
+    }
+
+    const now = new Date();
+    const expiryDate = new Date(subscription.expiryDate);
+    
+    if (expiryDate < now) {
+      return res.status(400).json({ message: 'Cannot apply leave - your subscription has expired. Please renew your subscription first.' });
+    }
+
+    const startDate = new Date(leaveDate);
+    const endDate = leaveEndDate ? new Date(leaveEndDate) : startDate;
+    const diffTime = Math.abs(endDate - startDate);
+    const leaveDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+    const currentExpiry = new Date(subscription.expiryDate);
+    currentExpiry.setDate(currentExpiry.getDate() + leaveDays);
+
+    subscription.leaveDate = startDate;
+    subscription.expiryDate = currentExpiry;
+    await subscription.save();
+
+    const user = await User.findById(userId);
+    if (user) {
+      user.expiryDate = currentExpiry;
+      await user.save();
+
+      const emailSubject = 'MealSetu - Subscription Extended Successfully';
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #333;">Subscription Extended Successfully!</h1>
+          <p>Dear ${user.name},</p>
+          <p>Your leave request has been processed successfully.</p>
+          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
+            <p><strong>Leave Period:</strong> ${startDate.toLocaleDateString()} ${leaveEndDate ? 'to ' + endDate.toLocaleDateString() : ''}</p>
+            <p><strong>Number of Days:</strong> ${leaveDays} day(s)</p>
+            <p><strong>Meals to Skip:</strong> ${mealType === 'both' ? 'Lunch & Dinner' : mealType === 'lunch' ? 'Lunch Only' : 'Dinner Only'}</p>
+            <p><strong>Previous Expiry:</strong> ${expiryDate.toLocaleDateString()}</p>
+            <p><strong>New Expiry Date:</strong> ${currentExpiry.toLocaleDateString()}</p>
+          </div>
+          <p>Your subscription has been extended by ${leaveDays} day(s). Enjoy your break!</p>
+          <hr/>
+          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+        </div>
+      `;
+
+      try {
+        await sendEmail(user.email, emailSubject, emailHtml);
+      } catch (emailError) {
+        console.error('Failed to send confirmation email:', emailError);
+      }
+    }
+
+    res.status(200).json({ 
+      message: 'Subscription extended successfully',
+      newExpiryDate: currentExpiry,
+      leaveDays: leaveDays
+    });
+
+  } catch (error) {
+    console.error('Apply leave error:', error);
+    res.status(500).json({ message: 'Error processing leave request', error: error.message });
+  }
+};
+
+// @desc    Extend subscription (renew)
+// @route   POST /api/users/extend-subscription
+const extendSubscription = async (req, res) => {
+  try {
+    const { plan, vendorId, paymentMethod = 'Cash' } = req.body;
+    const userId = req.user._id;
+
+    if (!plan || !vendorId) {
+      return res.status(400).json({ message: 'Plan and vendorId are required' });
+    }
+
+    // Determine payment status based on payment method
+    const paymentStatus = paymentMethod === 'UPI' ? 'Paid' : 'Pending';
+
+    let durationDays = 1;
+    let planType = 'Trial';
+    let amount = 80;
+
+    switch (plan) {
+      case 'WEEKLY':
+        durationDays = 7;
+        planType = 'Weekly';
+        amount = 560;
+        break;
+      case 'MONTHLY':
+        durationDays = 30;
+        planType = 'Monthly';
+        amount = 2000;
+        break;
+      case 'ONEDAY':
+      default:
+        durationDays = 1;
+        planType = 'Trial';
+        amount = 80;
+        break;
+    }
+
+    // Calculate end date based on plan
+    const startDate = new Date();
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + durationDays);
+
+    const user = await User.findById(userId);
+    const vendor = await Vendor.findById(vendorId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    let subscriptionStartDate = new Date();
+    let newExpiryDate;
+
+    const existingSubscription = await Subscription.findOne({
+      userId: userId,
+      status: 'active'
+    });
+
+    if (existingSubscription) {
+      const currentExpiry = new Date(existingSubscription.expiryDate);
+      const now = new Date();
+      
+      if (currentExpiry < now) {
+        subscriptionStartDate = now;
+        newExpiryDate = new Date(now);
+      } else {
+        newExpiryDate = currentExpiry;
+      }
+      
+      newExpiryDate.setDate(newExpiryDate.getDate() + durationDays);
+      
+      existingSubscription.planType = planType;
+      existingSubscription.expiryDate = newExpiryDate;
+      await existingSubscription.save();
+    } else {
+      newExpiryDate = new Date(subscriptionStartDate);
+      newExpiryDate.setDate(newExpiryDate.getDate() + durationDays);
+
+      await Subscription.create({
+        userId: userId,
+        vendorId,
+        planType,
+        startDate: subscriptionStartDate,
+        expiryDate: newExpiryDate,
+        status: 'active',
+        customerName: user.name,
+        contact: user.phone
+      });
+    }
+
+    user.expiryDate = newExpiryDate;
+    await user.save();
+
+    const order = await Order.create({
+      userId: userId,
+      vendorId,
+      amount: amount,
+      deliverySlot: 'Lunch',
+      mealPreference: 'Regular',
+      paymentStatus: paymentStatus,
+      paymentMethod: paymentMethod,
+      planType: planType
+    });
+
+    try {
+      const emailSubject = `MealSetu - ${planType} Subscription ${existingSubscription ? 'Extended' : 'Activated'}`;
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #333;">${existingSubscription ? 'Subscription Extended!' : 'Subscription Activated!'}</h1>
+          <p>Dear ${user.name},</p>
+          <p>Your subscription has been ${existingSubscription ? 'extended' : 'activated'}. Here are the details:</p>
+          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
+            <p><strong>Vendor:</strong> ${vendor.kitchenName}</p>
+            <p><strong>Plan:</strong> ${planType}</p>
+            <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
+            <p><strong>Expiry Date:</strong> ${newExpiryDate.toLocaleDateString()}</p>
+            <p><strong>Amount Paid:</strong> ₹${amount}</p>
+          </div>
+          <p>Enjoy your meals!</p>
+          <hr/>
+          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+        </div>
+      `;
+      await sendEmail(user.email, emailSubject, emailHtml);
+    } catch (emailError) {
+      console.error('Failed to send confirmation email:', emailError);
+    }
+
+    res.status(200).json({ 
+      message: existingSubscription ? 'Subscription extended successfully' : 'Subscription activated successfully',
+      subscription: {
+        planType,
+        startDate: subscriptionStartDate,
+        expiryDate: newExpiryDate,
+        status: 'active'
+      },
+      order,
+      amount
+    });
+
+  } catch (error) {
+    console.error('Extend subscription error:', error);
+    res.status(500).json({ message: 'Error extending subscription', error: error.message });
+  }
+};
 
 // @desc    Get current user profile
 // @route   GET /api/users/me
 const getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('-password');
-    res.json(user);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const userObj = user.toObject();
+    userObj.profilePic = transformProfilePic(user.profilePic, req.protocol, req.get('host'));
+    
+    res.json(userObj);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
@@ -26,7 +331,37 @@ const updateUserProfile = async (req, res) => {
       { name, phone, address, pincode, gender },
       { new: true }
     ).select('-password');
-    res.json(user);
+    
+    const userObj = user.toObject();
+    userObj.profilePic = transformProfilePic(user.profilePic, req.protocol, req.get('host'));
+    
+    res.json(userObj);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Update user profile picture
+// @route   PUT /api/users/:id/profile-pic
+const updateUserProfilePic = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const profilePicPath = req.file.path;
+    const profilePicUrl = `${req.protocol}://${req.get('host')}/${profilePicPath}`;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { profilePic: profilePicPath },
+      { new: true }
+    ).select('-password');
+
+    res.json({
+      ...user.toObject(),
+      profilePic: profilePicUrl
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
@@ -43,13 +378,11 @@ const changePassword = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Verify current password
     const isPasswordCorrect = await bcrypt.compare(currentPassword, user.password);
     if (!isPasswordCorrect) {
       return res.status(401).json({ message: 'Current password is incorrect' });
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
@@ -78,16 +411,13 @@ const getUserOrders = async (req, res) => {
 const getMenus = async (req, res) => {
   try {
     const date = req.query.date ? new Date(req.query.date) : new Date();
-    // normalize to day range (start/end)
     const start = new Date(date);
     start.setHours(0,0,0,0);
     const end = new Date(date);
     end.setHours(23,59,59,999);
 
-    // Find menus for the day that are live and populate vendor details
     const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId');
 
-    // Map menus to include vendor-friendly fields (with sensible defaults)
     const mapped = menus.map(m => {
       const v = m.vendorId || {};
       return {
@@ -115,13 +445,22 @@ const getMenus = async (req, res) => {
   }
 };
 
-// @desc    Place an Order
+// @desc    Place an Order or Create Subscription
 // @route   POST /api/users/order
 const placeOrder = async (req, res) => {
   try {
-    const { vendorId, items = [], amount, deliverySlot = 'Lunch', mealPreference } = req.body;
+    const { 
+      vendorId, 
+      items = [], 
+      amount, 
+      deliverySlot = 'Lunch', 
+      mealPreference,
+      plan = 'ONEDAY',
+      startDate,
+      altMainSubji = '',
+      paymentMethod = 'Cash'
+    } = req.body;
 
-    // Basic validation
     if (!vendorId) {
       return res.status(400).json({ message: 'vendorId is required' });
     }
@@ -135,16 +474,94 @@ const placeOrder = async (req, res) => {
     const allowedPrefs = ['Regular', 'Jain'];
     const mealPref = allowedPrefs.includes(mealPreference) ? mealPreference : 'Regular';
 
+    const user = await User.findById(req.user._id);
+    const vendor = await Vendor.findById(vendorId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    let durationDays = 1;
+    let planType = 'Trial';
+    switch (plan) {
+      case 'WEEKLY':
+        durationDays = 7;
+        planType = 'Weekly';
+        break;
+      case 'MONTHLY':
+        durationDays = 30;
+        planType = 'Monthly';
+        break;
+      case 'ONEDAY':
+      default:
+        durationDays = 1;
+        planType = 'Trial';
+        break;
+    }
+
+    const subscriptionStartDate = startDate ? new Date(startDate) : new Date();
+    const subscriptionExpiryDate = new Date(subscriptionStartDate);
+    subscriptionExpiryDate.setDate(subscriptionExpiryDate.getDate() + durationDays);
+
     const order = await Order.create({
       userId: req.user._id,
       vendorId,
       amount: numericAmount,
       deliverySlot,
       mealPreference: mealPref,
-      paymentStatus: 'Pending' // Simulating payment gateway logic
+      paymentStatus: paymentMethod === 'Cash' ? 'Pending' : 'Paid',
+      paymentMethod,
+      planType: planType
     });
 
-    res.status(201).json(order);
+    const subscription = await Subscription.create({
+      userId: req.user._id,
+      vendorId,
+      planType,
+      startDate: subscriptionStartDate,
+      expiryDate: subscriptionExpiryDate,
+      status: 'active',
+      customerName: user.name,
+      contact: user.phone,
+      dietaryPref: altMainSubji || mealPref
+    });
+
+    user.expiryDate = subscriptionExpiryDate;
+    await user.save();
+
+    try {
+      const emailSubject = `MealSetu - ${planType} Subscription Confirmed`;
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #333;">Order Confirmed!</h1>
+          <p>Dear ${user.name},</p>
+          <p>Your subscription has been confirmed. Here are the details:</p>
+          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
+            <p><strong>Vendor:</strong> ${vendor.kitchenName}</p>
+            <p><strong>Plan:</strong> ${planType}</p>
+            <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
+            <p><strong>Expiry Date:</strong> ${subscriptionExpiryDate.toLocaleDateString()}</p>
+            <p><strong>Amount Paid:</strong> ₹${numericAmount}</p>
+            <p><strong>Payment Method:</strong> ${paymentMethod}</p>
+          </div>
+          <p>Enjoy your meals!</p>
+          <hr/>
+          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+        </div>
+      `;
+      await sendEmail(user.email, emailSubject, emailHtml);
+    } catch (emailError) {
+      console.error('Failed to send confirmation email:', emailError);
+    }
+
+    res.status(201).json({ 
+      order, 
+      subscription,
+      message: 'Order placed and subscription created successfully'
+    });
   } catch (error) {
     console.error('Place order error:', error);
     res.status(500).json({ message: 'Error placing order', error: error.message });
@@ -168,4 +585,4 @@ const addReview = async (req, res) => {
   }
 };
 
-module.exports = { getCurrentUser, updateUserProfile, changePassword, getMenus, getUserOrders, placeOrder, addReview };
+module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription };

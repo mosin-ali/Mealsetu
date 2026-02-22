@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema({
     default: 'user' 
   },
   
-  // --- Customer Specific [cite: 60] ---
+  // --- Customer Specific ---
   address: { type: String }, 
   pincode: { type: String },
   
@@ -23,7 +23,16 @@ const userSchema = new mongoose.Schema({
   // --- User Management Fields  ---
   isActive: { type: Boolean, default: true },
   lastLogin: { type: Date },
-  joinDate: { type: Date, default: Date.now }
+  joinDate: { type: Date, default: Date.now },
+
+  // --- Password Reset Fields (Token-based - kept for compatibility) ---
+  resetPasswordToken: { type: String },
+  resetPasswordExpire: { type: Date },
+
+  // --- OTP Verification Fields ---
+  resetOTP: { type: String },
+  resetOTPExpire: { type: Date },
+  isOTPVerified: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('User', userSchema);

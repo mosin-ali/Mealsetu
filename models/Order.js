@@ -9,6 +9,9 @@ const orderSchema = new mongoose.Schema({
   mealPreference: { type: String, enum: ['Regular', 'Jain'] },
   deliverySlot: { type: String, enum: ['Lunch', 'Dinner'] },
   orderDate: { type: Date, default: Date.now },
+  
+  // Subscription Plan Type (Weekly, Monthly, Trial)
+  planType: { type: String, enum: ['Weekly', 'Monthly', 'Trial', 'Tiffin'], default: 'Tiffin' },
 
   // Payment & Status 
   amount: { type: Number, required: true },
