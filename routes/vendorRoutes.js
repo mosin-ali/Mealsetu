@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getVendorProfile, updateVendorProfile, getVendorMenus, addMenu, getVendorOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, getVendorMenus, addMenu, getVendorOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan } = require('../controllers/vendorController');
 
 const router = express.Router();
 
@@ -20,5 +20,11 @@ router.get('/customers', getVendorCustomers);
 router.get('/complaints', getVendorComplaints);
 router.put('/complaints/:id', resolveComplaint);
 router.get('/reports', getVendorReports);
+// Dashboard stats endpoint
+router.get('/dashboard-stats', getDashboardStats);
+
+// Weekly plan endpoints (Batch Save) - require vendor authentication
+router.get('/weekly-plan', getWeeklyPlan);
+router.put('/weekly-plan', saveWeeklyPlan);
 
 module.exports = router;

@@ -4,6 +4,8 @@ const Review = require('../models/Review');
 const Vendor = require('../models/Vendor');
 const User = require('../models/User');
 const Complaint = require('../models/Complaint');
+const Subscription = require('../models/Subscription');
+const Payout = require('../models/Payout');
 
 // @desc    Get vendor profile
 // @route   GET /api/vendor/me
@@ -189,6 +191,140 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
+// @desc    Get Dashboard Stats (Total Revenue, Today's Orders, Active Subscribers)
+// @route   GET /api/vendor/dashboard-stats
+const getDashboardStats = async (req, res) => {
+  try {
+    // First get the vendor ID
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+
+    // Get start and end of today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // MongoDB aggregation for Total Revenue (sum of all order amounts)
+    const revenueAggregation = await Order.aggregate([
+      { $match: { vendorId: vendor._id } },
+      { $group: { _id: null, totalRevenue: { $sum: '$amount' } } }
+    ]);
+    const totalRevenue = revenueAggregation.length > 0 ? revenueAggregation[0].totalRevenue : 0;
+
+    // MongoDB aggregation for Today's Orders (count of orders with today's date)
+    const todayOrdersAggregation = await Order.aggregate([
+      { 
+        $match: { 
+          vendorId: vendor._id,
+          orderDate: { $gte: today, $lt: tomorrow }
+        } 
+      },
+      { $count: 'todayOrders' }
+    ]);
+    const todayOrders = todayOrdersAggregation.length > 0 ? todayOrdersAggregation[0].todayOrders : 0;
+
+    // MongoDB aggregation for Active Subscribers (subscriptions with status 'active')
+    const activeSubscribersAggregation = await Subscription.aggregate([
+      { 
+        $match: { 
+          vendorId: vendor._id,
+          status: 'active'
+        } 
+      },
+      { $count: 'activeSubscribers' }
+    ]);
+    const activeSubscribers = activeSubscribersAggregation.length > 0 ? activeSubscribersAggregation[0].activeSubscribers : 0;
+
+    // Also get pending payout from Payout collection
+    const pendingPayoutAggregation = await Payout.aggregate([
+      { 
+        $match: { 
+          vendorId: vendor._id,
+          status: 'Pending'
+        } 
+      },
+      { $group: { _id: null, totalPending: { $sum: '$totalEarning' } } }
+    ]);
+    const pendingPayout = pendingPayoutAggregation.length > 0 ? pendingPayoutAggregation[0].totalPending : 0;
+
+    res.json({
+      totalRevenue,
+      todayOrders,
+      activeSubscribers,
+      pendingPayout
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Save Weekly Menu Plan (Batch Save for all 7 days)
+// @route   PUT /api/vendor/weekly-plan
+const saveWeeklyPlan = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+
+    const { weeklyPlan } = req.body;
+    
+    // Validate the weeklyPlan structure
+    if (!weeklyPlan || typeof weeklyPlan !== 'object') {
+      return res.status(400).json({ message: 'Invalid weekly plan format' });
+    }
+
+    // Update vendor's weeklyPlan
+    vendor.weeklyPlan = weeklyPlan;
+    await vendor.save();
+
+    res.json({ 
+      message: 'Weekly plan saved successfully', 
+      weeklyPlan: vendor.weeklyPlan 
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get Weekly Menu Plan
+// @route   GET /api/vendor/weekly-plan
+const getWeeklyPlan = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+
+    res.json({ weeklyPlan: vendor.weeklyPlan });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get Vendor's Weekly Plan (Public - for users to view)
+// @route   GET /api/vendors/:vendorId/weekly-plan
+const getVendorWeeklyPlan = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const vendor = await Vendor.findById(vendorId);
+    
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    res.json({ 
+      weeklyPlan: vendor.weeklyPlan,
+      kitchenName: vendor.kitchenName 
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -200,5 +336,9 @@ module.exports = {
   getVendorCustomers,
   getVendorComplaints,
   resolveComplaint,
-  getVendorReports
+  getVendorReports,
+  getDashboardStats,
+  saveWeeklyPlan,
+  getWeeklyPlan,
+  getVendorWeeklyPlan
 };

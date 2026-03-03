@@ -3,29 +3,43 @@ const mongoose = require('mongoose');
 const vendorSchema = new mongoose.Schema({
   ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   
-  // --- Profile Info [cite: 70] ---
+  // --- Profile Info ---
   kitchenName: { type: String, required: true },
   address: { type: String, required: true },
   pincode: { type: String },
   profileImage: { type: String },
   isOpen: { type: Boolean, default: true },
   
-  // --- Compliance & Documents [cite: 70, 82] ---
+  // --- Compliance & Documents ---
   fssaiNumber: { type: String },
   fssaiLicense: { type: String }, // File URL
   gstDocument: { type: String },  // File URL
   
-  // --- Status & Wallet [cite: 70, 82] ---
+  // --- Status & Wallet ---
   approvalStatus: { 
     type: String, 
     enum: ['Pending', 'Approved', 'Rejected'], 
     default: 'Pending' 
   },
-  rejectionReason: { type: String }, // For Vendor Requests Queue
+  rejectionReason: { type: String },
   submittedDate: { type: Date, default: Date.now },
   
-  walletBalance: { type: Number, default: 0 } // Stores "Pending Payout"
-  ,
+  walletBalance: { type: Number, default: 0 },
+  
+  // --- Weekly Menu Plan (Structured JSON for 7 days) ---
+  weeklyPlan: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {
+      Monday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Tuesday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Wednesday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Thursday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Friday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Saturday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' },
+      Sunday: { mainCourse: '', altSabji: '', sides: '', specialAddOns: '' }
+    }
+  },
+  
   // Optional display fields
   menuPrice: { type: Number, default: 80 },
   rating: { type: Number, default: 4.5 },
