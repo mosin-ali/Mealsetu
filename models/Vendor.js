@@ -16,6 +16,9 @@ const vendorSchema = new mongoose.Schema({
   gstDocument: { type: String },  // File URL
   
   // --- Status & Wallet ---
+  closureStartDate: { type: Date }, // Tracks when shop was closed
+  closureEndDate: { type: Date },   // Optional: when shop is expected to reopen
+  
   approvalStatus: { 
     type: String, 
     enum: ['Pending', 'Approved', 'Rejected'], 
@@ -48,3 +51,4 @@ const vendorSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('Vendor', vendorSchema);
+

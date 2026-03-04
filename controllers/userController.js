@@ -572,17 +572,165 @@ const placeOrder = async (req, res) => {
 // @route   POST /api/users/review
 const addReview = async (req, res) => {
   try {
-    const { vendorId, rating, comment } = req.body;
+    const { vendorId, rating, comment, orderId } = req.body;
+
+    // Get user info for caching
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if user has at least one order from this vendor (any status - not just delivered)
+    const hasOrderedFromVendor = await Order.findOne({
+      userId: req.user._id,
+      vendorId: vendorId
+    });
+
+    if (!hasOrderedFromVendor) {
+      return res.status(403).json({ 
+        message: 'You must have placed an order from this vendor to leave a review' 
+      });
+    }
+
+    // Create review with cached customer name
     const review = await Review.create({
       userId: req.user._id,
       vendorId,
+      orderId: hasOrderedFromVendor._id, // Link to the order
       rating,
-      comment
+      comment,
+      customerName: user.name || 'Anonymous' // Cache customer name
     });
+
+    // Optionally: Update vendor's average rating in background
+    // This will be calculated dynamically when fetching
+
     res.status(201).json(review);
   } catch (error) {
+    console.error('Add review error:', error);
     res.status(500).json({ message: 'Error adding review' });
   }
 };
 
-module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription };
+// @desc    Get Vendor Reviews (Public - for users to view)
+// @route   GET /api/users/vendor-reviews/:vendorId
+const getVendorReviews = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    // Fetch reviews with user info populated, sorted by sentiment (5-star first, then 4-star, etc.)
+    const reviews = await Review.find({ vendorId })
+      .populate('userId', 'name')
+      .sort({ rating: -1, createdAt: -1 }); // Sort by rating (desc), then by date (desc)
+
+    // Format reviews for display
+    const formattedReviews = reviews.map(review => ({
+      _id: review._id,
+      user: review.customerName || review.userId?.name || 'Anonymous',
+      rating: review.rating,
+      stars: review.rating,
+      comment: review.comment,
+      date: new Date(review.createdAt).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      }),
+      createdAt: review.createdAt
+    }));
+
+    res.json(formattedReviews);
+  } catch (error) {
+    console.error('Get vendor reviews error:', error);
+    res.status(500).json({ message: 'Error fetching reviews' });
+  }
+};
+
+// @desc    Get Vendor Rating (Public - dynamic average)
+// @route   GET /api/users/vendor-rating/:vendorId
+const getVendorRating = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    // Calculate average rating from reviews
+    const ratingAgg = await Review.aggregate([
+      { $match: { vendorId: require('mongoose').Types.ObjectId.createFromHexString(vendorId) } },
+      { $group: { _id: null, avgRating: { $avg: '$rating' }, count: { $sum: 1 } } }
+    ]);
+
+    const avgRating = ratingAgg.length > 0 ? Math.round(ratingAgg[0].avgRating * 10) / 10 : 0;
+    const reviewCount = ratingAgg.length > 0 ? ratingAgg[0].count : 0;
+
+    res.json({
+      vendorId,
+      rating: avgRating,
+      reviewCount,
+      hasReviews: reviewCount > 0
+    });
+  } catch (error) {
+    console.error('Get vendor rating error:', error);
+    res.status(500).json({ message: 'Error fetching vendor rating' });
+  }
+};
+
+// @desc    Get Vendor Status (Open/Close) - Public endpoint
+// @route   GET /api/users/vendor-status/:vendorId
+const getVendorStatus = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const vendor = await Vendor.findById(vendorId);
+    
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    res.json({
+      vendorId: vendor._id,
+      kitchenName: vendor.kitchenName,
+      isOpen: vendor.isOpen,
+      closureStartDate: vendor.closureStartDate,
+      closureEndDate: vendor.closureEndDate
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Check if user can review a vendor
+// @route   GET /api/users/review-eligibility/:vendorId
+const checkReviewEligibility = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const userId = req.user._id;
+
+    // Check if user has any order from this vendor (regardless of status)
+    const anyOrder = await Order.findOne({
+      userId: userId,
+      vendorId: vendorId
+    }).sort({ createdAt: -1 });
+
+    // If user has any order, they can review
+    if (anyOrder) {
+      return res.json({
+        canReview: true,
+        hasOrdered: true,
+        orderId: anyOrder._id,
+        orderStatus: anyOrder.orderStatus,
+        message: 'You can review this vendor!'
+      });
+    }
+
+    // No order found
+    return res.json({
+      canReview: false,
+      hasOrdered: false,
+      orderId: null,
+      orderStatus: null,
+      message: 'You must have placed an order from this vendor to leave a review'
+    });
+  } catch (error) {
+    console.error('Check review eligibility error:', error);
+    res.status(500).json({ message: 'Error checking review eligibility' });
+  }
+};
+
+module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility };
