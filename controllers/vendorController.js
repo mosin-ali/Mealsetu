@@ -122,9 +122,10 @@ const updateVendorProfile = async (req, res) => {
       await User.findByIdAndUpdate(req.user._id, { phone });
     }
 
-    // Transform vendor to object and add profileImage with full URL
+    // Transform vendor to object and add profileImage and kitchenPoster with full URLs
     const vendorObj = vendor.toObject();
     vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
+    vendorObj.kitchenPoster = transformKitchenPoster(vendor.kitchenPoster, req);
 
     res.json(vendorObj);
   } catch (error) {

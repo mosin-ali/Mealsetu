@@ -62,9 +62,11 @@ const registerUser = async (req, res) => {
       if (!filePath) return null;
       // Replace backslashes with forward slashes (Windows path fix)
       let normalized = filePath.replace(/\\/g, '/');
-      // Ensure path starts with /uploads/
-      if (!normalized.startsWith('/uploads/')) {
-        normalized = '/uploads/' + normalized.split('/uploads/').pop();
+      // Check if the result contains uploads/ anywhere
+      if (normalized.includes('uploads/')) {
+        // Extract everything from uploads/ onward and prepend a single /uploads/
+        const parts = normalized.split('uploads/');
+        normalized = '/uploads/' + parts[parts.length - 1];
       }
       return normalized;
     };

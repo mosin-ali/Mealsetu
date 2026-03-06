@@ -13,7 +13,8 @@ const transformProfilePic = (profilePic, protocol, host) => {
   if (profilePic.startsWith('http://') || profilePic.startsWith('https://')) {
     return profilePic;
   }
-  return `${protocol}://${host}/${profilePic}`;
+  // Fix double-slash bug: don't add extra / if profilePic already starts with /
+  return `${protocol}://${host}${profilePic.startsWith('/') ? '' : '/'}${profilePic}`;
 };
 
 // Helper function to send email
@@ -354,9 +355,11 @@ const updateUserProfilePic = async (req, res) => {
       if (!filePath) return null;
       // Replace backslashes with forward slashes (Windows path fix)
       let normalized = filePath.replace(/\\/g, '/');
-      // Ensure path starts with /uploads/
-      if (!normalized.startsWith('/uploads/')) {
-        normalized = '/uploads/' + normalized.split('/uploads/').pop();
+      // Check if the result contains uploads/ anywhere
+      if (normalized.includes('uploads/')) {
+        // Extract everything from uploads/ onward and prepend a single /uploads/
+        const parts = normalized.split('uploads/');
+        normalized = '/uploads/' + parts[parts.length - 1];
       }
       return normalized;
     };
@@ -428,7 +431,8 @@ const getMenus = async (req, res) => {
     const end = new Date(date);
     end.setHours(23,59,59,999);
 
-    const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId');
+    // Populate vendor with all relevant fields including kitchenPoster for image display
+    const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId', 'kitchenName address kitchenAddress menuPrice rating workingDays timings profileImage kitchenPoster fssaiNumber fssaiLicense');
 
     // Helper function to transform image paths to full URLs
     const transformImageUrl = (imagePath) => {
@@ -462,7 +466,7 @@ const getMenus = async (req, res) => {
         fssaiNumber: v.fssaiNumber || v.fssaiLicense || '',
         workingDays: v.workingDays || 'Mon - Sat',
         timings: v.timings || '11:00 AM - 09:00 PM',
-        // Include vendor images for display
+        // Include vendor images for display - always include both profileImage and kitchenPoster
         profileImage: v.profileImage ? transformImageUrl(v.profileImage) : null,
         kitchenPoster: v.kitchenPoster ? transformImageUrl(v.kitchenPoster) : null
       };
