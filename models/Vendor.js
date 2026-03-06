@@ -8,6 +8,7 @@ const vendorSchema = new mongoose.Schema({
   address: { type: String, required: true },
   pincode: { type: String },
   profileImage: { type: String },
+  kitchenPoster: { type: String }, // Kitchen Banner/Poster Image
   isOpen: { type: Boolean, default: true },
   
   // --- Compliance & Documents ---

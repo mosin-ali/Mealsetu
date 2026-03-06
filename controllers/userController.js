@@ -349,8 +349,20 @@ const updateUserProfilePic = async (req, res) => {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const profilePicPath = req.file.path;
-    const profilePicUrl = `${req.protocol}://${req.get('host')}/${profilePicPath}`;
+    // Normalize path: convert Windows backslashes to forward slashes and ensure proper format
+    const normalizePath = (filePath) => {
+      if (!filePath) return null;
+      // Replace backslashes with forward slashes (Windows path fix)
+      let normalized = filePath.replace(/\\/g, '/');
+      // Ensure path starts with /uploads/
+      if (!normalized.startsWith('/uploads/')) {
+        normalized = '/uploads/' + normalized.split('/uploads/').pop();
+      }
+      return normalized;
+    };
+
+    const profilePicPath = normalizePath(req.file.path);
+    const profilePicUrl = `${req.protocol}://${req.get('host')}${profilePicPath}`;
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -695,6 +707,41 @@ const getVendorStatus = async (req, res) => {
   }
 };
 
+// @desc    Get All Approved Vendors for User Side - Public endpoint
+// @route   GET /api/users/vendors
+const getApprovedVendors = async (req, res) => {
+  try {
+    // Fetch only approved and open vendors
+    const vendors = await Vendor.find({ 
+      approvalStatus: 'Approved',
+      isOpen: true
+    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan');
+
+    // Transform vendor data for frontend display
+    const transformedVendors = vendors.map(vendor => ({
+      _id: vendor._id,
+      vendorId: vendor._id,
+      name: vendor.kitchenName,
+      address: vendor.address,
+      pincode: vendor.pincode,
+      price: vendor.menuPrice || 80,
+      rating: vendor.rating || 4.5,
+      type: 'Regular',
+      fssai: vendor.fssaiNumber || '',
+      workingDays: vendor.workingDays || 'Mon - Sat',
+      timings: vendor.timings || '11:00 AM - 09:00 PM',
+      profileImage: vendor.profileImage ? transformProfilePic(vendor.profileImage, req.protocol, req.get('host')) : null,
+      kitchenPoster: vendor.kitchenPoster ? transformProfilePic(vendor.kitchenPoster, req.protocol, req.get('host')) : null,
+      weeklyPlan: vendor.weeklyPlan
+    }));
+
+    res.json(transformedVendors);
+  } catch (error) {
+    console.error('Error fetching approved vendors:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 // @desc    Check if user can review a vendor
 // @route   GET /api/users/review-eligibility/:vendorId
 const checkReviewEligibility = async (req, res) => {
@@ -733,4 +780,4 @@ const checkReviewEligibility = async (req, res) => {
   }
 };
 
-module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility };
+module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors };

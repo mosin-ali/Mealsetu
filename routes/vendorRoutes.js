@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus } = require('../controllers/vendorController');
 
 const router = express.Router();
 
@@ -12,6 +12,7 @@ router.use(authorize('vendor'));
 router.get('/me', getVendorProfile);
 router.put('/me', updateVendorProfile);
 router.put('/me/profile-pic', upload.single('profilePic'), updateVendorProfilePic);
+router.put('/me/kitchen-poster', upload.single('kitchenPoster'), updateKitchenPoster);
 router.get('/menus', getVendorMenus);
 router.post('/menu', addMenu);
 router.get('/orders', getVendorOrders);

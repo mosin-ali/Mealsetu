@@ -1,12 +1,15 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility } = require('../controllers/userController');
+const { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors } = require('../controllers/userController');
 const upload = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
 
 // Public route (anyone can see menus)
 router.get('/menus', getMenus);
+
+// Public route to get all approved vendors (for user side)
+router.get('/vendors', getApprovedVendors);
 
 // Public route to get vendor status (open/close)
 router.get('/vendor-status/:vendorId', getVendorStatus);

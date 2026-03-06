@@ -57,7 +57,20 @@ const registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // 3. Handle File Uploads (from Multer)
-    const profilePicPath = req.files['profilePic'] ? req.files['profilePic'][0].path : null;
+    // Normalize path: convert Windows backslashes to forward slashes and ensure proper format
+    const normalizePath = (filePath) => {
+      if (!filePath) return null;
+      // Replace backslashes with forward slashes (Windows path fix)
+      let normalized = filePath.replace(/\\/g, '/');
+      // Ensure path starts with /uploads/
+      if (!normalized.startsWith('/uploads/')) {
+        normalized = '/uploads/' + normalized.split('/uploads/').pop();
+      }
+      return normalized;
+    };
+
+    const profilePicPath = req.files['profilePic'] ? normalizePath(req.files['profilePic'][0].path) : null;
+    const kitchenPosterPath = req.files['kitchenPoster'] ? normalizePath(req.files['kitchenPoster'][0].path) : null;
 
     // 4. Create Base User
     const user = await User.create({
@@ -73,8 +86,9 @@ const registerUser = async (req, res) => {
 
     // 5. If Role is Vendor, create Vendor Document
     if (role === 'vendor') {
-        const fssaiPath = req.files['fssaiDoc'] ? req.files['fssaiDoc'][0].path : null;
-        const gstPath = req.files['gstDoc'] ? req.files['gstDoc'][0].path : null;
+        // Also normalize vendor document paths
+        const fssaiPath = req.files['fssaiDoc'] ? normalizePath(req.files['fssaiDoc'][0].path) : null;
+        const gstPath = req.files['gstDoc'] ? normalizePath(req.files['gstDoc'][0].path) : null;
 
         await Vendor.create({
             ownerId: user._id,
@@ -82,7 +96,9 @@ const registerUser = async (req, res) => {
             address: kitchenAddress,
             pincode,
             fssaiLicense: fssaiPath,
-            gstDocument: gstPath
+            gstDocument: gstPath,
+            profileImage: profilePicPath,
+            kitchenPoster: kitchenPosterPath
         });
     }
 

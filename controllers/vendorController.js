@@ -9,12 +9,46 @@ const Payout = require('../models/Payout');
 const nodemailer = require('nodemailer');
 
 // Helper function to transform profilePic path to full URL
-const transformProfilePic = (profilePic, protocol, host) => {
+const transformProfilePic = (profilePic, req) => {
   if (!profilePic) return null;
+  
+  // If already a full URL, return as is
   if (profilePic.startsWith('http://') || profilePic.startsWith('https://')) {
     return profilePic;
   }
-  return `${protocol}://${host}/${profilePic}`;
+  
+  // Use fixed localhost URL for backend - this is the most reliable approach
+  // since the backend runs on port 5000
+  const backendUrl = 'http://localhost:5000';
+  
+  // If path starts with /uploads, prepend backend URL
+  if (profilePic.startsWith('/uploads/')) {
+    return `${backendUrl}${profilePic}`;
+  }
+  
+  // For any other relative path, assume it's in uploads folder
+  return `${backendUrl}/uploads/${profilePic.replace(/^\/?uploads\//, '')}`;
+};
+
+// Helper function to transform kitchenPoster path to full URL (same as profilePic)
+const transformKitchenPoster = (kitchenPoster, req) => {
+  if (!kitchenPoster) return null;
+  
+  // If already a full URL, return as is
+  if (kitchenPoster.startsWith('http://') || kitchenPoster.startsWith('https://')) {
+    return kitchenPoster;
+  }
+  
+  // Use fixed localhost URL for backend
+  const backendUrl = 'http://localhost:5000';
+  
+  // If path starts with /uploads, prepend backend URL
+  if (kitchenPoster.startsWith('/uploads/')) {
+    return `${backendUrl}${kitchenPoster}`;
+  }
+  
+  // For any other relative path, assume it's in uploads folder
+  return `${backendUrl}/uploads/${kitchenPoster.replace(/^\/?uploads\//, '')}`;
 };
 
 // Helper function to send email
@@ -51,9 +85,10 @@ const getVendorProfile = async (req, res) => {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
     
-    // Transform profileImage to full URL
+    // Transform profileImage and kitchenPoster to full URL
     const vendorObj = vendor.toObject();
-    vendorObj.profileImage = transformProfilePic(vendor.profileImage, req.protocol, req.get('host'));
+    vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
+    vendorObj.kitchenPoster = transformKitchenPoster(vendor.kitchenPoster, req);
     
     res.json(vendorObj);
   } catch (error) {
@@ -84,7 +119,7 @@ const updateVendorProfile = async (req, res) => {
 
     // Transform vendor to object and add profileImage with full URL
     const vendorObj = vendor.toObject();
-    vendorObj.profileImage = transformProfilePic(vendor.profileImage, req.protocol, req.get('host'));
+    vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
 
     res.json(vendorObj);
   } catch (error) {
@@ -742,7 +777,7 @@ const updateVendorProfilePic = async (req, res) => {
     await vendor.save();
 
     // Return full URL for the profile image
-    const profileImageUrl = transformProfilePic(vendor.profileImage, req.protocol, req.get('host'));
+    const profileImageUrl = transformProfilePic(vendor.profileImage, req);
 
     res.json({
       message: 'Profile picture updated successfully',
@@ -754,10 +789,43 @@ const updateVendorProfilePic = async (req, res) => {
   }
 };
 
+// @desc    Update vendor kitchen poster/banner
+// @route   PUT /api/vendor/me/kitchen-poster
+const updateKitchenPoster = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ message: 'Please upload an image file' });
+    }
+
+    // Update the kitchenPoster field with the file path
+    vendor.kitchenPoster = `/uploads/${req.file.filename}`;
+    await vendor.save();
+
+    // Return full URL for the kitchen poster
+    const kitchenPosterUrl = transformKitchenPoster(vendor.kitchenPoster, req);
+
+    res.json({
+      message: 'Kitchen poster updated successfully',
+      kitchenPoster: kitchenPosterUrl
+    });
+  } catch (error) {
+    console.error('Error updating kitchen poster:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
   updateVendorProfilePic,
+  updateKitchenPoster,
   getVendorMenus,
   addMenu,
   getVendorOrders,

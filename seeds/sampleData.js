@@ -4,207 +4,301 @@ const User = require('../models/User');
 const Vendor = require('../models/Vendor');
 const Menu = require('../models/Menu');
 
-const seedDatabase = async () => {
-  try {
-    // Connect to MongoDB
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('Connected to MongoDB');
-
-    // Clear existing data
-    await User.deleteMany({});
-    await Vendor.deleteMany({});
-    console.log('Cleared existing data');
-
-    // Hash passwords
-    const salt = await bcrypt.genSalt(10);
-    const adminPassword = await bcrypt.hash('admin123', salt);
-    const vendorPassword = await bcrypt.hash('vendor123', salt);
-    const userPassword = await bcrypt.hash('user123', salt);
-
-    // Create Admin User
-    const admin = await User.create({
-      name: 'Admin User',
-      email: 'admin@mealsetu.com',
-      password: adminPassword,
-      phone: '+91 9876543210',
-      role: 'admin',
-      isActive: true,
-      joinDate: new Date()
-    });
-    console.log('✓ Admin created:', admin.email);
-
-    // Create Sample Vendors
-    const vendor1User = await User.create({
-      name: 'Priya Sharma',
-      email: 'priya.vendor@mealsetu.com',
-      password: vendorPassword,
-      phone: '+91 9876543211',
-      role: 'vendor',
-      isActive: true,
-      joinDate: new Date()
-    });
-
-    const vendor1 = await Vendor.create({
-      ownerId: vendor1User._id,
+// Sample data configuration
+const SAMPLE_USERS = [
+  {
+    name: 'Admin User',
+    email: 'admin@mealsetu.com',
+    password: 'admin123',
+    phone: '+91 9876543210',
+    role: 'admin',
+    isActive: true
+  },
+  {
+    name: 'Priya Sharma',
+    email: 'priya.vendor@mealsetu.com',
+    password: 'vendor123',
+    phone: '+91 9876543211',
+    role: 'vendor',
+    isActive: true,
+    vendorData: {
       kitchenName: 'Annapurna Home Kitchen',
       address: '123 Food Lane, Sector 21, Gandhinagar, Gujarat',
       pincode: '382021',
-      fssaiLicense: 'uploads/fssai-annapurna.pdf',
-      gstDocument: 'uploads/gst-annapurna.pdf',
-      approvalStatus: 'Pending',
-      submittedDate: new Date('2026-01-25'),
-      walletBalance: 0
-    });
-    // add some display fields
-    vendor1.menuPrice = 80;
-    vendor1.rating = 4.8;
-    vendor1.workingDays = 'Mon - Sat';
-    vendor1.timings = '11:00 AM - 10:00 PM';
-    await vendor1.save();
-    console.log('✓ Vendor 1 created (Pending):', vendor1.kitchenName);
-
-    const vendor2User = await User.create({
-      name: 'Rajesh Patel',
-      email: 'rajesh.vendor@mealsetu.com',
-      password: vendorPassword,
-      phone: '+91 9876543212',
-      role: 'vendor',
-      isActive: true,
-      joinDate: new Date('2026-01-20')
-    });
-
-    const vendor2 = await Vendor.create({
-      ownerId: vendor2User._id,
+      approvalStatus: 'Approved',
+      menuPrice: 80,
+      rating: 4.8,
+      workingDays: 'Mon - Sat',
+      timings: '11:00 AM - 10:00 PM'
+    }
+  },
+  {
+    name: 'Rajesh Patel',
+    email: 'rajesh.vendor@mealsetu.com',
+    password: 'vendor123',
+    phone: '+91 9876543212',
+    role: 'vendor',
+    isActive: true,
+    vendorData: {
       kitchenName: 'Mom\'s Magic Kitchen',
       address: '456 Taste Street, Satellite, Ahmedabad, Gujarat',
       pincode: '380015',
-      fssaiLicense: 'uploads/fssai-moms.pdf',
-      gstDocument: 'uploads/gst-moms.pdf',
       approvalStatus: 'Approved',
-      submittedDate: new Date('2026-01-15'),
-      walletBalance: 5420
-    });
-    vendor2.menuPrice = 100;
-    vendor2.rating = 4.9;
-    vendor2.workingDays = 'All Days';
-    vendor2.timings = '09:00 AM - 09:00 PM';
-    await vendor2.save();
-    console.log('✓ Vendor 2 created (Approved):', vendor2.kitchenName);
-
-    const vendor3User = await User.create({
-      name: 'Sonal Gupta',
-      email: 'sonal.vendor@mealsetu.com',
-      password: vendorPassword,
-      phone: '+91 9876543213',
-      role: 'vendor',
-      isActive: true,
-      joinDate: new Date('2026-01-10')
-    });
-
-    const vendor3 = await Vendor.create({
-      ownerId: vendor3User._id,
+      menuPrice: 100,
+      rating: 4.9,
+      workingDays: 'All Days',
+      timings: '09:00 AM - 09:00 PM'
+    }
+  },
+  {
+    name: 'Sonal Gupta',
+    email: 'sonal.vendor@mealsetu.com',
+    password: 'vendor123',
+    phone: '+91 9876543213',
+    role: 'vendor',
+    isActive: true,
+    vendorData: {
       kitchenName: 'Healthy Eats Cafe',
       address: '789 Wellness Way, Vastrapur, Ahmedabad, Gujarat',
       pincode: '380006',
-      fssaiLicense: 'uploads/fssai-healthy.pdf',
-      gstDocument: 'uploads/gst-healthy.pdf',
       approvalStatus: 'Rejected',
       rejectionReason: 'FSSAI license expired. Please submit renewed license.',
-      submittedDate: new Date('2026-01-22'),
-      walletBalance: 0
-    });
-    vendor3.menuPrice = 90;
-    vendor3.rating = 4.4;
-    vendor3.workingDays = 'Mon - Fri';
-    vendor3.timings = '10:00 AM - 08:00 PM';
-    await vendor3.save();
-    console.log('✓ Vendor 3 created (Rejected):', vendor3.kitchenName);
+      menuPrice: 90,
+      rating: 4.4,
+      workingDays: 'Mon - Fri',
+      timings: '10:00 AM - 08:00 PM'
+    }
+  },
+  {
+    name: 'Mosin Ali',
+    email: 'mosin@mealsetu.com',
+    password: 'user123',
+    phone: '+91 9876543220',
+    address: 'Himatnagar, Gujarat',
+    pincode: '383001',
+    role: 'user',
+    isActive: true
+  },
+  {
+    name: 'Priya Singh',
+    email: 'priya.user@mealsetu.com',
+    password: 'user123',
+    phone: '+91 9876543221',
+    address: 'Ahmedabad, Gujarat',
+    pincode: '380001',
+    role: 'user',
+    isActive: true
+  },
+  {
+    name: 'Rajesh Kumar',
+    email: 'rajesh.user@mealsetu.com',
+    password: 'user123',
+    phone: '+91 9876543222',
+    address: 'Gandhinagar, Gujarat',
+    pincode: '382021',
+    role: 'user',
+    isActive: false
+  },
+  {
+    name: 'Sneha Kapoor',
+    email: 'sneha.user@mealsetu.com',
+    password: 'user123',
+    phone: '+91 9876543223',
+    address: 'Baroda, Gujarat',
+    pincode: '390001',
+    role: 'user',
+    isActive: true
+  }
+];
 
-    // Create Sample Users
-    const user1 = await User.create({
-      name: 'Mosin Ali',
-      email: 'mosin@mealsetu.com',
-      password: userPassword,
-      phone: '+91 9876543220',
-      address: 'Himatnagar, Gujarat',
-      pincode: '383001',
-      role: 'user',
-      isActive: true,
-      joinDate: new Date('2026-01-01')
-    });
-    console.log('✓ User 1 created:', user1.email);
+// Sample menus for today
+const SAMPLE_MENUS = [
+  { mainSabji: 'Paneer Butter Masala', altSabji: 'Mix Veg', sweetItem: 'Gulab Jamun', dietaryCategory: 'Regular' },
+  { mainSabji: 'Aloo Gobi', altSabji: 'Dal Tadka', sweetItem: 'Rasgulla', dietaryCategory: 'Regular' }
+];
 
-    const user2 = await User.create({
-      name: 'Priya Singh',
-      email: 'priya.user@mealsetu.com',
-      password: userPassword,
-      phone: '+91 9876543221',
-      address: 'Ahmedabad, Gujarat',
-      pincode: '380001',
-      role: 'user',
-      isActive: true,
-      joinDate: new Date('2026-01-05')
-    });
-    console.log('✓ User 2 created:', user2.email);
+/**
+ * Smart Seeder - Uses Upsert (Update or Insert) strategy
+ * Checks if records exist before creating them
+ * Preserves existing real-world data
+ */
+const seedDatabase = async (options = {}) => {
+  const { force = false, verbose = true } = options;
+  
+  try {
+    // Connect to MongoDB
+    await mongoose.connect(process.env.MONGO_URI);
+    if (verbose) console.log('Connected to MongoDB');
 
-    const user3 = await User.create({
-      name: 'Rajesh Kumar',
-      email: 'rajesh.user@mealsetu.com',
-      password: userPassword,
-      phone: '+91 9876543222',
-      address: 'Gandhinagar, Gujarat',
-      pincode: '382021',
-      role: 'user',
-      isActive: false,
-      joinDate: new Date('2025-12-20')
-    });
-    console.log('✓ User 3 created (Inactive):', user3.email);
+    // Check existing data count
+    const userCount = await User.countDocuments();
+    const vendorCount = await Vendor.countDocuments();
 
-    const user4 = await User.create({
-      name: 'Sneha Kapoor',
-      email: 'sneha.user@mealsetu.com',
-      password: userPassword,
-      phone: '+91 9876543223',
-      address: 'Baroda, Gujarat',
-      pincode: '390001',
-      role: 'user',
-      isActive: true,
-      joinDate: new Date('2025-12-10')
-    });
-    console.log('✓ User 4 created:', user4.email);
+    // If data exists and not forced, skip seeding
+    if (!force && userCount > 0 && vendorCount > 0) {
+      if (verbose) {
+        console.log('\n⚠ Database already contains data. Skipping seed.');
+        console.log(`   Users: ${userCount}, Vendors: ${vendorCount}`);
+        console.log('\n💡 Run with { force: true } to re-seed anyway.');
+      }
+      return { status: 'skipped', userCount, vendorCount };
+    }
 
-    // Create sample menus for vendors (today)
+    // Hash passwords once
+    const salt = await bcrypt.genSalt(10);
+    
+    // Process each sample user
+    const createdUsers = {};
+    const createdVendors = {};
+    
+    for (const userData of SAMPLE_USERS) {
+      // Check if user already exists by email
+      let user = await User.findOne({ email: userData.email });
+      
+      if (user) {
+        // User exists - skip but store reference
+        if (verbose) console.log(`✓ User exists (skipping): ${userData.email}`);
+        createdUsers[userData.email] = user;
+      } else {
+        // Create new user
+        const hashedPassword = await bcrypt.hash(userData.password, salt);
+        user = await User.create({
+          ...userData,
+          password: hashedPassword,
+          joinDate: new Date()
+        });
+        if (verbose) console.log(`✓ User created: ${userData.email}`);
+        createdUsers[userData.email] = user;
+      }
+
+      // If this is a vendor user, also create vendor profile
+      if (userData.role === 'vendor' && userData.vendorData) {
+        const existingVendor = await Vendor.findOne({ ownerId: user._id });
+        
+        if (existingVendor) {
+          if (verbose) console.log(`✓ Vendor exists (skipping): ${userData.vendorData.kitchenName}`);
+          createdVendors[userData.vendorData.kitchenName] = existingVendor;
+        } else {
+          const vendor = await Vendor.create({
+            ownerId: user._id,
+            ...userData.vendorData,
+            submittedDate: new Date()
+          });
+          if (verbose) console.log(`✓ Vendor created (${userData.vendorData.approvalStatus}): ${userData.vendorData.kitchenName}`);
+          createdVendors[userData.vendorData.kitchenName] = vendor;
+        }
+      }
+    }
+
+    // Create sample menus for APPROVED vendors only
     const today = new Date();
-    await Menu.create({ vendorId: vendor1._id, date: today, mainSabji: 'Paneer Butter Masala', altSabji: 'Mix Veg', sweetItem: 'Gulab Jamun', dietaryCategory: 'Regular', cycleType: 'Daily' });
-    await Menu.create({ vendorId: vendor2._id, date: today, mainSabji: 'Aloo Gobi', altSabji: 'Dal Tadka', sweetItem: 'Rasgulla', dietaryCategory: 'Regular', cycleType: 'Daily' });
-    console.log('✓ Sample menus created for vendors');
+    const approvedVendors = Object.values(createdVendors).filter(v => v.approvalStatus === 'Approved');
+    const pendingVendors = Object.values(createdVendors).filter(v => v.approvalStatus === 'Pending');
+    
+    for (let i = 0; i < approvedVendors.length; i++) {
+      const vendor = approvedVendors[i];
+      // Check if menu exists for today
+      const existingMenu = await Menu.findOne({
+        vendorId: vendor._id,
+        date: {
+          $gte: new Date(today.setHours(0, 0, 0, 0)),
+          $lt: new Date(today.setHours(23, 59, 59, 999))
+        }
+      });
+      
+      if (!existingMenu && SAMPLE_MENUS[i]) {
+        await Menu.create({
+          vendorId: vendor._id,
+          date: new Date(),
+          ...SAMPLE_MENUS[i],
+          cycleType: 'Daily'
+        });
+        if (verbose) console.log(`✓ Sample menu created for: ${vendor.kitchenName}`);
+      }
+    }
 
-    console.log('\n✅ Database seeded successfully!');
-    console.log('\n📋 Test Credentials:');
-    console.log('Admin:');
-    console.log('  Email: admin@mealsetu.com');
-    console.log('  Password: admin123');
-    console.log('\nVendor (Pending):');
-    console.log('  Email: priya.vendor@mealsetu.com');
-    console.log('  Password: vendor123');
-    console.log('\nVendor (Approved):');
-    console.log('  Email: rajesh.vendor@mealsetu.com');
-    console.log('  Password: vendor123');
-    console.log('\nUser:');
-    console.log('  Email: mosin@mealsetu.com');
-    console.log('  Password: user123');
+    // Also add menu for pending vendor (for demo purposes)
+    if (pendingVendors.length > 0) {
+      const pendingVendor = pendingVendors[0];
+      const existingMenu = await Menu.findOne({ vendorId: pendingVendor._id });
+      if (!existingMenu) {
+        await Menu.create({
+          vendorId: pendingVendor._id,
+          date: new Date(),
+          mainSabji: 'Paneer Butter Masala',
+          altSabji: 'Mix Veg',
+          sweetItem: 'Gulab Jamun',
+          dietaryCategory: 'Regular',
+          cycleType: 'Daily'
+        });
+      }
+    }
 
-    process.exit(0);
+    const finalUserCount = await User.countDocuments();
+    const finalVendorCount = await Vendor.countDocuments();
+
+    if (verbose) {
+      console.log('\n✅ Database seeded successfully!');
+      console.log(`   Total Users: ${finalUserCount}`);
+      console.log(`   Total Vendors: ${finalVendorCount}`);
+      console.log('\n📋 Test Credentials:');
+      console.log('Admin:');
+      console.log('  Email: admin@mealsetu.com');
+      console.log('  Password: admin123');
+      console.log('\nVendor (Approved):');
+      console.log('  Email: rajesh.vendor@mealsetu.com');
+      console.log('  Password: vendor123');
+      console.log('\nVendor (Pending):');
+      console.log('  Email: priya.vendor@mealsetu.com');
+      console.log('  Password: vendor123');
+      console.log('\nUser:');
+      console.log('  Email: mosin@mealsetu.com');
+      console.log('  Password: user123');
+    }
+
+    return { status: 'seeded', userCount: finalUserCount, vendorCount: finalVendorCount };
   } catch (error) {
     console.error('Seeding error:', error);
-    process.exit(1);
+    throw error;
   }
+};
+
+/**
+ * Check if database is empty
+ */
+const isDatabaseEmpty = async () => {
+  try {
+    const userCount = await User.countDocuments();
+    const vendorCount = await Vendor.countDocuments();
+    return userCount === 0 && vendorCount === 0;
+  } catch (error) {
+    console.error('Error checking database:', error);
+    return true; // Assume empty on error to trigger seeding
+  }
+};
+
+/**
+ * Get seed statistics
+ */
+const getSeedStats = async () => {
+  const userCount = await User.countDocuments();
+  const vendorCount = await Vendor.countDocuments();
+  const menuCount = await Menu.countDocuments();
+  
+  return { userCount, vendorCount, menuCount };
 };
 
 // Run seeding if this file is executed directly
 if (require.main === module) {
   require('dotenv').config();
-  seedDatabase();
+  
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+  
+  seedDatabase({ force, verbose: true })
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
 }
 
-module.exports = seedDatabase;
+module.exports = { seedDatabase, isDatabaseEmpty, getSeedStats };
+
