@@ -108,9 +108,20 @@ const registerUser = async (req, res) => {
         return res.status(401).json({ message: 'Invalid Admin Key' });
     }
 
-    // Transform profilePic to full URL
+    // Transform profilePic to full URL - fix double-slash issue
+    const transformPathToUrl = (path) => {
+      if (!path) return null;
+      // Remove any double slashes
+      let cleanPath = path.replace(/\/+/g, '/');
+      // Ensure proper format: /uploads/filename
+      if (!cleanPath.startsWith('/')) {
+        cleanPath = '/' + cleanPath;
+      }
+      return `${req.protocol}://${req.get('host')}${cleanPath}`;
+    };
+
     const profilePicUrl = user.profilePic 
-      ? `${req.protocol}://${req.get('host')}/${user.profilePic}` 
+      ? transformPathToUrl(user.profilePic) 
       : null;
 
     res.status(201).json({
@@ -152,8 +163,20 @@ const loginUser = async (req, res) => {
       return res.status(401).json({ message: 'Invalid admin key' });
     }
 
+    // Transform profilePic to full URL - fix double-slash issue
+    const transformPathToUrl = (path) => {
+      if (!path) return null;
+      // Remove any double slashes
+      let cleanPath = path.replace(/\/+/g, '/');
+      // Ensure proper format: /uploads/filename
+      if (!cleanPath.startsWith('/')) {
+        cleanPath = '/' + cleanPath;
+      }
+      return `${req.protocol}://${req.get('host')}${cleanPath}`;
+    };
+
     const profilePicUrl = user.profilePic 
-      ? `${req.protocol}://${req.get('host')}/${user.profilePic}` 
+      ? transformPathToUrl(user.profilePic)
       : null;
 
     const token = generateToken(user._id, user.role);

@@ -17,17 +17,19 @@ const transformProfilePic = (profilePic, req) => {
     return profilePic;
   }
   
-  // Use fixed localhost URL for backend - this is the most reliable approach
-  // since the backend runs on port 5000
-  const backendUrl = 'http://localhost:5000';
+  // Use dynamic protocol and host from request - works in both dev and production
+  const backendUrl = `${req.protocol}://${req.get('host')}`;
+  
+  // Remove any double slashes
+  let cleanPath = profilePic.replace(/\/+/g, '/');
   
   // If path starts with /uploads, prepend backend URL
-  if (profilePic.startsWith('/uploads/')) {
-    return `${backendUrl}${profilePic}`;
+  if (cleanPath.startsWith('/uploads/')) {
+    return `${backendUrl}${cleanPath}`;
   }
   
   // For any other relative path, assume it's in uploads folder
-  return `${backendUrl}/uploads/${profilePic.replace(/^\/?uploads\//, '')}`;
+  return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
 };
 
 // Helper function to transform kitchenPoster path to full URL (same as profilePic)
@@ -39,16 +41,19 @@ const transformKitchenPoster = (kitchenPoster, req) => {
     return kitchenPoster;
   }
   
-  // Use fixed localhost URL for backend
-  const backendUrl = 'http://localhost:5000';
+  // Use dynamic protocol and host from request
+  const backendUrl = `${req.protocol}://${req.get('host')}`;
+  
+  // Remove any double slashes
+  let cleanPath = kitchenPoster.replace(/\/+/g, '/');
   
   // If path starts with /uploads, prepend backend URL
-  if (kitchenPoster.startsWith('/uploads/')) {
-    return `${backendUrl}${kitchenPoster}`;
+  if (cleanPath.startsWith('/uploads/')) {
+    return `${backendUrl}${cleanPath}`;
   }
   
   // For any other relative path, assume it's in uploads folder
-  return `${backendUrl}/uploads/${kitchenPoster.replace(/^\/?uploads\//, '')}`;
+  return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
 };
 
 // Helper function to send email

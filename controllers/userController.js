@@ -430,6 +430,20 @@ const getMenus = async (req, res) => {
 
     const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId');
 
+    // Helper function to transform image paths to full URLs
+    const transformImageUrl = (imagePath) => {
+      if (!imagePath) return null;
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        return imagePath;
+      }
+      // Use dynamic backend URL
+      const backendUrl = `${req.protocol}://${req.get('host')}`;
+      if (imagePath.startsWith('/uploads/')) {
+        return `${backendUrl}${imagePath}`;
+      }
+      return `${backendUrl}/uploads/${imagePath.replace(/^\/?uploads\//, '')}`;
+    };
+
     const mapped = menus.map(m => {
       const v = m.vendorId || {};
       return {
@@ -447,7 +461,10 @@ const getMenus = async (req, res) => {
         rating: v.rating || 4.5,
         fssaiNumber: v.fssaiNumber || v.fssaiLicense || '',
         workingDays: v.workingDays || 'Mon - Sat',
-        timings: v.timings || '11:00 AM - 09:00 PM'
+        timings: v.timings || '11:00 AM - 09:00 PM',
+        // Include vendor images for display
+        profileImage: v.profileImage ? transformImageUrl(v.profileImage) : null,
+        kitchenPoster: v.kitchenPoster ? transformImageUrl(v.kitchenPoster) : null
       };
     });
 
