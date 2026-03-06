@@ -13,6 +13,7 @@ const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const { getVendorWeeklyPlan } = require('./controllers/vendorController');
 const { seedDatabase, isDatabaseEmpty } = require('./seeds/sampleData');
+const { startOfferActivationCron } = require('./cron/offerActivation');
 
 const app = express();
 
@@ -43,9 +44,9 @@ app.get('/api/vendor-profile/:vendorId', async (req, res) => {
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/vendor', vendorRoutes); // New
-app.use('/api/users', userRoutes);    // New
-app.use('/api/admin', adminRoutes);   // New
+app.use('/api/vendor', vendorRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Connect to MongoDB and conditionally seed database
 const startServer = async () => {
@@ -71,7 +72,12 @@ const startServer = async () => {
     }
     
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      
+      // Start the offer activation cron job
+      startOfferActivationCron();
+    });
   } catch (err) {
     console.error('MongoDB connection error:', err);
     process.exit(1);
@@ -79,3 +85,4 @@ const startServer = async () => {
 };
 
 startServer();
+

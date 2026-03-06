@@ -22,7 +22,20 @@ const orderSchema = new mongoose.Schema({
     enum: ['Preparing', 'Delivered', 'Cancelled', 'In Kitchen', 'Out for Delivery'], 
     default: 'Preparing' 
   },
-  transactionId: { type: String }
+  transactionId: { type: String },
+
+  // Offer-related fields
+  isOfferOrder: { type: Boolean, default: false },
+  offerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
+  originalPrice: { type: Number },
+  discountPercentage: { type: Number },
+  discountedPrice: { type: Number },
+  scheduledActivationDate: { type: Date },
+  offerStatus: {
+    type: String,
+    enum: ['active', 'pending', 'cancelled', 'expired'],
+    default: null
+  }
 });
 
 module.exports = mongoose.model('Order', orderSchema);

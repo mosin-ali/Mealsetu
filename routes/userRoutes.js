@@ -1,6 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors } = require('../controllers/userController');
+const { getActiveOffers, redeemOffer } = require('../controllers/offerController');
 const upload = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
@@ -32,5 +33,9 @@ router.post('/review', protect, authorize('user'), addReview);
 router.get('/review-eligibility/:vendorId', protect, authorize('user'), checkReviewEligibility);
 router.post('/apply-leave', protect, authorize('user'), applyLeave);
 router.post('/extend-subscription', protect, authorize('user'), extendSubscription);
+
+// Offer routes for users
+router.get('/active-offers', protect, authorize('user'), getActiveOffers);
+router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
 
 module.exports = router;

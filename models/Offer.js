@@ -1,11 +1,46 @@
 const mongoose = require('mongoose');
 
 const offerSchema = new mongoose.Schema({
-  code: { type: String, required: true, unique: true }, // e.g., WELCOME50
-  description: { type: String, required: true },
-  discountValue: { type: Number, required: true },
-  validUntil: { type: Date, required: true },
-  color: { type: String, default: '#f26522' } // UI styling
+  vendorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Vendor',
+    required: true
+  },
+  posterImage: {
+    type: String,
+    required: true
+  },
+  startDate: {
+    type: Date,
+    required: true
+  },
+  endDate: {
+    type: Date,
+    required: true
+  },
+  planDiscounts: [{
+    planName: {
+      type: String,
+      enum: ['One Day', 'Weekly', 'Monthly'],
+      required: true
+    },
+    discountPercentage: {
+      type: Number,
+      required: true,
+      min: 0,
+      max: 100
+    }
+  }],
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, {
+  timestamps: true
 });
 
+// Index for querying active offers by date
+offerSchema.index({ startDate: 1, endDate: 1 });
+
 module.exports = mongoose.model('Offer', offerSchema);
+

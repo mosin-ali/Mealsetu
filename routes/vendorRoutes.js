@@ -2,6 +2,7 @@ const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus } = require('../controllers/vendorController');
+const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 
 const router = express.Router();
 
@@ -34,5 +35,10 @@ router.put('/weekly-plan', saveWeeklyPlan);
 // Shop status endpoints (Open/Close shop)
 router.get('/shop-status', getShopStatus);
 router.put('/shop-status', toggleShopStatus);
+
+// Offer endpoints
+router.get('/offers', getVendorOffers);
+router.post('/offers', upload.single('posterImage'), createOffer);
+router.delete('/offers/:id', deleteOffer);
 
 module.exports = router;
