@@ -15,6 +15,7 @@ const { getVendorWeeklyPlan } = require('./controllers/vendorController');
 const { seedDatabase, isDatabaseEmpty } = require('./seeds/sampleData');
 const { startOfferActivationCron } = require('./cron/offerActivation');
 const { startTrialExpiryCron } = require('./cron/trialExpiry');
+const { verifyEmailConnection } = require('./utils/emailUtils');
 
 const app = express();
 
@@ -73,8 +74,11 @@ const startServer = async () => {
     }
     
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
+    app.listen(PORT, async () => {
       console.log(`Server running on port ${PORT}`);
+      
+      // Verify email configuration at startup
+      await verifyEmailConnection();
       
       // Start the offer activation cron job
       startOfferActivationCron();

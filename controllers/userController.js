@@ -5,7 +5,7 @@ const Vendor = require('../models/Vendor');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform profilePic path to full URL
 const transformProfilePic = (profilePic, protocol, host) => {
@@ -17,30 +17,6 @@ const transformProfilePic = (profilePic, protocol, host) => {
   return `${protocol}://${host}${profilePic.startsWith('/') ? '' : '/'}${profilePic}`;
 };
 
-// Helper function to send email
-const sendEmail = async (to, subject, html) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      subject,
-      html
-    };
-
-    await transporter.sendMail(mailOptions);
-  } catch (error) {
-    console.error('Email sending error:', error);
-    throw error;
-  }
-};
 
 // @desc    Get user active subscription
 // @route   GET /api/users/subscription
@@ -1082,6 +1058,253 @@ const createTrialOrder = async (req, res) => {
   }
 };
 
+// @desc    Get current user's active subscription order
+// @route   GET /api/orders/my-subscription
+const getMySubscription = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    // Find the most recent active order (where endDate > now OR status is active)
+    const activeOrder = await Order.findOne({
+      userId: userId,
+      $or: [
+        { endDate: { $gt: now } },
+        { status: 'active' }
+      ],
+      status: { $ne: 'cancelled' }
+    })
+    .populate('vendorId', 'kitchenName')
+    .sort({ createdAt: -1 });
+
+    if (!activeOrder) {
+      return res.json(null);
+    }
+
+    // Determine if the order is currently active based on endDate
+    const isActive = activeOrder.endDate && new Date(activeOrder.endDate) > now;
+
+    res.json({
+      planType: activeOrder.planType,
+      startDate: activeOrder.startDate,
+      endDate: activeOrder.endDate,
+      status: isActive ? 'active' : 'expired',
+      vendorId: activeOrder.vendorId?._id,
+      vendorName: activeOrder.vendorId?.kitchenName || 'Partner Kitchen',
+      amount: activeOrder.amount,
+      paymentMethod: activeOrder.paymentMethod,
+      orderId: activeOrder._id
+    });
+  } catch (error) {
+    console.error('Get my subscription error:', error);
+    res.status(500).json({ message: 'Error getting subscription', error: error.message });
+  }
+};
+
+// @desc    Get upcoming (pending) orders for current user
+// @route   GET /api/orders/upcoming
+const getUpcomingOrders = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Find all orders with status 'pending' or scheduledStartDate in the future
+    const upcomingOrders = await Order.find({
+      userId: userId,
+      $or: [
+        { status: 'pending' },
+        { offerStatus: 'pending' }
+      ]
+    })
+    .populate('vendorId', 'kitchenName')
+    .sort({ scheduledStartDate: 1 });
+
+    const formattedOrders = upcomingOrders.map(order => ({
+      _id: order._id,
+      planType: order.planType,
+      vendorId: order.vendorId?._id,
+      vendorName: order.vendorId?.kitchenName || 'Partner Kitchen',
+      scheduledStartDate: order.scheduledStartDate || order.scheduledActivationDate,
+      scheduledEndDate: order.scheduledEndDate || order.endDate,
+      amount: order.amount,
+      status: order.status || order.offerStatus,
+      isOfferOrder: order.isOfferOrder
+    }));
+
+    res.json(formattedOrders);
+  } catch (error) {
+    console.error('Get upcoming orders error:', error);
+    res.status(500).json({ message: 'Error getting upcoming orders', error: error.message });
+  }
+};
+
+// @desc    Extend subscription (create pending order)
+// @route   POST /api/orders/extend
+const extendSubscriptionOrder = async (req, res) => {
+  try {
+    const { plan, vendorId, paymentMethod = 'Cash' } = req.body;
+    const userId = req.user._id;
+
+    if (!plan || !vendorId) {
+      return res.status(400).json({ message: 'Plan and vendorId are required' });
+    }
+
+    // Determine duration and amount based on plan
+    let durationDays = 7;
+    let planType = 'Weekly';
+    let amount = 560;
+
+    switch (plan) {
+      case 'WEEKLY':
+        durationDays = 7;
+        planType = 'Weekly';
+        amount = 560;
+        break;
+      case 'MONTHLY':
+        durationDays = 30;
+        planType = 'Monthly';
+        amount = 2000;
+        break;
+      case 'ONEDAY':
+        durationDays = 1;
+        planType = 'Trial';
+        amount = 80;
+        break;
+      default:
+        return res.status(400).json({ message: 'Invalid plan type' });
+    }
+
+    // STEP 1: Query all existing pending orders for this user, sorted by scheduledEndDate descending
+    const existingPendingOrders = await Order.find({
+      userId: userId,
+      status: 'pending'
+    }).sort({ scheduledEndDate: -1 });
+
+    let scheduledStartDate;
+    
+    if (existingPendingOrders && existingPendingOrders.length > 0) {
+      // STEP 2: User has existing pending orders - take the most recent one's scheduledEndDate + 1 day
+      const mostRecentPendingOrder = existingPendingOrders[0];
+      const lastScheduledEndDate = new Date(mostRecentPendingOrder.scheduledEndDate);
+      scheduledStartDate = new Date(lastScheduledEndDate.getTime() + 86400000); // Add 1 day (24 * 60 * 60 * 1000 ms)
+    } else {
+      // STEP 3: No pending orders - check for active subscription
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+
+      const activeSubscription = await Subscription.findOne({
+        userId: userId,
+        status: 'active',
+        expiryDate: { $gte: now }
+      });
+
+      if (activeSubscription && activeSubscription.expiryDate) {
+        // Use active subscription endDate + 1 day
+        const activeEndDate = new Date(activeSubscription.expiryDate);
+        scheduledStartDate = new Date(activeEndDate.getTime() + 86400000); // Add 1 day
+      } else {
+        // No active subscription either - start from tomorrow
+        scheduledStartDate = new Date(now);
+        scheduledStartDate.setDate(scheduledStartDate.getDate() + 1);
+      }
+    }
+
+    // STEP 4: Calculate scheduledEndDate using the formula: scheduledStartDate.getTime() + durationDays * 86400000
+    const scheduledEndDate = new Date(scheduledStartDate.getTime() + durationDays * 86400000);
+
+    // Get user and vendor
+    const user = await User.findById(userId);
+    const vendor = await Vendor.findById(vendorId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Determine payment status based on payment method
+    const paymentStatus = paymentMethod === 'UPI' ? 'Paid' : 'Pending';
+
+    // Create the pending order
+    const order = await Order.create({
+      userId: userId,
+      vendorId,
+      customerName: user.name,
+      amount: amount,
+      deliverySlot: 'Lunch',
+      mealPreference: 'Regular',
+      paymentStatus: paymentStatus,
+      paymentMethod: paymentMethod,
+      planType: planType,
+      status: 'pending',
+      scheduledStartDate: scheduledStartDate,
+      scheduledEndDate: scheduledEndDate,
+      startDate: scheduledStartDate,
+      endDate: scheduledEndDate
+    });
+
+    // Send extension confirmation email (non-blocking)
+    try {
+      const emailSubject = 'MealSetu - Subscription Extended Successfully!';
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0;">✅ Subscription Extended!</h1>
+          </div>
+          <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+            <p style="font-size: 16px;">Dear <strong>${user.name}</strong>,</p>
+            <p style="font-size: 16px;">Your subscription has been <strong>successfully extended</strong>! Here are the details:</p>
+            
+            <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #16a34a;">
+              <h3 style="color: #16a34a; margin: 0 0 15px 0;">📋 Order Details</h3>
+              <p style="margin: 8px 0;"><strong>🏪 Vendor:</strong> ${vendor.kitchenName}</p>
+              <p style="margin: 8px 0;"><strong>📦 Plan Type:</strong> ${planType}</p>
+              <p style="margin: 8px 0;"><strong>💰 Amount Paid:</strong> ₹${amount}</p>
+              <p style="margin: 8px 0;"><strong>📅 Scheduled Start Date:</strong> ${scheduledStartDate.toLocaleDateString('en-IN')}</p>
+              <p style="margin: 8px 0;"><strong>📅 Scheduled End Date:</strong> ${scheduledEndDate.toLocaleDateString('en-IN')}</p>
+              <p style="margin: 8px 0;"><strong>⏱️ Duration:</strong> ${durationDays} days</p>
+            </div>
+            
+            <p style="color: #555; font-size: 16px; background: #fef3c7; padding: 15px; border-radius: 8px;">
+              ⏰ <strong>Note:</strong> Your new plan will automatically activate on <strong>${scheduledStartDate.toLocaleDateString('en-IN')}</strong>.
+            </p>
+            
+            <p style="color: #555;">Thank you for choosing MealSetu!</p>
+          </div>
+          <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+            <p>MealSetu - Quality Food, Delivered with Care</p>
+          </div>
+        </div>
+      `;
+      await sendEmail(user.email, emailSubject, emailHtml);
+    } catch (emailError) {
+      console.error('Failed to send extension confirmation email:', emailError.message);
+    }
+
+    // Populate vendor info for response
+    const populatedOrder = await Order.findById(order._id).populate('vendorId', 'kitchenName');
+
+    res.status(201).json({
+      message: 'Subscription extended successfully',
+      order: {
+        _id: populatedOrder._id,
+        planType: populatedOrder.planType,
+        vendorId: populatedOrder.vendorId._id,
+        vendorName: populatedOrder.vendorId.kitchenName,
+        scheduledStartDate: populatedOrder.scheduledStartDate,
+        scheduledEndDate: populatedOrder.scheduledEndDate,
+        amount: populatedOrder.amount,
+        status: populatedOrder.status
+      }
+    });
+
+  } catch (error) {
+    console.error('Extend subscription order error:', error);
+    res.status(500).json({ message: 'Error extending subscription', error: error.message });
+  }
+};
+
 module.exports = {
   getUserSubscription,
   getActiveSubscriptionStatus,
@@ -1101,5 +1324,8 @@ module.exports = {
   getApprovedVendors,
   checkReviewEligibility,
   getTrialEligibility,
-  createTrialOrder
+  createTrialOrder,
+  getMySubscription,
+  getUpcomingOrders,
+  extendSubscriptionOrder
 };

@@ -6,7 +6,7 @@ const User = require('../models/User');
 const Complaint = require('../models/Complaint');
 const Subscription = require('../models/Subscription');
 const Payout = require('../models/Payout');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform profilePic path to full URL
 const transformProfilePic = (profilePic, req) => {
@@ -54,31 +54,6 @@ const transformKitchenPoster = (kitchenPoster, req) => {
   
   // For any other relative path, assume it's in uploads folder
   return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
-};
-
-// Helper function to send email
-const sendEmail = async (to, subject, html) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      subject,
-      html
-    };
-
-    await transporter.sendMail(mailOptions);
-  } catch (error) {
-    console.error('Email sending error:', error);
-    // Don't throw - email failure shouldn't break the main flow
-  }
 };
 
 // @desc    Get vendor profile

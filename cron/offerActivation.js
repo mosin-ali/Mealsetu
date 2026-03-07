@@ -4,33 +4,7 @@ const Subscription = require('../models/Subscription');
 const Offer = require('../models/Offer');
 const User = require('../models/User');
 const Vendor = require('../models/Vendor');
-const nodemailer = require('nodemailer');
-
-// Helper function to send email
-const sendEmail = async (to, subject, html) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      subject,
-      html
-    };
-
-    await transporter.sendMail(mailOptions);
-    return true;
-  } catch (error) {
-    console.error('Email sending error:', error);
-    return false;
-  }
-};
+const { sendEmail } = require('../utils/emailUtils');
 
 // Function to process pending offer orders
 const processPendingOfferOrders = async () => {
@@ -107,6 +81,7 @@ const processPendingOfferOrders = async () => {
         // Activate the order
         order.offerStatus = 'active';
         order.orderStatus = 'Preparing';
+        order.status = 'active';
         await order.save();
 
         // Update the subscription to active
@@ -176,22 +151,239 @@ const processPendingOfferOrders = async () => {
   }
 };
 
+// Function to process all pending subscription orders (including non-offer extensions)
+const processPendingSubscriptionOrders = async () => {
+  console.log('🔄 Running cron job: Processing pending subscription orders...');
+  
+  try {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const today = new Date(now);
+
+    // Find all pending orders where scheduledStartDate has arrived
+    const pendingOrders = await Order.find({
+      status: 'pending',
+      scheduledStartDate: { $lte: now }
+    }).populate('vendorId').populate('userId');
+
+    console.log(`📋 Found ${pendingOrders.length} pending subscription orders to process`);
+
+    for (const order of pendingOrders) {
+      try {
+        // Check if there's a previous active order that needs to be expired
+        const previousActiveOrder = await Order.findOne({
+          userId: order.userId._id,
+          status: 'active',
+          _id: { $ne: order._id }
+        }).sort({ endDate: -1 });
+
+        // If previous order has ended, expire it first
+        if (previousActiveOrder && previousActiveOrder.endDate) {
+          const prevEndDate = new Date(previousActiveOrder.endDate);
+          if (prevEndDate < now) {
+            previousActiveOrder.status = 'expired';
+            await previousActiveOrder.save();
+            console.log(`⏰ Expired previous order ${previousActiveOrder._id} for user ${order.userId.name}`);
+          }
+        }
+
+        // Calculate actual start and end dates
+        const startDate = order.scheduledStartDate || now;
+        let endDate = order.scheduledEndDate;
+        
+        // If no scheduledEndDate, calculate based on plan type
+        if (!endDate) {
+          const durationDays = order.planType === 'Weekly' ? 7 : order.planType === 'Monthly' ? 30 : 7;
+          endDate = new Date(startDate);
+          endDate.setDate(endDate.getDate() + durationDays);
+        }
+
+        // Update order status to active
+        order.status = 'active';
+        order.startDate = startDate;
+        order.endDate = endDate;
+        await order.save();
+
+        // Also update the subscription if exists
+        await Subscription.findOneAndUpdate(
+          { userId: order.userId._id, status: 'pending' },
+          { 
+            status: 'active',
+            startDate: startDate,
+            expiryDate: endDate
+          }
+        );
+
+        // Update user expiry date
+        await User.findByIdAndUpdate(order.userId._id, {
+          expiryDate: endDate
+        });
+
+        // Send activation email to user
+        const emailSubject = '🎉 Your Upcoming Plan is Now Active! - MealSetu';
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="color: white; margin: 0;">🎉 Plan Activated!</h1>
+            </div>
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+              <p style="font-size: 16px;">Dear <strong>${order.userId.name}</strong>,</p>
+              <p style="font-size: 16px;">Great news! Your upcoming plan from <strong>${order.vendorId?.kitchenName || 'MealSetu'}</strong> is now <strong>active</strong>!</p>
+              
+              <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #16a34a;">
+                <h3 style="color: #16a34a; margin: 0 0 15px 0;">📋 Plan Details</h3>
+                <p style="margin: 8px 0;"><strong>🏪 Kitchen:</strong> ${order.vendorId?.kitchenName || 'MealSetu'}</p>
+                <p style="margin: 8px 0;"><strong>📦 Plan Type:</strong> ${order.planType}</p>
+                <p style="margin: 8px 0;"><strong>💰 Amount Paid:</strong> ₹${order.amount}</p>
+                <p style="margin: 8px 0;"><strong>📅 Start Date:</strong> ${new Date(startDate).toLocaleDateString('en-IN')}</p>
+                <p style="margin: 8px 0;"><strong>📅 End Date:</strong> ${new Date(endDate).toLocaleDateString('en-IN')}</p>
+              </div>
+              
+              <p style="color: #555;">Thank you for choosing MealSetu! Enjoy your delicious meals!</p>
+            </div>
+            <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+              <p>MealSetu - Quality Food, Delivered with Care</p>
+            </div>
+          </div>
+        `;
+
+        await sendEmail(order.userId.email, emailSubject, emailHtml);
+
+        console.log(`✅ Activated subscription order ${order._id} for user ${order.userId.name}`);
+      } catch (orderError) {
+        console.error(`❌ Error processing subscription order ${order._id}:`, orderError);
+      }
+    }
+
+    console.log('✅ Cron job completed: Processed pending subscription orders');
+  } catch (error) {
+    console.error('❌ Cron job error:', error);
+  }
+};
+
+// Function to send expiry reminder emails
+const sendExpiryReminders = async () => {
+  console.log('🔄 Running cron job: Sending expiry reminder emails...');
+  
+  try {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // Calculate 3 days from now
+    const threeDaysFromNow = new Date(now);
+    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+    threeDaysFromNow.setHours(23, 59, 59, 999);
+
+    // Find users with active plans expiring in the next 3 days
+    // who don't have any upcoming pending orders
+    const users = await User.find({ role: 'user' });
+
+    for (const user of users) {
+      try {
+        // Check if user has any pending orders (upcoming plans)
+        const hasUpcomingPlan = await Order.findOne({
+          userId: user._id,
+          status: 'pending'
+        });
+
+        if (hasUpcomingPlan) {
+          // User has upcoming plan, skip reminder
+          continue;
+        }
+
+        // Find user's active subscription
+        const activeSubscription = await Subscription.findOne({
+          userId: user._id,
+          status: 'active'
+        });
+
+        if (!activeSubscription) {
+          // No active subscription, skip
+          continue;
+        }
+
+        const expiryDate = new Date(activeSubscription.expiryDate);
+        
+        // Check if subscription expires within 3 days
+        if (expiryDate > now && expiryDate <= threeDaysFromNow) {
+          const daysRemaining = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+          
+          // Send reminder email
+          const emailSubject = `⏰ Your Plan Expires in ${daysRemaining} Days! - MealSetu`;
+          const emailHtml = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                <h1 style="color: white; margin: 0;">⏰ Plan Expiring Soon!</h1>
+              </div>
+              <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+                <p style="font-size: 16px;">Dear <strong>${user.name}</strong>,</p>
+                <p style="font-size: 16px;">Your current meal plan from <strong>MealSetu</strong> will expire in <strong>${daysRemaining} day${daysRemaining > 1 ? 's' : ''}</strong>!</p>
+                
+                <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #f59e0b;">
+                  <h3 style="color: #f59e0b; margin: 0 0 15px 0;">📋 Current Plan</h3>
+                  <p style="margin: 8px 0;"><strong>📅 Expires On:</strong> ${expiryDate.toLocaleDateString('en-IN')}</p>
+                  <p style="margin: 8px 0;"><strong>⏱️ Days Remaining:</strong> ${daysRemaining} day${daysRemaining > 1 ? 's' : ''}</p>
+                </div>
+                
+                <p style="color: #dc2626; font-size: 16px; font-weight: bold;">
+                  ⚠️ Don't miss out on your meals! Extend your subscription or order a new plan to continue receiving meals without interruption.
+                </p>
+                
+                <div style="text-align: center; margin: 30px 0;">
+                  <a href="#" style="background: #f26522; color: white; padding: 15px 40px; text-decoration: none; border-radius: 30px; font-weight: bold; font-size: 16px; display: inline-block;">Extend Subscription Now</a>
+                </div>
+                
+                <p style="color: #555;">Visit your dashboard to explore Weekly and Monthly subscription plans.</p>
+                <p style="color: #555;">Thank you for choosing MealSetu!</p>
+              </div>
+              <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+                <p>MealSetu - Quality Food, Delivered with Care</p>
+              </div>
+            </div>
+          `;
+
+          await sendEmail(user.email, emailSubject, emailHtml);
+          console.log(`📧 Sent expiry reminder to ${user.email} (expires in ${daysRemaining} days)`);
+        }
+      } catch (userError) {
+        console.error(`❌ Error processing user ${user.email}:`, userError);
+      }
+    }
+
+    console.log('✅ Cron job completed: Sent expiry reminder emails');
+  } catch (error) {
+    console.error('❌ Cron job error:', error);
+  }
+};
+
+// Combined function to run all subscription-related cron tasks
+const processAllSubscriptions = async () => {
+  console.log('=== Starting combined subscription cron job ===');
+  await processPendingOfferOrders();
+  await processPendingSubscriptionOrders();
+  await sendExpiryReminders();
+  console.log('=== Completed combined subscription cron job ===');
+};
+
 // Schedule cron job to run every day at midnight
 // The cron expression: '0 0 * * *' means at 00:00 (midnight) every day
 const startOfferActivationCron = () => {
-  console.log('📅 Offer activation cron job scheduled to run daily at midnight');
+  console.log('📅 Subscription activation cron job scheduled to run daily at midnight');
   
   // Run immediately on startup (for testing)
-  // processPendingOfferOrders();
+  // processAllSubscriptions();
   
   // Schedule for midnight every day
   cron.schedule('0 0 * * *', () => {
-    processPendingOfferOrders();
+    processAllSubscriptions();
   });
 };
 
 module.exports = {
   startOfferActivationCron,
-  processPendingOfferOrders
+  processPendingOfferOrders,
+  processPendingSubscriptionOrders,
+  sendExpiryReminders,
+  processAllSubscriptions
 };
 

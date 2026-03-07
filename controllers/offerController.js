@@ -3,7 +3,7 @@ const Vendor = require('../models/Vendor');
 const User = require('../models/User');
 const Order = require('../models/Order');
 const Subscription = require('../models/Subscription');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform image path to full URL
 const transformImageUrl = (imagePath, req) => {
@@ -28,31 +28,6 @@ const transformImageUrl = (imagePath, req) => {
   return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
 };
 
-// Helper function to send email
-const sendEmail = async (to, subject, html) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      subject,
-      html
-    };
-
-    await transporter.sendMail(mailOptions);
-    return true;
-  } catch (error) {
-    console.error('Email sending error:', error);
-    return false;
-  }
-};
 
 // @desc    Create a new offer (vendor)
 // @route   POST /api/vendor/offers
@@ -355,6 +330,21 @@ const redeemOffer = async (req, res) => {
     const discountPercentage = planDiscount.discountPercentage;
     const discountedPrice = Math.round(originalPrice * (1 - discountPercentage / 100));
 
+    // Calculate duration in days based on planType
+    let durationDays = 1;
+    switch (planType) {
+      case 'Weekly':
+        durationDays = 7;
+        break;
+      case 'Monthly':
+        durationDays = 30;
+        break;
+      case 'One Day':
+      default:
+        durationDays = 1;
+        break;
+    }
+
     // Check if user has an active subscription
     const activeSubscription = await Subscription.findOne({
       userId: userId,
@@ -362,20 +352,33 @@ const redeemOffer = async (req, res) => {
       expiryDate: { $gte: now }
     });
 
-    // If user has active plan, we need to schedule the offer
+    // If user has active plan, we need to schedule the offer (pending order)
     if (activeSubscription) {
-      // Calculate scheduled activation date (next day after current plan expires)
-      const currentExpiry = new Date(activeSubscription.expiryDate);
-      const scheduledActivationDate = new Date(currentExpiry);
-      scheduledActivationDate.setDate(scheduledActivationDate.getDate() + 1);
+      // STEP 1: Query all existing pending orders for this user, sorted by scheduledEndDate descending
+      const existingPendingOrders = await Order.find({
+        userId: userId,
+        status: 'pending'
+      }).sort({ scheduledEndDate: -1 });
 
-      // Check if the offer will still be valid when the new plan starts
-      if (scheduledActivationDate > endDate) {
-        return res.status(400).json({ 
-          message: 'This offer will expire before your current plan ends. Please wait for your current plan to complete.',
-          expiredOffer: true
-        });
+      let scheduledStartDate;
+      
+      if (existingPendingOrders && existingPendingOrders.length > 0) {
+        // STEP 2: User has existing pending orders - take the most recent one's scheduledEndDate + 1 day
+        const mostRecentPendingOrder = existingPendingOrders[0];
+        const lastScheduledEndDate = new Date(mostRecentPendingOrder.scheduledEndDate);
+        scheduledStartDate = new Date(lastScheduledEndDate.getTime() + 86400000); // Add 1 day
+      } else if (activeSubscription && activeSubscription.expiryDate) {
+        // STEP 3: No pending orders but has active subscription - use active subscription endDate + 1 day
+        const activeEndDate = new Date(activeSubscription.expiryDate);
+        scheduledStartDate = new Date(activeEndDate.getTime() + 86400000); // Add 1 day
+      } else {
+        // Fallback - start from tomorrow
+        scheduledStartDate = new Date(now);
+        scheduledStartDate.setDate(scheduledStartDate.getDate() + 1);
       }
+
+      // STEP 4: Calculate scheduledEndDate using the formula: scheduledStartDate.getTime() + durationDays * 86400000
+      const scheduledEndDate = new Date(scheduledStartDate.getTime() + durationDays * 86400000);
 
       // Create a pending order
       const order = await Order.create({
@@ -392,16 +395,16 @@ const redeemOffer = async (req, res) => {
         originalPrice: originalPrice,
         discountPercentage: discountPercentage,
         discountedPrice: discountedPrice,
-        scheduledActivationDate: scheduledActivationDate,
+        scheduledActivationDate: scheduledStartDate,
+        scheduledStartDate: scheduledStartDate,
+        scheduledEndDate: scheduledEndDate,
         offerStatus: 'pending',
         customerName: req.user.name
       });
 
       // Also create a pending subscription
-      const subscriptionStartDate = scheduledActivationDate;
-      const subscriptionEndDate = new Date(subscriptionStartDate);
-      const durationDays = planType === 'One Day' ? 1 : planType === 'Weekly' ? 7 : 30;
-      subscriptionEndDate.setDate(subscriptionEndDate.getDate() + durationDays);
+      const subscriptionStartDate = scheduledStartDate;
+      const subscriptionEndDate = new Date(scheduledStartDate.getTime() + durationDays * 86400000);
 
       await Subscription.create({
         userId: userId,
@@ -416,11 +419,50 @@ const redeemOffer = async (req, res) => {
         offerId: offer._id
       });
 
+      // Send confirmation email (non-blocking)
+      try {
+        const emailSubject = 'MealSetu - Offer Redeemed Successfully!';
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: linear-gradient(135deg, #f26522 0%, #ff6b35 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="color: white; margin: 0;">🎉 Offer Redeemed!</h1>
+            </div>
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+              <p style="font-size: 16px;">Dear <strong>${req.user.name}</strong>,</p>
+              <p style="font-size: 16px;">Your offer from <strong>${offer.vendorId.kitchenName}</strong> has been redeemed successfully!</p>
+              
+              <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #f26522;">
+                <h3 style="color: #f26522; margin: 0 0 15px 0;">📋 Offer Details</h3>
+                <p style="margin: 8px 0;"><strong>🏪 Vendor:</strong> ${offer.vendorId.kitchenName}</p>
+                <p style="margin: 8px 0;"><strong>📦 Plan Type:</strong> ${planType}</p>
+                <p style="margin: 8px 0;"><strong>💰 Original Price:</strong> ₹${originalPrice}</p>
+                <p style="margin: 8px 0;"><strong>🏷️ Discount:</strong> ${discountPercentage}% OFF</p>
+                <p style="margin: 8px 0; font-size: 18px; color: #16a34a;"><strong>✅ Amount Paid:</strong> ₹${discountedPrice}</p>
+                <p style="margin: 8px 0;"><strong>📅 Scheduled Start Date:</strong> ${scheduledStartDate.toLocaleDateString('en-IN')}</p>
+                <p style="margin: 8px 0;"><strong>📅 Scheduled End Date:</strong> ${scheduledEndDate.toLocaleDateString('en-IN')}</p>
+              </div>
+              
+              <p style="color: #555; font-size: 16px; background: #fef3c7; padding: 15px; border-radius: 8px;">
+                ⏰ <strong>Note:</strong> Your discounted plan will automatically activate on <strong>${scheduledStartDate.toLocaleDateString('en-IN')}</strong>.
+              </p>
+              
+              <p style="color: #555;">Thank you for choosing MealSetu!</p>
+            </div>
+            <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+              <p>MealSetu - Quality Food, Delivered with Care</p>
+            </div>
+          </div>
+        `;
+        await sendEmail(req.user.email, emailSubject, emailHtml);
+      } catch (emailError) {
+        console.error('Failed to send offer redemption confirmation email:', emailError.message);
+      }
+
       return res.status(201).json({
         message: 'Offer redeemed successfully!',
         status: 'pending',
         currentPlanExpiry: activeSubscription.expiryDate,
-        scheduledActivationDate: scheduledActivationDate,
+        scheduledActivationDate: scheduledStartDate,
         offerDetails: {
           vendorName: offer.vendorId.kitchenName,
           planType: planType,
@@ -434,6 +476,9 @@ const redeemOffer = async (req, res) => {
 
     // No active subscription - create and activate immediately
     // Create order
+    const subscriptionStartDate = new Date();
+    const subscriptionEndDate = new Date(subscriptionStartDate.getTime() + durationDays * 86400000);
+
     const order = await Order.create({
       userId: userId,
       vendorId: offer.vendorId._id,
@@ -453,11 +498,6 @@ const redeemOffer = async (req, res) => {
     });
 
     // Create and activate subscription immediately
-    const subscriptionStartDate = new Date();
-    const subscriptionEndDate = new Date(subscriptionStartDate);
-    const durationDays = planType === 'One Day' ? 1 : planType === 'Weekly' ? 7 : 30;
-    subscriptionEndDate.setDate(subscriptionEndDate.getDate() + durationDays);
-
     const subscription = await Subscription.create({
       userId: userId,
       vendorId: offer.vendorId._id,
@@ -475,28 +515,32 @@ const redeemOffer = async (req, res) => {
     const User = require('../models/User');
     await User.findByIdAndUpdate(userId, { expiryDate: subscriptionEndDate });
 
-    // Send confirmation email
-    const emailSubject = `🎉 Offer Activated! - ${offer.vendorId.kitchenName}`;
-    const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h1 style="color: #16a34a;">Offer Activated!</h1>
-        <p>Dear ${req.user.name},</p>
-        <p>Your redeemed offer from <strong>${offer.vendorId.kitchenName}</strong> is now active!</p>
-        <div style="background: #f5f5f5; padding: 20px; margin: 20px 0;">
-          <p><strong>Vendor:</strong> ${offer.vendorId.kitchenName}</p>
-          <p><strong>Plan:</strong> ${planType}</p>
-          <p><strong>Original Price:</strong> ₹${originalPrice}</p>
-          <p><strong>Discount:</strong> ${discountPercentage}% OFF</p>
-          <p><strong>You Paid:</strong> ₹${discountedPrice}</p>
-          <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
-          <p><strong>End Date:</strong> ${subscriptionEndDate.toLocaleDateString()}</p>
+    // Send confirmation email (await for immediate activation)
+    try {
+      const emailSubject = `🎉 Offer Activated! - ${offer.vendorId.kitchenName}`;
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #16a34a;">Offer Activated!</h1>
+          <p>Dear ${req.user.name},</p>
+          <p>Your redeemed offer from <strong>${offer.vendorId.kitchenName}</strong> is now active!</p>
+          <div style="background: #f5f5f5; padding: 20px; margin: 20px 0;">
+            <p><strong>Vendor:</strong> ${offer.vendorId.kitchenName}</p>
+            <p><strong>Plan:</strong> ${planType}</p>
+            <p><strong>Original Price:</strong> ₹${originalPrice}</p>
+            <p><strong>Discount:</strong> ${discountPercentage}% OFF</p>
+            <p><strong>You Paid:</strong> ₹${discountedPrice}</p>
+            <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
+            <p><strong>End Date:</strong> ${subscriptionEndDate.toLocaleDateString()}</p>
+          </div>
+          <p>Enjoy your discounted meals!</p>
+          <hr/>
+          <p style="color: #999; font-size: 12px;">MealSetu - Quality Food, Delivered with Care</p>
         </div>
-        <p>Enjoy your discounted meals!</p>
-        <hr/>
-        <p style="color: #999; font-size: 12px;">MealSetu - Quality Food, Delivered with Care</p>
-      </div>
-    `;
-    sendEmail(req.user.email, emailSubject, emailHtml);
+      `;
+      await sendEmail(req.user.email, emailSubject, emailHtml);
+    } catch (emailError) {
+      console.error('Failed to send offer activation email:', emailError.message);
+    }
 
     return res.status(201).json({
       message: 'Offer redeemed and activated successfully!',

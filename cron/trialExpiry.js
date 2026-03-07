@@ -3,33 +3,7 @@ const Order = require('../models/Order');
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
 const Vendor = require('../models/Vendor');
-const nodemailer = require('nodemailer');
-
-// Helper function to send email
-const sendEmail = async (to, subject, html) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      subject,
-      html
-    };
-
-    await transporter.sendMail(mailOptions);
-    return true;
-  } catch (error) {
-    console.error('Email sending error:', error);
-    return false;
-  }
-};
+const { sendEmail } = require('../utils/emailUtils');
 
 // Function to check for expired trials and send reminder emails
 const processExpiredTrials = async () => {

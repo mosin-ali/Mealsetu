@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getCurrentUser, getActiveSubscriptionStatus, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors, createTrialOrder, getTrialEligibility } = require('../controllers/userController');
+const { getCurrentUser, getActiveSubscriptionStatus, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors, createTrialOrder, getTrialEligibility, getMySubscription, getUpcomingOrders, extendSubscriptionOrder } = require('../controllers/userController');
 const { getActiveOffers, redeemOffer } = require('../controllers/offerController');
 const upload = require('../middleware/uploadMiddleware');
 
@@ -43,5 +43,10 @@ router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
 router.post('/trial', protect, authorize('user'), createTrialOrder);
 router.get('/trial-eligibility/:vendorId', protect, authorize('user'), getTrialEligibility);
 router.get('/subscription-status', protect, authorize('user'), getActiveSubscriptionStatus);
+
+// Order routes for subscription management
+router.get('/orders/my-subscription', protect, authorize('user'), getMySubscription);
+router.get('/orders/upcoming', protect, authorize('user'), getUpcomingOrders);
+router.post('/orders/extend', protect, authorize('user'), extendSubscriptionOrder);
 
 module.exports = router;

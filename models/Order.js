@@ -40,6 +40,17 @@ const orderSchema = new mongoose.Schema({
     type: String,
     enum: ['active', 'pending', 'cancelled', 'expired'],
     default: null
+  },
+
+  // For subscription extension - scheduled start/end dates for pending orders
+  scheduledStartDate: { type: Date },
+  scheduledEndDate: { type: Date },
+
+  // Order status: pending, active, expired
+  status: {
+    type: String,
+    enum: ['pending', 'active', 'expired', 'cancelled'],
+    default: 'active'
   }
 });
 

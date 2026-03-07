@@ -3,7 +3,7 @@ const Vendor = require('../models/Vendor');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../utils/emailUtils');
 
 // Generate JWT
 const generateToken = (id, role) => {
@@ -13,26 +13,6 @@ const generateToken = (id, role) => {
 // Helper to generate 6-digit OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// Helper to send email
-const sendEmail = async (to, subject, html) => {
-  const transporter = nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE || 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-
-  const mailOptions = {
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-    to,
-    subject,
-    html
-  };
-
-  await transporter.sendMail(mailOptions);
 };
 
 // @desc    Register new user
