@@ -48,7 +48,11 @@ const vendorSchema = new mongoose.Schema({
   menuPrice: { type: Number, default: 80 },
   rating: { type: Number, default: 4.5 },
   workingDays: { type: String, default: 'Mon - Sat' },
-  timings: { type: String, default: '11:00 AM - 09:00 PM' }
+  timings: { type: String, default: '11:00 AM - 09:00 PM' },
+
+  // --- Trial Settings ---
+  trialEnabled: { type: Boolean, default: false }, // Vendor must explicitly enable trials
+  trialFee: { type: Number, default: 0 } // 0 = completely free, >0 = small charge for trial
 });
 
 module.exports = mongoose.model('Vendor', vendorSchema);

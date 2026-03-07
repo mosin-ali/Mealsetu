@@ -32,7 +32,13 @@ const userSchema = new mongoose.Schema({
   // --- OTP Verification Fields ---
   resetOTP: { type: String },
   resetOTPExpire: { type: Date },
-  isOTPVerified: { type: Boolean, default: false }
+  isOTPVerified: { type: Boolean, default: false },
+
+  // --- Trial History (tracks which vendors user has taken trials from) ---
+  trialHistory: [{
+    vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
+    trialTakenAt: { type: Date, default: Date.now }
+  }]
 });
 
 module.exports = mongoose.model('User', userSchema);

@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 
 const router = express.Router();
@@ -40,5 +40,8 @@ router.put('/shop-status', toggleShopStatus);
 router.get('/offers', getVendorOffers);
 router.post('/offers', upload.single('posterImage'), createOffer);
 router.delete('/offers/:id', deleteOffer);
+
+// Trial Settings endpoint
+router.patch('/trial-settings', updateTrialSettings);
 
 module.exports = router;

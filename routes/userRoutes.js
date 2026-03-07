@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors } = require('../controllers/userController');
+const { getCurrentUser, getActiveSubscriptionStatus, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors, createTrialOrder, getTrialEligibility } = require('../controllers/userController');
 const { getActiveOffers, redeemOffer } = require('../controllers/offerController');
 const upload = require('../middleware/uploadMiddleware');
 
@@ -24,6 +24,7 @@ router.get('/vendor-rating/:vendorId', getVendorRating);
 // Protected routes (User only)
 router.get('/me', protect, getCurrentUser);
 router.get('/subscription', protect, authorize('user'), getUserSubscription);
+router.get('/subscription-status', protect, authorize('user'), getActiveSubscriptionStatus);
 router.put('/:id', protect, updateUserProfile);
 router.put('/:id/profile-pic', protect, upload.single('profilePic'), updateUserProfilePic);
 router.post('/:id/change-password', protect, changePassword);
@@ -37,5 +38,10 @@ router.post('/extend-subscription', protect, authorize('user'), extendSubscripti
 // Offer routes for users
 router.get('/active-offers', protect, authorize('user'), getActiveOffers);
 router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
+
+// Trial routes
+router.post('/trial', protect, authorize('user'), createTrialOrder);
+router.get('/trial-eligibility/:vendorId', protect, authorize('user'), getTrialEligibility);
+router.get('/subscription-status', protect, authorize('user'), getActiveSubscriptionStatus);
 
 module.exports = router;

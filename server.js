@@ -14,6 +14,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const { getVendorWeeklyPlan } = require('./controllers/vendorController');
 const { seedDatabase, isDatabaseEmpty } = require('./seeds/sampleData');
 const { startOfferActivationCron } = require('./cron/offerActivation');
+const { startTrialExpiryCron } = require('./cron/trialExpiry');
 
 const app = express();
 
@@ -77,6 +78,9 @@ const startServer = async () => {
       
       // Start the offer activation cron job
       startOfferActivationCron();
+      
+      // Start the trial expiry cron job
+      startTrialExpiryCron();
     });
   } catch (err) {
     console.error('MongoDB connection error:', err);

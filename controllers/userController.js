@@ -432,7 +432,7 @@ const getMenus = async (req, res) => {
     end.setHours(23,59,59,999);
 
     // Populate vendor with all relevant fields including kitchenPoster for image display
-    const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId', 'kitchenName address kitchenAddress menuPrice rating workingDays timings profileImage kitchenPoster fssaiNumber fssaiLicense');
+    const menus = await Menu.find({ date: { $gte: start, $lte: end }, isLive: true }).populate('vendorId', 'kitchenName address kitchenAddress menuPrice rating workingDays timings profileImage kitchenPoster fssaiNumber fssaiLicense trialEnabled trialFee');
 
     // Helper function to transform image paths to full URLs
     const transformImageUrl = (imagePath) => {
@@ -468,7 +468,10 @@ const getMenus = async (req, res) => {
         timings: v.timings || '11:00 AM - 09:00 PM',
         // Include vendor images for display - always include both profileImage and kitchenPoster
         profileImage: v.profileImage ? transformImageUrl(v.profileImage) : null,
-        kitchenPoster: v.kitchenPoster ? transformImageUrl(v.kitchenPoster) : null
+        kitchenPoster: v.kitchenPoster ? transformImageUrl(v.kitchenPoster) : null,
+        // Trial settings - explicitly check for true, default to false
+        trialEnabled: v.trialEnabled === true,
+        trialFee: v.trialFee || 0
       };
     });
 
@@ -736,7 +739,7 @@ const getApprovedVendors = async (req, res) => {
     const vendors = await Vendor.find({ 
       approvalStatus: 'Approved',
       isOpen: true
-    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan');
+    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee');
 
     // Transform vendor data for frontend display
     const transformedVendors = vendors.map(vendor => ({
@@ -753,7 +756,10 @@ const getApprovedVendors = async (req, res) => {
       timings: vendor.timings || '11:00 AM - 09:00 PM',
       profileImage: vendor.profileImage ? transformProfilePic(vendor.profileImage, req.protocol, req.get('host')) : null,
       kitchenPoster: vendor.kitchenPoster ? transformProfilePic(vendor.kitchenPoster, req.protocol, req.get('host')) : null,
-      weeklyPlan: vendor.weeklyPlan
+      weeklyPlan: vendor.weeklyPlan,
+      // Trial settings - explicitly check for true, default to false
+      trialEnabled: vendor.trialEnabled === true,
+      trialFee: vendor.trialFee || 0
     }));
 
     res.json(transformedVendors);
@@ -801,4 +807,299 @@ const checkReviewEligibility = async (req, res) => {
   }
 };
 
-module.exports = { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors };
+// @desc    Get trial eligibility for a vendor
+// @route   GET /api/users/trial-eligibility/:vendorId
+const getTrialEligibility = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const userId = req.user._id;
+
+    // Get user to check trial history
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get vendor to check trial settings
+    const vendor = await Vendor.findById(vendorId);
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Check if vendor has trials enabled
+    if (!vendor.trialEnabled) {
+      return res.json({
+        eligible: false,
+        reason: 'trial_not_available',
+        message: 'This vendor does not offer trials'
+      });
+    }
+
+    // Check if user has already used trial for this vendor
+    const hasUsedTrial = user.trialHistory && user.trialHistory.some(
+      trial => trial.vendorId && trial.vendorId.toString() === vendorId
+    );
+
+    if (hasUsedTrial) {
+      return res.json({
+        eligible: false,
+        reason: 'trial_already_used',
+        message: 'You have already used a trial for this vendor',
+        trialFee: vendor.trialFee || 0
+      });
+    }
+
+    // User is eligible for trial
+    return res.json({
+      eligible: true,
+      trialFee: vendor.trialFee || 0,
+      message: vendor.trialFee > 0 
+        ? `Trial available for ₹${vendor.trialFee}` 
+        : 'Free trial available'
+    });
+  } catch (error) {
+    console.error('Get trial eligibility error:', error);
+    res.status(500).json({ message: 'Error checking trial eligibility' });
+  }
+};
+
+// @desc    Get active subscription status (for checking if user has active plan)
+// @route   GET /api/users/subscription-status
+const getActiveSubscriptionStatus = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Check for active subscription in Subscription collection
+    const activeSubscription = await Subscription.findOne({ 
+      userId: userId, 
+      status: 'active',
+      expiryDate: { $gt: today }
+    }).populate('vendorId', 'kitchenName');
+
+    if (activeSubscription) {
+      return res.json({
+        hasActivePlan: true,
+        planType: activeSubscription.planType,
+        startDate: activeSubscription.startDate,
+        endDate: activeSubscription.expiryDate,
+        vendorName: activeSubscription.vendorId?.kitchenName || 'Unknown Vendor'
+      });
+    }
+
+    // Also check Order collection for any active orders with future endDate
+    const activeOrder = await Order.findOne({
+      userId: userId,
+      endDate: { $gt: today }
+    }).sort({ createdAt: -1 }).populate('vendorId', 'kitchenName');
+
+    if (activeOrder) {
+      return res.json({
+        hasActivePlan: true,
+        planType: activeOrder.planType,
+        startDate: activeOrder.startDate,
+        endDate: activeOrder.endDate,
+        vendorName: activeOrder.vendorId?.kitchenName || 'Unknown Vendor'
+      });
+    }
+
+    // No active plan found
+    return res.json({
+      hasActivePlan: false,
+      planType: null,
+      startDate: null,
+      endDate: null,
+      vendorName: null
+    });
+  } catch (error) {
+    console.error('Get active subscription status error:', error);
+    res.status(500).json({ message: 'Error checking subscription status', error: error.message });
+  }
+};
+
+// @desc    Create a trial order
+// @route   POST /api/users/trial
+const createTrialOrder = async (req, res) => {
+  try {
+    const { vendorId, paymentMethod = 'Cash', mealPreference = 'Regular' } = req.body;
+    
+    console.log('Trial order request received:', { vendorId, paymentMethod, mealPreference, userId: req.user?._id });
+
+    if (!vendorId) {
+      return res.status(400).json({ message: 'vendorId is required' });
+    }
+
+    // Get user
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get vendor
+    const vendor = await Vendor.findById(vendorId);
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Check if vendor has trials enabled
+    if (!vendor.trialEnabled) {
+      return res.status(400).json({ message: 'This vendor does not offer trials' });
+    }
+
+    // Check if user has already used trial for this vendor
+    const hasUsedTrial = user.trialHistory && user.trialHistory.some(
+      trial => trial.vendorId && trial.vendorId.toString() === vendorId
+    );
+
+    if (hasUsedTrial) {
+      return res.status(403).json({ message: 'You have already used a trial for this vendor' });
+    }
+
+    // Calculate trial dates (2 days from now)
+    const startDate = new Date();
+    const endDate = new Date(Date.now() + 172800000); // 2 days in milliseconds
+
+    const trialFee = vendor.trialFee || 0;
+
+    // If trialFee > 0, require payment
+    let paymentStatus = 'Pending';
+    if (trialFee > 0) {
+      paymentStatus = paymentMethod === 'UPI' ? 'Paid' : 'Pending';
+    }
+
+    console.log('Creating trial order with data:', {
+      userId: req.user._id,
+      vendorId,
+      customerName: user.name,
+      mealPreference,
+      deliverySlot: 'Lunch',
+      planType: 'Trial',
+      amount: trialFee,
+      paymentStatus,
+      paymentMethod: trialFee > 0 ? paymentMethod : 'Free',
+      startDate,
+      endDate,
+      orderStatus: 'Preparing'
+    });
+
+    // Create trial order with all required fields
+    let order;
+    try {
+      order = await Order.create({
+        userId: req.user._id,
+        vendorId,
+        customerName: user.name,
+        mealPreference,
+        deliverySlot: 'Lunch',
+        planType: 'Trial',
+        amount: trialFee,
+        paymentStatus,
+        paymentMethod: trialFee > 0 ? paymentMethod : 'Free',
+        startDate,
+        endDate,
+        orderStatus: 'Preparing'
+      });
+      console.log('Trial order created successfully:', order._id);
+    } catch (orderError) {
+      console.error('Error creating trial order:', orderError.message);
+      console.error('Error stack:', orderError.stack);
+      return res.status(500).json({ message: 'Error creating trial order: ' + orderError.message, error: orderError.message });
+    }
+
+    // Create subscription for trial
+    let subscription;
+    try {
+      subscription = await Subscription.create({
+        userId: req.user._id,
+        vendorId,
+        planType: 'Trial',
+        startDate,
+        expiryDate: endDate,
+        status: 'active',
+        customerName: user.name,
+        contact: user.phone,
+        dietaryPref: mealPreference
+      });
+    } catch (subError) {
+      console.error('Error creating trial subscription:', subError.message);
+      console.error('Error stack:', subError.stack);
+      // Order was created, but subscription failed - continue anyway
+    }
+
+    // Update user's trial history
+    if (!user.trialHistory) {
+      user.trialHistory = [];
+    }
+    user.trialHistory.push({
+      vendorId,
+      trialTakenAt: new Date()
+    });
+    await user.save();
+
+    // Send trial confirmation email
+    try {
+      const emailSubject = 'MealSetu - Your 2-Day Free Trial is Activated!';
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #16a34a;">🎉 Trial Activated!</h1>
+          <p>Dear ${user.name},</p>
+          <p>Your 2-day free trial from <strong>${vendor.kitchenName}</strong> has been activated!</p>
+          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 10px;">
+            <p><strong>🏠 Kitchen:</strong> ${vendor.kitchenName}</p>
+            <p><strong>📅 Trial Start Date:</strong> ${startDate.toLocaleDateString('en-IN')}</p>
+            <p><strong>📅 Trial End Date:</strong> ${endDate.toLocaleDateString('en-IN')}</p>
+            <p><strong>💰 Trial Fee:</strong> ${trialFee > 0 ? `₹${trialFee}` : 'FREE'}</p>
+            <p><strong>🍽️ Meal Preference:</strong> ${mealPreference}</p>
+          </div>
+          <p style="color: #dc2626; font-weight: bold;">⏰ Don't forget to subscribe to a paid plan before your trial ends!</p>
+          <p>Visit your dashboard to explore weekly and monthly subscription plans.</p>
+          <hr/>
+          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+        </div>
+      `;
+      await sendEmail(user.email, emailSubject, emailHtml);
+    } catch (emailError) {
+      console.error('Failed to send trial confirmation email:', emailError);
+    }
+
+    res.status(201).json({
+      message: 'Trial order created successfully',
+      order,
+      subscription,
+      trialDetails: {
+        vendorName: vendor.kitchenName,
+        startDate,
+        endDate,
+        trialFee,
+        isFree: trialFee === 0
+      }
+    });
+  } catch (error) {
+    console.error('Create trial order error:', error.message);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ message: 'Error creating trial order', error: error.message });
+  }
+};
+
+module.exports = {
+  getUserSubscription,
+  getActiveSubscriptionStatus,
+  applyLeave,
+  extendSubscription,
+  getCurrentUser,
+  updateUserProfile,
+  updateUserProfilePic,
+  changePassword,
+  getUserOrders,
+  getMenus,
+  placeOrder,
+  addReview,
+  getVendorReviews,
+  getVendorRating,
+  getVendorStatus,
+  getApprovedVendors,
+  checkReviewEligibility,
+  getTrialEligibility,
+  createTrialOrder
+};

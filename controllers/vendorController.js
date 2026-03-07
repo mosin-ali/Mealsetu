@@ -827,6 +827,43 @@ const updateKitchenPoster = async (req, res) => {
   }
 };
 
+// @desc    Update vendor trial settings
+// @route   PATCH /api/vendor/trial-settings
+const updateTrialSettings = async (req, res) => {
+  try {
+    const { trialEnabled, trialFee } = req.body;
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+
+    // Update trial settings
+    if (trialEnabled !== undefined) {
+      vendor.trialEnabled = trialEnabled;
+    }
+    if (trialFee !== undefined) {
+      // trialFee must be a positive number or zero
+      const fee = Number(trialFee);
+      if (isNaN(fee) || fee < 0) {
+        return res.status(400).json({ message: 'trialFee must be a positive number or zero' });
+      }
+      vendor.trialFee = fee;
+    }
+
+    await vendor.save();
+
+    res.json({
+      message: 'Trial settings updated successfully',
+      trialEnabled: vendor.trialEnabled,
+      trialFee: vendor.trialFee
+    });
+  } catch (error) {
+    console.error('Error updating trial settings:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -847,5 +884,6 @@ module.exports = {
   getWeeklyPlan,
   getVendorWeeklyPlan,
   toggleShopStatus,
-  getShopStatus
+  getShopStatus,
+  updateTrialSettings
 };
