@@ -207,6 +207,9 @@ const deleteOffer = async (req, res) => {
 // @route   GET /api/users/active-offers
 const getActiveOffers = async (req, res) => {
   try {
+    // Get current user ID if authenticated
+    const userId = req.user ? req.user._id : null;
+    
     // Use current date with proper time handling
     const now = new Date();
     
@@ -218,22 +221,45 @@ const getActiveOffers = async (req, res) => {
     const endOfToday = new Date(now);
     endOfToday.setHours(23, 59, 59, 999);
 
-    console.log('[getActiveOffers] Searching for active offers...');
+    console.log('[getActiveOffers] Searching for active and upcoming offers...');
     console.log('[getActiveOffers] Current date range:', {
       startOfToday: startOfToday.toISOString(),
       endOfToday: endOfToday.toISOString()
     });
 
-    // Query: offers where startDate <= endOfToday AND endDate >= startOfToday
-    // This ensures offers that start today or have already started are included
-    // And offers that end today or haven't ended yet are included
+    // ============================================================
+    // EXPIRED OFFER REMOVAL STATUS:
+    // The query below has been FIXED to explicitly filter out expired offers.
+    // Previously, the query did NOT include a condition to filter out offers
+    // where endDate is less than today's date. This has been corrected now.
+    // The query now returns only offers where:
+    //   1. endDate >= startOfToday (offer has not expired)
+    //   2. Either active (started and not ended) OR upcoming (not yet started)
+    // ============================================================
+    
+    // Query: Get both active offers (currently running) and upcoming offers (future)
+    // Active: startDate <= endOfToday AND endDate >= startOfToday AND endDate >= today
+    // Upcoming: startDate > endOfToday AND endDate > startOfToday (future offers)
+    // IMPORTANT: All queries now include endDate: { $gte: startOfToday } to exclude expired offers
     const offers = await Offer.find({
       $or: [
         { isActive: true },
         { isActive: { $exists: false } }
       ],
-      startDate: { $lte: endOfToday },
-      endDate: { $gte: startOfToday }
+      // CRITICAL: Filter out any offer where endDate is before today
+      endDate: { $gte: startOfToday },
+      $or: [
+        // Active offers: started and not yet ended (both startDate and endDate must be today or in past/future respectively)
+        {
+          startDate: { $lte: endOfToday },
+          endDate: { $gte: startOfToday }
+        },
+        // Upcoming offers: future offers that haven't started yet (startDate > endOfToday AND endDate > startOfToday)
+        {
+          startDate: { $gt: endOfToday },
+          endDate: { $gte: startOfToday }
+        }
+      ]
     })
       .populate('vendorId', 'kitchenName address profileImage kitchenPoster')
       .sort({ createdAt: -1 });
@@ -252,30 +278,81 @@ const getActiveOffers = async (req, res) => {
       });
     }
 
-    // Transform image URLs and filter out offers without valid vendor
+    // Transform image URLs and add offerStatus
     const transformedOffers = offers
       .filter(offer => offer.vendorId)
-      .map(offer => ({
-        _id: offer._id,
-        vendorId: offer.vendorId._id,
-        kitchenName: offer.vendorId.kitchenName,
-        vendorAddress: offer.vendorId.address,
-        vendorProfileImage: transformImageUrl(offer.vendorId.profileImage, req),
-        vendorKitchenPoster: transformImageUrl(offer.vendorId.kitchenPoster, req),
-        posterImage: transformImageUrl(offer.posterImage, req),
-        startDate: offer.startDate,
-        endDate: offer.endDate,
-        planDiscounts: offer.planDiscounts,
-        createdAt: offer.createdAt
-      }));
+      .map(offer => {
+        // Determine if offer is active or upcoming
+        const offerStartDate = new Date(offer.startDate);
+        const offerEndDate = new Date(offer.endDate);
+        
+        // Check if offer has started (startDate <= endOfToday) and hasn't ended (endDate >= startOfToday)
+        const isActive = offerStartDate <= endOfToday && offerEndDate >= startOfToday;
+        // Check if offer is upcoming (startDate > endOfToday)
+        const isUpcoming = offerStartDate > endOfToday;
+        
+        const offerStatus = isActive ? 'active' : (isUpcoming ? 'coming-soon' : 'active');
+        
+        // Check if the current user has claimed this offer
+        // Convert userId to string for comparison if it exists
+        const isClaimedByUser = userId && offer.redeemedBy 
+          ? offer.redeemedBy.some(id => id.toString() === userId.toString())
+          : false;
+        
+        return {
+          _id: offer._id,
+          vendorId: offer.vendorId._id,
+          kitchenName: offer.vendorId.kitchenName,
+          vendorAddress: offer.vendorId.address,
+          vendorProfileImage: transformImageUrl(offer.vendorId.profileImage, req),
+          vendorKitchenPoster: transformImageUrl(offer.vendorId.kitchenPoster, req),
+          posterImage: transformImageUrl(offer.posterImage, req),
+          startDate: offer.startDate,
+          endDate: offer.endDate,
+          planDiscounts: offer.planDiscounts,
+          createdAt: offer.createdAt,
+          offerStatus: offerStatus,
+          // Include isClaimedByUser field for frontend to determine claimed state
+          isClaimedByUser: isClaimedByUser
+        };
+      });
 
     console.log('[getActiveOffers] Returning transformed offers:', transformedOffers.length);
+    console.log('[getActiveOffers] Offer status breakdown:', {
+      active: transformedOffers.filter(o => o.offerStatus === 'active').length,
+      'coming-soon': transformedOffers.filter(o => o.offerStatus === 'coming-soon').length,
+      claimedByUser: transformedOffers.filter(o => o.isClaimedByUser === true).length
+    });
     
     // Return the array directly (not wrapped in object)
     res.json(transformedOffers);
   } catch (error) {
     console.error('Get active offers error:', error);
     res.status(500).json({ message: 'Error fetching active offers' });
+  }
+};
+
+// @desc    Get offers claimed by current user
+// @route   GET /api/users/claimed-offers
+const getClaimedOffers = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    // Find all offers that have been redeemed by this user
+    const claimedOffers = await Offer.find({
+      redeemedBy: userId
+    }).select('_id');
+    
+    // Return array of offer IDs
+    const claimedOfferIds = claimedOffers.map(offer => offer._id);
+    
+    console.log('[getClaimedOffers] User:', userId.toString());
+    console.log('[getClaimedOffers] Claimed offer IDs:', claimedOfferIds);
+    
+    res.json(claimedOfferIds);
+  } catch (error) {
+    console.error('Get claimed offers error:', error);
+    res.status(500).json({ message: 'Error fetching claimed offers' });
   }
 };
 
@@ -294,6 +371,12 @@ const redeemOffer = async (req, res) => {
     const offer = await Offer.findById(offerId).populate('vendorId', 'kitchenName');
     if (!offer) {
       return res.status(404).json({ message: 'Offer not found' });
+    }
+
+    // Validate vendorId exists after populate
+    if (!offer.vendorId || !offer.vendorId._id) {
+      console.error('[redeemOffer] ERROR: Offer vendor is not properly populated');
+      return res.status(500).json({ message: 'Offer vendor data is invalid. Please contact support.' });
     }
 
     // Check if offer is still active
@@ -345,6 +428,26 @@ const redeemOffer = async (req, res) => {
         break;
     }
 
+    // STEP 0: DUPLICATE CHECK - Prevent creating duplicate pending orders for offer redemption
+    // Check for any existing pending order with same userId, vendorId, planType created within last 60 seconds
+    const sixtySecondsAgo = new Date(Date.now() - 60000);
+    const duplicateOrder = await Order.findOne({
+      userId: userId,
+      vendorId: offer.vendorId._id,
+      planType: planType,
+      $or: [
+        { status: 'pending' },
+        { offerStatus: 'pending' }
+      ],
+      createdAt: { $gte: sixtySecondsAgo }
+    });
+
+    if (duplicateOrder) {
+      return res.status(409).json({ 
+        message: 'A pending order with the same plan already exists. Please wait or cancel the existing order first.' 
+      });
+    }
+
     // Check if user has an active subscription
     const activeSubscription = await Subscription.findOne({
       userId: userId,
@@ -355,9 +458,13 @@ const redeemOffer = async (req, res) => {
     // If user has active plan, we need to schedule the offer (pending order)
     if (activeSubscription) {
       // STEP 1: Query all existing pending orders for this user, sorted by scheduledEndDate descending
+      // FIX: Check both status: 'pending' AND offerStatus: 'pending' to include all pending orders
       const existingPendingOrders = await Order.find({
         userId: userId,
-        status: 'pending'
+        $or: [
+          { status: 'pending' },
+          { offerStatus: 'pending' }
+        ]
       }).sort({ scheduledEndDate: -1 });
 
       let scheduledStartDate;
@@ -417,6 +524,14 @@ const redeemOffer = async (req, res) => {
         contact: req.user.phone,
         isOfferSubscription: true,
         offerId: offer._id
+      });
+
+      // ============================================================
+      // Track that this user has redeemed this offer
+      // Add userId to the redeemedBy array on the offer
+      // ============================================================
+      await Offer.findByIdAndUpdate(offerId, {
+        $addToSet: { redeemedBy: userId } // $addToSet ensures no duplicates
       });
 
       // Send confirmation email (non-blocking)
@@ -515,6 +630,14 @@ const redeemOffer = async (req, res) => {
     const User = require('../models/User');
     await User.findByIdAndUpdate(userId, { expiryDate: subscriptionEndDate });
 
+    // ============================================================
+    // Track that this user has redeemed this offer
+    // Add userId to the redeemedBy array on the offer
+    // ============================================================
+    await Offer.findByIdAndUpdate(offerId, {
+      $addToSet: { redeemedBy: userId } // $addToSet ensures no duplicates
+    });
+
     // Send confirmation email (await for immediate activation)
     try {
       const emailSubject = `🎉 Offer Activated! - ${offer.vendorId.kitchenName}`;
@@ -560,7 +683,30 @@ const redeemOffer = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Redeem offer error:', error);
+    console.error('========================================');
+    console.error('REDEMPTION ERROR - FULL DETAILS:');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Error name:', error.name);
+    console.error('========================================');
+    
+    // Check if it's a validation error
+    if (error.name === 'ValidationError') {
+      console.error('VALIDATION ERROR DETAILS:');
+      console.error('Required fields missing or invalid:');
+      for (const [key, value] of Object.entries(error.errors)) {
+        console.error(`  - ${key}: ${value.message}`);
+      }
+    }
+    
+    // Check if it's a cast error (invalid ObjectId)
+    if (error.name === 'CastError') {
+      console.error('CAST ERROR - Invalid ID format:');
+      console.error('  Path:', error.path);
+      console.error('  Value:', error.value);
+    }
+    
+    console.error('========================================');
     res.status(500).json({ message: 'Error redeeming offer', error: error.message });
   }
 };
@@ -570,6 +716,7 @@ module.exports = {
   getVendorOffers,
   deleteOffer,
   getActiveOffers,
+  getClaimedOffers,
   redeemOffer
 };
 

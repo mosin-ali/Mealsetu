@@ -38,7 +38,7 @@ const orderSchema = new mongoose.Schema({
   scheduledActivationDate: { type: Date },
   offerStatus: {
     type: String,
-    enum: ['active', 'pending', 'cancelled', 'expired'],
+    enum: ['active', 'pending', 'on-hold', 'cancelled', 'expired', 'completed', 'trial'],
     default: null
   },
 
@@ -49,7 +49,7 @@ const orderSchema = new mongoose.Schema({
   // Order status: pending, active, expired
   status: {
     type: String,
-    enum: ['pending', 'active', 'expired', 'cancelled'],
+    enum: ['pending', 'active', 'on-hold', 'expired', 'cancelled', 'completed', 'trial'],
     default: 'active'
   }
 });

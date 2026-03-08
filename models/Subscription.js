@@ -9,7 +9,7 @@ const subscriptionSchema = new mongoose.Schema({
   startDate: { type: Date, required: true },
   expiryDate: { type: Date, required: true },
   leaveDate: { type: Date }, // Date when leave was marked
-  status: { type: String, enum: ['active', 'expired', 'paused'], default: 'active' },
+  status: { type: String, enum: ['active', 'pending', 'on-hold', 'expired', 'cancelled', 'completed', 'trial'], default: 'active' },
   autoRenew: { type: Boolean, default: false },
 
   // Fields for Vendor View 

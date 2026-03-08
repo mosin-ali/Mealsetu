@@ -460,6 +460,14 @@ const getMenus = async (req, res) => {
 // @desc    Place an Order or Create Subscription
 // @route   POST /api/users/order
 const placeOrder = async (req, res) => {
+  // CONSOLE LOG: Debug Bug 2 - log every time this endpoint is hit
+  console.log('=== PLACE ORDER API CALLED ===');
+  console.log('userId:', req.user?._id);
+  console.log('vendorId:', req.body?.vendorId);
+  console.log('plan:', req.body?.plan);
+  console.log('timestamp:', new Date().toISOString());
+  console.log('================================');
+  
   try {
     const { 
       vendorId, 
@@ -514,8 +522,129 @@ const placeOrder = async (req, res) => {
         break;
     }
 
-    const subscriptionStartDate = startDate ? new Date(startDate) : new Date();
-    const subscriptionExpiryDate = new Date(subscriptionStartDate);
+    // Check if user already has an active order in Order collection (NOT Subscription collection)
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // BUG 2 FIX: Check Order collection for active order where status equals 'active'
+    const activeOrder = await Order.findOne({
+      userId: req.user._id,
+      status: 'active',
+      endDate: { $gte: now }
+    });
+
+    // CONSOLE LOG: Check if active order exists
+    console.log('=== CHECKING FOR ACTIVE ORDER ===');
+    console.log('activeOrder found:', activeOrder ? activeOrder._id : null);
+    console.log('activeOrder endDate:', activeOrder?.endDate);
+    console.log('===================================');
+
+    let orderStatus;
+    let subscriptionStartDate;
+    let subscriptionExpiryDate;
+
+    // BUG 2 FIX: Use exact logic as specified - check Order collection for active status
+    if (activeOrder) {
+      // User already has active order - create a pending order with sequential chaining
+      orderStatus = 'pending';
+
+      // Find existing pending orders to chain after (from Order collection)
+      const existingPendingOrders = await Order.find({
+        userId: req.user._id,
+        $or: [
+          { status: 'pending' },
+          { offerStatus: 'pending' }
+        ]
+      }).sort({ scheduledEndDate: -1 });
+
+      if (existingPendingOrders && existingPendingOrders.length > 0) {
+        // Chain after the last pending order's scheduledEndDate + 1 day
+        const mostRecentPendingOrder = existingPendingOrders[0];
+        const lastScheduledEndDate = new Date(mostRecentPendingOrder.scheduledEndDate);
+        subscriptionStartDate = new Date(lastScheduledEndDate.getTime() + 86400000); // Add 1 day
+      } else {
+        // Chain after active order's endDate + 1 day
+        if (activeOrder.endDate) {
+          const activeEndDate = new Date(activeOrder.endDate);
+          subscriptionStartDate = new Date(activeEndDate.getTime() + 86400000); // Add 1 day
+        } else {
+          // Fallback to tomorrow
+          subscriptionStartDate = new Date(now);
+          subscriptionStartDate.setDate(subscriptionStartDate.getDate() + 1);
+        }
+      }
+
+      // Calculate scheduledEndDate from scheduledStartDate based on planType
+      subscriptionExpiryDate = new Date(subscriptionStartDate.getTime() + durationDays * 86400000);
+
+      // CONSOLE LOG: Creating pending order with sequential dates
+      console.log('=== CREATING PENDING ORDER ===');
+      console.log('scheduledStartDate:', subscriptionStartDate);
+      console.log('scheduledEndDate:', subscriptionExpiryDate);
+      console.log('=================================');
+
+      // Create the order with pending status
+      const order = await Order.create({
+        userId: req.user._id,
+        vendorId,
+        amount: numericAmount,
+        deliverySlot,
+        mealPreference: mealPref,
+        paymentStatus: paymentMethod === 'Cash' ? 'Pending' : 'Paid',
+        paymentMethod,
+        planType: planType,
+        status: 'pending',
+        scheduledStartDate: subscriptionStartDate,
+        scheduledEndDate: subscriptionExpiryDate,
+        startDate: subscriptionStartDate,
+        endDate: subscriptionExpiryDate
+      });
+
+      // CONSOLE LOG: After saving the new order - verify the saved values
+      console.log('=== PLACE ORDER PENDING ORDER SAVED ===');
+      console.log('orderId:', order._id);
+      console.log('status:', order.status);
+      console.log('scheduledStartDate:', order.scheduledStartDate);
+      console.log('scheduledEndDate:', order.scheduledEndDate);
+      console.log('=========================================');
+
+      // Don't create a new subscription - the existing one continues
+      // Only send confirmation email for the pending order
+      try {
+        const emailSubject = `MealSetu - ${planType} Subscription Queued!`;
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #333;">Order Queued!</h1>
+            <p>Dear ${user.name},</p>
+            <p>Your subscription has been queued. It will automatically activate after your current plan ends.</p>
+            <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
+              <p><strong>Vendor:</strong> ${vendor.kitchenName}</p>
+              <p><strong>Plan:</strong> ${planType}</p>
+              <p><strong>Scheduled Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
+              <p><strong>Scheduled End Date:</strong> ${subscriptionExpiryDate.toLocaleDateString()}</p>
+              <p><strong>Amount Paid:</strong> ₹${numericAmount}</p>
+              <p><strong>Payment Method:</strong> ${paymentMethod}</p>
+            </div>
+            <p>Your current subscription is valid until ${activeOrder.endDate ? new Date(activeOrder.endDate).toLocaleDateString() : 'N/A'}.</p>
+            <p>Enjoy your meals!</p>
+            <hr/>
+            <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+          </div>
+        `;
+        await sendEmail(user.email, emailSubject, emailHtml);
+      } catch (emailError) {
+        console.error('Failed to send confirmation email:', emailError);
+      }
+
+      return res.status(201).json({ 
+        order, 
+        message: 'Order queued successfully. It will activate after your current plan ends.'
+      });
+    }
+
+    // No active order - create order and subscription immediately (existing behavior)
+    subscriptionStartDate = startDate ? new Date(startDate) : new Date();
+    subscriptionExpiryDate = new Date(subscriptionStartDate);
     subscriptionExpiryDate.setDate(subscriptionExpiryDate.getDate() + durationDays);
 
     const order = await Order.create({
@@ -526,8 +655,19 @@ const placeOrder = async (req, res) => {
       mealPreference: mealPref,
       paymentStatus: paymentMethod === 'Cash' ? 'Pending' : 'Paid',
       paymentMethod,
-      planType: planType
+      planType: planType,
+      status: 'active',
+      startDate: subscriptionStartDate,
+      endDate: subscriptionExpiryDate
     });
+
+    // CONSOLE LOG: After creating active order (no active plan existed)
+    console.log('=== PLACE ORDER ACTIVE ORDER SAVED ===');
+    console.log('orderId:', order._id);
+    console.log('status:', order.status);
+    console.log('startDate:', order.startDate);
+    console.log('endDate:', order.endDate);
+    console.log('======================================');
 
     const subscription = await Subscription.create({
       userId: req.user._id,
@@ -1141,6 +1281,14 @@ const getUpcomingOrders = async (req, res) => {
 // @desc    Extend subscription (create pending order)
 // @route   POST /api/orders/extend
 const extendSubscriptionOrder = async (req, res) => {
+  // CONSOLE LOG: Debug duplicate issue - log every time this endpoint is hit
+  console.log('=== EXTEND SUBSCRIPTION API CALLED ===');
+  console.log('userId:', req.user?._id);
+  console.log('vendorId:', req.body?.vendorId);
+  console.log('planType:', req.body?.plan);
+  console.log('timestamp:', new Date().toISOString());
+  console.log('=====================================');
+  
   try {
     const { plan, vendorId, paymentMethod = 'Cash' } = req.body;
     const userId = req.user._id;
@@ -1174,10 +1322,34 @@ const extendSubscriptionOrder = async (req, res) => {
         return res.status(400).json({ message: 'Invalid plan type' });
     }
 
+    // STEP 0: DUPLICATE CHECK - Prevent creating duplicate pending orders
+    // Check for any existing pending order with same userId, vendorId, planType created within last 30 seconds
+    const thirtySecondsAgo = new Date(Date.now() - 30000);
+    const duplicateOrder = await Order.findOne({
+      userId: userId,
+      vendorId: vendorId,
+      planType: planType,
+      $or: [
+        { status: 'pending' },
+        { offerStatus: 'pending' }
+      ],
+      createdAt: { $gte: thirtySecondsAgo }
+    });
+
+    if (duplicateOrder) {
+      return res.status(409).json({ 
+        message: 'duplicate order detected' 
+      });
+    }
+
     // STEP 1: Query all existing pending orders for this user, sorted by scheduledEndDate descending
+    // FIX: Check both status: 'pending' AND offerStatus: 'pending' to include all pending orders
     const existingPendingOrders = await Order.find({
       userId: userId,
-      status: 'pending'
+      $or: [
+        { status: 'pending' },
+        { offerStatus: 'pending' }
+      ]
     }).sort({ scheduledEndDate: -1 });
 
     let scheduledStartDate;
@@ -1243,6 +1415,14 @@ const extendSubscriptionOrder = async (req, res) => {
       startDate: scheduledStartDate,
       endDate: scheduledEndDate
     });
+
+    // CONSOLE LOG: After saving the new order - verify the saved values
+    console.log('=== EXTEND SUBSCRIPTION ORDER SAVED ===');
+    console.log('orderId:', order._id);
+    console.log('status:', order.status);
+    console.log('scheduledStartDate:', order.scheduledStartDate);
+    console.log('scheduledEndDate:', order.scheduledEndDate);
+    console.log('=========================================');
 
     // Send extension confirmation email (non-blocking)
     try {
