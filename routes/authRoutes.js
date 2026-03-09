@@ -1,5 +1,5 @@
 const express = require('express');
-const { registerUser, loginUser, forgotPassword, resetPassword, sendOTP, verifyOTP, resetPasswordWithOTP } = require('../controllers/authController');
+const { registerUser, loginUser, forgotPassword, resetPassword, sendOTP, verifyOTP, resetPasswordWithOTP, verifyRegisterOTP, resendRegisterOTP } = require('../controllers/authController');
 const upload = require('../middleware/uploadMiddleware');
 const router = express.Router();
 
@@ -18,6 +18,10 @@ router.post('/login', loginUser);
 router.post('/forgot-password/send-otp', sendOTP);
 router.post('/forgot-password/verify-otp', verifyOTP);
 router.post('/forgot-password/reset-password', resetPasswordWithOTP);
+
+// Registration OTP Verification Routes
+router.post('/register-verify-otp', verifyRegisterOTP);
+router.post('/register-resend-otp', resendRegisterOTP);
 
 // Legacy routes (kept for backward compatibility)
 router.post('/forgot-password', forgotPassword);

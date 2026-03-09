@@ -32,6 +32,7 @@ const userSchema = new mongoose.Schema({
   // --- OTP Verification Fields ---
   resetOTP: { type: String },
   resetOTPExpire: { type: Date },
+  otpAttempts: { type: Number, default: 0 },
   isOTPVerified: { type: Boolean, default: false },
 
   // --- Trial History (tracks which vendors user has taken trials from) ---

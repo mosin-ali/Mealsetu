@@ -52,7 +52,13 @@ const vendorSchema = new mongoose.Schema({
 
   // --- Trial Settings ---
   trialEnabled: { type: Boolean, default: false }, // Vendor must explicitly enable trials
-  trialFee: { type: Number, default: 0 } // 0 = completely free, >0 = small charge for trial
+  trialFee: { type: Number, default: 0 }, // 0 = completely free, >0 = small charge for trial
+
+  // --- OTP Verification Fields (for registration verification) ---
+  resetOTP: { type: String },
+  resetOTPExpire: { type: Date },
+  otpAttempts: { type: Number, default: 0 },
+  isOTPVerified: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('Vendor', vendorSchema);
