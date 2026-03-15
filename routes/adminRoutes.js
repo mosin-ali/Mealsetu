@@ -1,10 +1,12 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getPlatformSettings, updateCommissionRate, getPendingVendors, getAllUsers, approveVendor, rejectVendor, getAllVendorsForAdmin, getVendorSubscribers } = require('../controllers/adminController');
+const { getPlatformSettings, updateCommissionRate, getPendingVendors, getAllUsers, approveVendor, rejectVendor, getAllVendorsForAdmin, getVendorSubscribers, getAdminProfile, updateAdminProfile, getPublicAdminContact } = require('../controllers/adminController');
 
 const router = express.Router();
 
 // All routes require Admin role
+router.get('/public-contact', getPublicAdminContact);
+
 router.use(protect);
 router.use(authorize('admin'));
 
@@ -57,5 +59,8 @@ router.get('/fix-vendor-statuses', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
+router.get('/profile', getAdminProfile);
+router.put('/profile', updateAdminProfile);
 
 module.exports = router;

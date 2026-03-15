@@ -372,6 +372,44 @@ const autoMarkInactiveUsers = async (req, res) => {
   }
 };
 
+const getAdminProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('name email phone');
+    if (!user) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+const updateAdminProfile = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { name, phone },
+      { new: true, runValidators: false }
+    ).select('name email phone');
+    if (!user) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+const getPublicAdminContact = async (req, res) => {
+  try {
+    const admin = await User.findOne({ role: 'admin' }).select('name email phone').lean();
+    res.json(admin || null);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
 module.exports = { 
   getPlatformSettings, 
   updateCommissionRate, 
@@ -381,7 +419,10 @@ module.exports = {
   rejectVendor,
   getAllVendorsForAdmin,
   getVendorSubscribers,
-  autoMarkInactiveUsers
+  autoMarkInactiveUsers,
+  getAdminProfile,
+  updateAdminProfile,
+  getPublicAdminContact
 };
 
 
