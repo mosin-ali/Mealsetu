@@ -853,8 +853,8 @@ const getApprovedVendors = async (req, res) => {
   try {
     // Fetch only approved and open vendors
     const vendors = await Vendor.find({ 
-      approvalStatus: 'Approved',
-      isOpen: true
+      isApproved: true
+      // isOpen: true
     }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee');
 
     // Transform vendor data for frontend display

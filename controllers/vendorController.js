@@ -839,6 +839,62 @@ const updateTrialSettings = async (req, res) => {
   }
 };
 
+const submitVendorCompliance = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Handle uploaded documents
+    if (req.files) {
+      if (req.files.fssaiDoc) {
+        const normalizePath = (filePath) => {
+          let normalized = filePath.replace(/\\/g, '/');
+          if (normalized.includes('uploads/')) {
+            const parts = normalized.split('uploads/');
+            normalized = '/uploads/' + parts[parts.length - 1];
+          }
+          return normalized;
+        };
+        vendor.fssaiLicense = normalizePath(req.files.fssaiDoc[0].path);
+      }
+      if (req.files.gstDoc) {
+        const normalizePath = (filePath) => {
+          let normalized = filePath.replace(/\\/g, '/');
+          if (normalized.includes('uploads/')) {
+            const parts = normalized.split('uploads/');
+            normalized = '/uploads/' + parts[parts.length - 1];
+          }
+          return normalized;
+        };
+        vendor.gstDocument = normalizePath(req.files.gstDoc[0].path);
+      }
+    }
+
+    // Reset status for resubmission
+    await Vendor.findByIdAndUpdate(
+      vendor._id,
+      {
+        $set: {
+          isApproved: false,
+          status: 'pending',
+          approvalStatus: 'Pending',
+          rejectionReason: null,
+          resubmittedAt: new Date(),
+          submittedDate: new Date()
+        }
+      },
+      { runValidators: false }
+    );
+
+    res.json({ message: 'Documents submitted for review. Status reset to pending.' });
+  } catch (error) {
+    console.error('Submit compliance error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -860,5 +916,6 @@ module.exports = {
   getVendorWeeklyPlan,
   toggleShopStatus,
   getShopStatus,
-  updateTrialSettings
+  updateTrialSettings,
+  submitVendorCompliance
 };

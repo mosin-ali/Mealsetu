@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 
 const router = express.Router();
@@ -43,5 +43,8 @@ router.delete('/offers/:id', deleteOffer);
 
 // Trial Settings endpoint
 router.patch('/trial-settings', updateTrialSettings);
+
+// Compliance submission endpoint
+router.post('/compliance-submit', upload.fields([{ name: 'fssaiDoc', maxCount: 1 }, { name: 'gstDoc', maxCount: 1 }]), submitVendorCompliance);
 
 module.exports = router;

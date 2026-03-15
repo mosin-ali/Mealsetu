@@ -25,7 +25,7 @@ const vendorSchema = new mongoose.Schema({
     enum: ['Pending', 'Approved', 'Rejected'], 
     default: 'Pending' 
   },
-  rejectionReason: { type: String },
+rejectionReason: { type: String, default: null },
   submittedDate: { type: Date, default: Date.now },
   
   walletBalance: { type: Number, default: 0 },
@@ -58,8 +58,25 @@ const vendorSchema = new mongoose.Schema({
   resetOTP: { type: String },
   resetOTPExpire: { type: Date },
   otpAttempts: { type: Number, default: 0 },
-  isOTPVerified: { type: Boolean, default: false }
-});
+
+  isOTPVerified: { type: Boolean, default: false },
+
+  // --- New Vendor Request Fields ---
+  isApproved: { type: Boolean, default: false },
+  status: { 
+    type: String, 
+    enum: ['pending', 'approved', 'rejected'], 
+    default: 'pending' 
+  },
+  resubmittedAt: { type: Date, default: null },
+  fssaiDocument: { type: String },
+  gstNumber: { type: String },
+  ownerName: { type: String },
+  phone: { type: String }
+}, { timestamps: true }
+);
+
+
 
 module.exports = mongoose.model('Vendor', vendorSchema);
 

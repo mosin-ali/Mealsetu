@@ -4,16 +4,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { sendEmail } = require('../utils/emailUtils');
+const disposableDomains = require('disposable-email-domains');
 
-// Blocked temporary/disposable email domains
-const BLOCKED_DOMAINS = [
-  'yopmail.com', 'mailinator.com', 'guerrillamail.com', '10minutemail.com',
-  'tempmail.com', 'throwaway.email', 'fakeinbox.com', 'trashmail.com',
-  'maildrop.cc', 'dispostable.com', 'sharklasers.com', 'grr.la',
-  'guerrillamail.info', 'guerrillamail.biz', 'guerrillamail.de', 'guerrillamail.net',
-  'guerrillamail.org', 'spam4.me', 'trashmail.at', 'trashmail.io', 'trashmail.me',
-  'trashmail.net', 'discard.email', 'spamgourmet.com', 'tempr.email', 'emlpro.com',
-  'emltmp.com', 'discardmail.com', 'trbvm.com'
+// Extra blocked domains as backup for very new domains
+const EXTRA_BLOCKED_DOMAINS = [
+  "medevsa.com", "yopmail.com", "mailinator.com", "guerrillamail.com", "10minutemail.com",
+  "tempmail.com", "throwaway.email", "fakeinbox.com", "trashmail.com", "maildrop.cc",
+  "sharklasers.com", "grr.la", "spam4.me", "trashmail.at", "trashmail.io", "trashmail.me",
+  "trashmail.net", "discard.email", "tempr.email", "emlpro.com", "emltmp.com",
+  "discardmail.com", "trbvm.com", "getairmail.com", "filzmail.com", "dayrep.com",
+  "rhyta.com", "armyspy.com", "cuvox.de", "fleckens.hu", "gustr.com", "jourrapide.com",
+  "spamgourmet.com", "superrito.com", "teleworm.us", "einrot.com", "inoutmail.de",
+  "inoutmail.eu", "inoutmail.info", "inoutmail.net", "mail.mezimages.net", "mail2rss.org",
+  "mega.zik.dj", "moncourrier.fr.nf", "monemail.fr.nf", "monmail.fr.nf"
 ];
 
 // Generate JWT
@@ -46,11 +49,19 @@ const registerUser = async (req, res) => {
       adminKey                        // Admin specific
     } = req.body;
 
-    // Check for blocked temporary email domains
-    const emailDomain = email.toLowerCase().split('@')[1];
-    if (BLOCKED_DOMAINS.includes(emailDomain)) {
+    // Check for blocked temporary email domains (two-layer check)
+    const emailLower = email.toLowerCase();
+    const emailDomain = emailLower.split('@')[1];
+    
+    if (!emailDomain) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+    
+    const isDisposable = disposableDomains.includes(emailDomain) || EXTRA_BLOCKED_DOMAINS.includes(emailDomain);
+    
+    if (isDisposable) {
       return res.status(400).json({ 
-        message: 'Temporary or disposable email addresses are not allowed. Please register with your real Gmail, Yahoo, or Outlook email address.' 
+        message: 'This email domain is not allowed. Temporary and disposable email addresses cannot be used to register. Please use your real Gmail, Yahoo, Outlook, or other permanent email address.' 
       });
     }
 
