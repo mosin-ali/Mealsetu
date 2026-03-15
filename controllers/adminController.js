@@ -51,23 +51,24 @@ const getAllUsers = async (req, res) => {
 // @route   GET /api/admin/vendor-requests
 const getPendingVendors = async (req, res) => {
   try {
-    console.log('Fetching pending vendors...');
+    console.log('🔍 Fetching pending vendors - STRICT QUERY ONLY');
 
-    const vendors = await Vendor.find({
-      $and: [
-        { isApproved: { $ne: true } },
-        { status: { $nin: ['approved', 'rejected'] } }
-      ]
+    const vendors = await Vendor.find({ 
+      status: 'pending', 
+      isApproved: { $ne: true } 
     })
-    .sort({ createdAt: -1 })
+    .sort({ 
+      resubmittedAt: -1,  // Resubmissions first
+      createdAt: -1       // Then newest first
+    })
     .select('-password')
     .populate('ownerId', 'name email phone');
 
-    console.log('Pending vendors found:', vendors.length);
+    console.log(`✅ Found ${vendors.length} pending vendors:`, vendors.map(v => `Kitchen: ${v.kitchenName}, Status: ${v.status}, isApproved: ${v.isApproved}`));
     return res.status(200).json({ vendors });
 
   } catch (error) {
-    console.error('getPendingVendors error:', error.message);
+    console.error('❌ getPendingVendors error:', error.message);
     return res.status(500).json({ message: error.message });
   }
 };
@@ -78,12 +79,13 @@ const getPendingVendors = async (req, res) => {
 const approveVendor = async (req, res) => {
   try {
     const { vendorId } = req.body;
+    console.log('🔄 Approving vendorId:', vendorId);
     if (!vendorId) {
       return res.status(400).json({ message: 'vendorId is required' });
     }
     const vendor = await Vendor.findByIdAndUpdate(
       vendorId,
-      { $set: { isApproved: true, status: 'approved' } },
+      { $set: { isApproved: true, status: 'approved', approvalStatus: 'Approved' } },
       { new: true, runValidators: false }
     ).populate('ownerId', 'name email');
     if (!vendor) {

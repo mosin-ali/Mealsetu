@@ -846,6 +846,8 @@ const submitVendorCompliance = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
+    console.log('🔄 Resubmitting vendor:', vendor._id, 'Previous status:', vendor.status, 'isApproved:', vendor.isApproved);
+
     // Handle uploaded documents
     if (req.files) {
       if (req.files.fssaiDoc) {
@@ -858,6 +860,7 @@ const submitVendorCompliance = async (req, res) => {
           return normalized;
         };
         vendor.fssaiLicense = normalizePath(req.files.fssaiDoc[0].path);
+        console.log('📄 FSSAI uploaded:', vendor.fssaiLicense);
       }
       if (req.files.gstDoc) {
         const normalizePath = (filePath) => {
@@ -869,11 +872,12 @@ const submitVendorCompliance = async (req, res) => {
           return normalized;
         };
         vendor.gstDocument = normalizePath(req.files.gstDoc[0].path);
+        console.log('📄 GST uploaded:', vendor.gstDocument);
       }
     }
 
-    // Reset status for resubmission
-    await Vendor.findByIdAndUpdate(
+    // Reset ALL approval fields for resubmission
+    const updateResult = await Vendor.findByIdAndUpdate(
       vendor._id,
       {
         $set: {
@@ -885,12 +889,22 @@ const submitVendorCompliance = async (req, res) => {
           submittedDate: new Date()
         }
       },
-      { runValidators: false }
+      { new: true, runValidators: false }
     );
 
-    res.json({ message: 'Documents submitted for review. Status reset to pending.' });
+    console.log('✅ Vendor resubmitted:', updateResult._id, 
+                'New status:', updateResult.status, 
+                'isApproved:', updateResult.isApproved,
+                'resubmittedAt:', updateResult.resubmittedAt,
+                'rejectionReason:', updateResult.rejectionReason);
+
+    res.json({ 
+      message: 'Documents submitted successfully. Status reset to pending for admin review.',
+      vendorId: updateResult._id,
+      newStatus: updateResult.status
+    });
   } catch (error) {
-    console.error('Submit compliance error:', error);
+    console.error('❌ Submit compliance ERROR:', error);
     res.status(500).json({ message: error.message });
   }
 };
