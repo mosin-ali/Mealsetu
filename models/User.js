@@ -39,7 +39,9 @@ const userSchema = new mongoose.Schema({
   trialHistory: [{
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
     trialTakenAt: { type: Date, default: Date.now }
-  }]
+  }],
+  lastActiveDate: { type: Date, default: null },
+  isActive: { type: Boolean, default: true }
 });
 
 module.exports = mongoose.model('User', userSchema);

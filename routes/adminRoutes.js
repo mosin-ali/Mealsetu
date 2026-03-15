@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getPlatformSettings, updateCommissionRate, getPendingVendors, getAllUsers, approveVendor, rejectVendor } = require('../controllers/adminController');
+const { getPlatformSettings, updateCommissionRate, getPendingVendors, getAllUsers, approveVendor, rejectVendor, getAllVendorsForAdmin, getVendorSubscribers } = require('../controllers/adminController');
 
 const router = express.Router();
 
@@ -14,6 +14,8 @@ router.get('/vendor-requests', getPendingVendors);
 router.post('/vendor-requests/approve', approveVendor);
 router.post('/vendor-requests/reject', rejectVendor);
 router.get('/users', getAllUsers);
+router.get('/vendors-stats', getAllVendorsForAdmin);
+router.get('/vendor-subscribers/:vendorId', getVendorSubscribers);
 
 // One-time cleanup route for vendor statuses
 router.get('/fix-vendors', async (req, res) => {
