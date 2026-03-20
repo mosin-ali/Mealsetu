@@ -174,6 +174,20 @@ const Reports = () => {
     }
   };
 
+  const handleSaveTiers = async () => {
+    try {
+      if (tiers.some(t => t.ratePercent < 0 || t.ratePercent > 100)) {
+        alert('Rate must be between 0 and 100');
+        return;
+      }
+      await updateAdminCommissionTiers(tiers);
+      alert('✅ All tiers saved successfully');
+      loadData();
+    } catch (error) {
+      alert('❌ Save failed: ' + error.message);
+    }
+  };
+
   const handleVerifyPayment = async (paymentId, action) => {
     try {
       const notes = action === 'reject' ? prompt('Rejection notes:') : '';
@@ -230,11 +244,90 @@ const Reports = () => {
           <tbody>
             {tiers.map((tier, index) => (
               <tr key={tier._id || index}>
-                <td style={styles.td}>{tier.tierName}</td>
-                <td style={styles.td}>₹{tier.minEarning?.toLocaleString()}</td>
-                <td style={styles.td}>{tier.maxEarning ? '₹' + tier.maxEarning.toLocaleString() : '∞'}</td>
-                <td style={styles.td}>{tier.ratePercent}%</td>
-                <td style={styles.td}>
+                <td>
+                  <input
+                    type="text"
+                    value={tier.tierName}
+                    onChange={(e) => {
+                      const updated = [...tiers];
+                      updated[index].tierName = e.target.value;
+                      setTiers(updated);
+                    }}
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      width: '100px',
+                      fontSize: '14px'
+                    }}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={tier.minEarning}
+                    onChange={(e) => {
+                      const updated = [...tiers];
+                      updated[index].minEarning = Number(e.target.value);
+                      setTiers(updated);
+                    }}
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      width: '110px',
+                      fontSize: '14px'
+                    }}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={tier.maxEarning || ''}
+                    placeholder="No limit"
+                    onChange={(e) => {
+                      const updated = [...tiers];
+                      updated[index].maxEarning = e.target.value 
+                        ? Number(e.target.value) 
+                        : null;
+                      setTiers(updated);
+                    }}
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      width: '110px',
+                      fontSize: '14px'
+                    }}
+                  />
+                </td>
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={tier.ratePercent}
+                      onChange={(e) => {
+                        const updated = [...tiers];
+                        updated[index].ratePercent = Number(e.target.value);
+                        setTiers(updated);
+                      }}
+                      style={{
+                        border: '2px solid #f97316',
+                        borderRadius: '6px',
+                        padding: '6px 10px',
+                        width: '70px',
+                        fontSize: '14px',
+                        fontWeight: '700',
+                        color: '#f97316',
+                        textAlign: 'center'
+                      }}
+                    />
+                    <span style={{ fontWeight: '700', color: '#f97316' }}>%</span>
+                  </div>
+                </td>
+                {/* <td style={styles.td}>
                   <label style={{ display: 'inline-block', position: 'relative', width: '50px', height: '24px' }}>
                     <input 
                       type="checkbox" 
@@ -257,9 +350,35 @@ const Reports = () => {
                       cursor: 'pointer'
                     }}></span>
                   </label>
-                </td>
+                </td> */}
+
+              {/* Active Toggle */}
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={tier.isActive !== false}
+                      onChange={(e) => {
+                        const updated = [...tiers];
+                        updated[index].isActive = e.target.checked;
+                        setTiers(updated);
+                      }}
+                    />
+                    <span className="slider"></span>
+                  </label>
+                  <span style={{
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    color: tier.isActive !== false ? '#16a34a' : '#ef4444'
+                  }}>
+                    {tier.isActive !== false ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+              </td>
+
                 <td style={styles.td}>
-                  <button onClick={() => updateAdminCommissionTiers(tiers)} style={{ 
+                  <button onClick={handleSaveTiers} style={{ 
                     padding: '6px 12px',
                     border: 'none',
                     borderRadius: '6px',
@@ -275,7 +394,7 @@ const Reports = () => {
             {tiers.length === 0 && (
               <tr>
                 <td colSpan="6" style={styles.noData}>
-                  No tiers configured. <button onClick={handleSeedTiers} style={styles.seedBtn}>Create Default</button>
+                  No tiers configured. <button onClick={handleSaveTiers} style={styles.seedBtn}>Save All</button>
                 </td>
               </tr>
             )}
