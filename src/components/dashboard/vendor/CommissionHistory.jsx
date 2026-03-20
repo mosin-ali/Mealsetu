@@ -158,7 +158,7 @@ const CommissionHistory = () => {
 
 
       {/* HOW IT WORKS */}
-      {/* <div className="how-works">
+      <div className="how-works">
         <h2>How Commission Works</h2>
         <table className="tiers-table">
           <thead>
@@ -177,7 +177,7 @@ const CommissionHistory = () => {
         <p className="note">
           Pay via UPI/Bank (admin details in modal). Upload screenshot/UTR for verification.
         </p>
-      </div> */}
+      </div>
 
       {/* PAY MODAL */}
       {payModal && (
