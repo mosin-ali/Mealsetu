@@ -1,0 +1,14 @@
+.admin-dashboard {
+  display: flex;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.admin-content {
+  margin-left: 220px;
+  flex: 1;
+  padding: 32px;
+  min-height: 100vh;
+  background: #f8fafc;
+  overflow-y: auto;
+}

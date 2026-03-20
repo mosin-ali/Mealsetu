@@ -1,0 +1,13 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+[remote "origin"]
+	url = https://github.com/mosin-ali/Mealsetu.git
+	fetch = +refs/heads/ft:refs/remotes/origin/ft
+[branch "ft"]
+	remote = origin
+	merge = refs/heads/ft

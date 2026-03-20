@@ -1,0 +1,1349 @@
+import React, { useState, useMemo, useEffect } from 'react'; 
+import { useNavigate } from 'react-router-dom';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import './VendorDashboard.css';
+import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance } from '../utils/api';
+import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
+import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
+import VendorOffers from '../components/dashboard/vendor/VendorOffers';
+import TrialSettings from '../components/dashboard/vendor/TrialSettings';
+
+const VendorDashboard = () => {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [kitchenOpen, setKitchenOpen] = useState(true);
+  const [menuCycle, setMenuCycle] = useState('Daily');
+  const [reportFilter, setReportFilter] = useState('Daily Overview');
+  const [orderFilter, setOrderFilter] = useState('daily');
+  const [filteredOrders, setFilteredOrders] = useState([]);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // --- PROFILE STATE ---
+  const [profile, setProfile] = useState({
+    kitchenName: "",
+    address: "",
+    phone: "",
+    image: null,
+    kitchenPoster: null,
+    profileImage: null
+  });
+
+  // State to track if there's a new image to upload
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedKitchenPoster, setSelectedKitchenPoster] = useState(null);
+
+  // Loading state for profile image
+  const [imageLoading, setImageLoading] = useState(true);
+
+  // Default placeholder image for vendors
+  const defaultVendorImage = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCA4MCA4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iODAiIGhlaWdodD0iODAiIGZpbGw9IiNlMmU4ZjAiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjMwIiByPSIyMCIgZmlsbD0iI2YzZjVmMiIvPjxwYXRoIGQ9Ik0yMCA2NUwyMCA2NWwxMCAwaC0yMG0xMCAwaC0yMCIgZmlsbD0iI2U0ZThmMCIvPjwvc3ZnPg==';
+
+  const [reviews, setReviews] = useState([]);
+  const [vendorOrders, setVendorOrders] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [complaints, setComplaints] = useState([]);
+
+  const [notifications, setNotifications] = useState([
+    { id: 1, text: "New Order received from Aryan Patel!", type: "order" },
+    { id: 2, text: "Menu for next week is now live.", type: "menu" }
+  ]);
+
+  const [isApproved, setIsApproved] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [documents, setDocuments] = useState({ fssai: null, gst: null });
+
+  // --- TRIAL SETTINGS STATE ---
+  const [trialSettings, setTrialSettings] = useState({
+    trialEnabled: false,
+    trialFee: 0
+  });
+  const [savingTrialSettings, setSavingTrialSettings] = useState(false);
+  const [trialSettingsMessage, setTrialSettingsMessage] = useState({ type: '', text: '' });
+
+  // --- DASHBOARD STATS STATE ---
+  const [dashboardStats, setDashboardStats] = useState({
+    totalRevenue: 0,
+    todayOrders: 0,
+    activeSubscribers: 0,
+    pendingPayout: 0,
+    cashPaymentsTotal: 0,
+    cashPaymentsCount: 0,
+    upiPaymentsTotal: 0,
+    upiPaymentsCount: 0
+  });
+
+  // Load vendor data on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+
+    if (!token || !userData) {
+      navigate('/login');
+      return;
+    }
+
+    const parsedUser = JSON.parse(userData);
+    if (parsedUser.role !== 'vendor') {
+      navigate('/');
+      return;
+    }
+
+    fetchVendorData();
+    fetchShopStatus();
+  }, [navigate]);
+
+      // Fetch shop status from backend
+      const fetchShopStatus = async () => {
+        try {
+          const status = await getVendorShopStatus();
+          setKitchenOpen(status.isOpen);
+        } catch (error) {
+          console.warn('Failed to fetch shop status:', error);
+        }
+      };
+
+      // Fetch trial settings from vendor profile
+      const fetchTrialSettings = async () => {
+        try {
+          const vendorData = await getVendorProfile();
+          if (vendorData) {
+            setTrialSettings({
+              trialEnabled: vendorData.trialEnabled === true,
+              trialFee: vendorData.trialFee || 0
+            });
+          }
+        } catch (error) {
+          console.warn('Failed to fetch trial settings:', error);
+        }
+      };
+
+  // Handle shop open/close toggle
+  const handleShopToggle = async () => {
+    try {
+      const newStatus = !kitchenOpen;
+      const result = await toggleShopStatus(newStatus);
+      
+      setKitchenOpen(newStatus);
+      
+      if (newStatus === false) {
+        // Closing the shop
+        alert('Kitchen closed successfully! Users have been notified.');
+      } else {
+        // Opening the shop
+        if (result.subscriptionsExtended > 0) {
+          alert(`Kitchen opened successfully! ${result.subscriptionsExtended} subscription(s) have been extended by ${result.closureDays} day(s).`);
+        } else {
+          alert('Kitchen opened successfully!');
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling shop status:', error);
+      alert('Failed to update shop status: ' + error.message);
+    }
+  };
+
+  const fetchVendorData = async () => {
+    try {
+      setLoading(true);
+      setImageLoading(true); // Start loading image
+      const vendorData = await getVendorProfile();
+      
+      // Use resolveImageUrl to properly handle image paths
+      const resolvedImage = resolveImageUrl(vendorData.profileImage);
+      const resolvedKitchenPoster = resolveImageUrl(vendorData.kitchenPoster);
+      
+      setProfile({
+        kitchenName: vendorData.kitchenName,
+        address: vendorData.address,
+        phone: vendorData.ownerId?.phone || "",
+        image: resolvedImage,
+        kitchenPoster: resolvedKitchenPoster,
+        profileImage: vendorData.profileImage
+      });
+      
+      // Image has been resolved, stop loading
+      setImageLoading(false);
+      setIsApproved(vendorData?.isApproved === true);
+      setRejectionReason(vendorData.rejectionReason || '');
+
+      const orders = await getVendorOrders();
+      setVendorOrders(orders || []);
+
+      const reviewsData = await getVendorReviews();
+      setReviews(reviewsData || []);
+      
+      // Fetch dashboard stats
+      try {
+        const stats = await getDashboardStats();
+        setDashboardStats({
+          totalRevenue: stats.totalRevenue || 0,
+          todayOrders: stats.todayOrders || 0,
+          activeSubscribers: stats.activeSubscribers || 0,
+          pendingPayout: stats.pendingPayout || 0,
+          cashPaymentsTotal: stats.cashPaymentsTotal || 0,
+          cashPaymentsCount: stats.cashPaymentsCount || 0,
+          upiPaymentsTotal: stats.upiPaymentsTotal || 0,
+          upiPaymentsCount: stats.upiPaymentsCount || 0
+        });
+      } catch (e) {
+        console.warn('Failed to load dashboard stats', e);
+      }
+
+      // customers & complaints
+      try {
+        const cust = await getVendorCustomers();
+        setCustomers(cust || []);
+      } catch (e) {
+        console.warn('Failed to load customers', e);
+      }
+
+      try {
+        const comp = await getVendorComplaints();
+        setComplaints(comp || []);
+      } catch (e) {
+        console.warn('Failed to load complaints', e);
+      }
+    } catch (err) {
+      console.error('Error fetching vendor data:', err);
+      setError('Failed to load vendor data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- SUBSCRIPTION DATA GENERATOR ---
+  const activeSubscriptions = useMemo(() => {
+    const customers = [
+      { id: 1, name: "Mosin Ali", phone: "+91 98XXX-X0010", plan: "Monthly", expiry: "2026-02-15", pref: "No Garlic" },
+      { id: 2, name: "Priya Sharma", phone: "+91 91XXX-X5521", plan: "Weekly", expiry: "2026-01-28", pref: "Regular" },
+      { id: 3, name: "Rahul Varma", phone: "+91 88XXX-X9910", plan: "Monthly", expiry: "2026-01-24", pref: "Jain" },
+      { id: 4, name: "Sneha Kapur", phone: "+91 77XXX-X2233", plan: "Trial", expiry: "2026-01-30", pref: "jain" },
+    ];
+    const today = new Date("2026-01-26"); 
+    return customers.map(sub => {
+      const expiryDate = new Date(sub.expiry);
+      const diffTime = expiryDate - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      let status = "Active";
+      let statusColor = "#16a34a";
+      if (diffDays < 0) {
+        status = "Expired";
+        statusColor = "#ef4444";
+      } else if (diffDays <= 3) {
+        status = `Expiring in ${diffDays}d`;
+        statusColor = "#f26522";
+      }
+      return { ...sub, status, statusColor, diffDays };
+    });
+  }, []);
+
+  const handleProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfile(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Store the actual file for upload
+      setSelectedImage(file);
+      
+      // Show preview using FileReader
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile(prev => ({ ...prev, image: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handler for kitchen poster upload
+  const handleKitchenPosterUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Store the actual file for upload
+      setSelectedKitchenPoster(file);
+      
+      // Show preview using FileReader
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile(prev => ({ ...prev, kitchenPoster: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Helper function to resolve image URL - handles both relative paths and full URLs
+  // NOTE: The backend now returns full URLs directly, so we mainly just need to pass through
+  const resolveImageUrl = (imagePath) => {
+    if (!imagePath) return null;
+    
+    // If it's a data URL (base64 from FileReader), return as is for preview
+    if (imagePath.startsWith('data:')) {
+      return imagePath;
+    }
+    
+    // If it's already a full URL (http/https), return as is - backend already provides this!
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      return imagePath;
+    }
+    
+    // For any relative path, construct the URL using window.location.origin for dynamic base
+    return `${window.location.origin}${imagePath.startsWith('/') ? '' : '/'}${imagePath}`;
+  };
+
+  // Enhanced handleSaveProfile with proper persistence and state update - now includes image and kitchen poster upload
+  const handleSaveProfile = async () => {
+    try {
+      setLoading(true);
+      
+      // FIX: Upload profile image and kitchen poster BEFORE updating text fields
+      // This ensures the upload result (full URL) is available when setting final values
+      
+      let finalProfileImage = profile.image;
+      let finalKitchenPoster = profile.kitchenPoster;
+      
+      // If there's a new profile image selected, upload it first
+      if (selectedImage) {
+        try {
+          const formData = new FormData();
+          formData.append('profilePic', selectedImage);
+          
+          const uploadResult = await updateVendorProfilePic(formData);
+          
+          // Use the returned URL directly from the server (it's already a full URL)
+          if (uploadResult.profileImage) {
+            finalProfileImage = uploadResult.profileImage;
+          }
+          
+          // Clear the selected image after successful upload
+          setSelectedImage(null);
+        } catch (uploadError) {
+          console.error('Failed to upload profile image:', uploadError);
+          // Continue even if image upload fails - profile was still updated
+        }
+      }
+      
+      // If there's a new kitchen poster selected, upload it
+      if (selectedKitchenPoster) {
+        try {
+          const posterFormData = new FormData();
+          posterFormData.append('kitchenPoster', selectedKitchenPoster);
+          
+          const posterUploadResult = await updateKitchenPoster(posterFormData);
+          
+          // Use the returned URL directly from the server (it's already a full URL)
+          if (posterUploadResult.kitchenPoster) {
+            finalKitchenPoster = posterUploadResult.kitchenPoster;
+          }
+          
+          // Clear the selected kitchen poster after successful upload
+          setSelectedKitchenPoster(null);
+        } catch (posterUploadError) {
+          console.error('Failed to upload kitchen poster:', posterUploadError);
+          // Continue even if poster upload fails - profile was still updated
+        }
+      }
+      
+      // Now update the profile text fields
+      const updatedVendor = await updateVendorProfile({
+        kitchenName: profile.kitchenName,
+        address: profile.address,
+        phone: profile.phone
+      });
+      
+      // Use the uploaded image URLs (which have full URLs) if available, otherwise use the updated vendor's values
+      const displayImage = finalProfileImage || updatedVendor.profileImage || profile.image;
+      const displayKitchenPoster = finalKitchenPoster || updatedVendor.kitchenPoster || profile.kitchenPoster;
+      
+      // Update local state with the new images
+      setProfile(prev => ({
+        ...prev,
+        kitchenName: updatedVendor.kitchenName,
+        address: updatedVendor.address,
+        phone: updatedVendor.ownerId?.phone || profile.phone,
+        image: displayImage,
+        kitchenPoster: displayKitchenPoster
+      }));
+      
+      // Stop image loading to show the image immediately
+      setImageLoading(false);
+      
+      // Update localStorage with new user data to persist profile image across refreshes
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const updatedUser = {
+        ...currentUser,
+        kitchenName: updatedVendor.kitchenName,
+        address: updatedVendor.address,
+        phone: updatedVendor.ownerId?.phone || currentUser.phone,
+        profileImage: displayImage,
+        kitchenPoster: displayKitchenPoster,
+        profilePic: displayImage // Also update profilePic for consistency
+      };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      
+      alert('Profile updated successfully! Changes will persist after refresh.');
+    } catch (err) {
+      console.error('Failed to update profile:', err);
+      alert('Failed to update profile: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reportData = useMemo(() => {
+    const data = [];
+    const types = ["Daily Overview", "Weekly Analysis", "Monthly Statement"];
+    for (let i = 1; i <= 100; i++) {
+      data.push({
+        id: `TXN-99${100 + i}`,
+        date: new Date(2026, 0, (i % 28) + 1).toLocaleDateString('en-IN'),
+        orders: Math.floor(Math.random() * 50) + 10 + " Meals",
+        earning: (Math.random() * 5000 + 1000).toFixed(2),
+        status: "Settled",
+        scope: i <= 30 ? types[0] : i <= 60 ? types[1] : types[2]
+      });
+    }
+    return data;
+  }, []);
+
+  const filteredReports = reportData.filter(r => r.scope === reportFilter);
+
+  // Fetch filtered orders for PDF report
+  const fetchFilteredOrders = async (filter) => {
+    try {
+      setFilterLoading(true);
+      const data = await getFilteredOrders(filter);
+      setFilteredOrders(data || []);
+    } catch (error) {
+      console.error('Error fetching filtered orders:', error);
+      setFilteredOrders([]);
+    } finally {
+      setFilterLoading(false);
+    }
+  };
+
+  // Handle filter change
+  const handleFilterChange = (newFilter) => {
+    setOrderFilter(newFilter);
+    fetchFilteredOrders(newFilter);
+  };
+
+  // Generate PDF with real order data
+  const handleDownloadPDF = async () => {
+    try {
+      // First fetch the data if not already loaded
+      if (filteredOrders.length === 0) {
+        await fetchFilteredOrders(orderFilter);
+      }
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      // Watermark
+      doc.setFontSize(50);
+      doc.setTextColor(240, 240, 240);
+      doc.text("MEALSETU PARTNER", pageWidth / 2, pageHeight / 2, { align: "center", angle: 45 });
+      
+      // Header
+      doc.setFontSize(20);
+      doc.setTextColor(242, 101, 34); 
+      doc.text("Payment Report", 14, 22);
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      
+      // Filter label
+      const filterLabels = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+      doc.text(`Filter: ${filterLabels[orderFilter]} Orders`, 14, 32);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 38);
+      doc.text(`Total Orders: ${filteredOrders.length}`, 14, 44);
+      
+      // Summary section
+      const totalAmount = filteredOrders.reduce((sum, order) => sum + (Number(order.amount) || 0), 0);
+      const cashPayments = filteredOrders.filter(o => o.paymentMethod === 'Cash').length;
+      const upiPayments = filteredOrders.filter(o => o.paymentMethod === 'UPI').length;
+      
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(`Total Amount: ₹${totalAmount.toFixed(2)}`, 14, 52);
+      doc.text(`Cash Payments: ${cashPayments}`, 80, 52);
+      doc.text(`UPI Payments: ${upiPayments}`, 140, 52);
+      
+      // Table columns: Order ID, Username, Amount, Payment Method, Plan Type, Meal Preference
+      const tableColumn = ["Order ID", "Username", "Amount (INR)", "Payment Method", "Plan Type", "Meal Pref"];
+      const tableRows = filteredOrders.map(order => [
+        order.orderId ? order.orderId.slice(-8).toUpperCase() : 'N/A',
+        order.username || 'Unknown',
+        `₹${(Number(order.amount) || 0).toFixed(2)}`,
+        order.paymentMethod || 'Cash',
+        order.planType || 'Trial',
+        order.mealPreference || 'Regular'
+      ]);
+      
+      autoTable(doc, {
+        head: [tableColumn],
+        body: tableRows,
+        startY: 60,
+        theme: 'grid',
+        headStyles: { fillColor: [43, 54, 116], textColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [244, 247, 254] },
+        margin: { top: 60 },
+        columnStyles: {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 25, halign: 'right' },
+          3: { cellWidth: 25 },
+          4: { cellWidth: 20 },
+          5: { cellWidth: 25 }
+        }
+      });
+      
+      // Add total at the bottom
+      const finalY = doc.lastAutoTable.finalY + 10;
+      doc.setFontSize(12);
+      doc.setTextColor(0);
+      doc.text(`Grand Total: ₹${totalAmount.toFixed(2)}`, 14, finalY);
+      
+      doc.save(`MealSetu_Payment_Report_${filterLabels[orderFilter]}_${Date.now()}.pdf`);
+    } catch (error) {
+      console.error("PDF Error:", error);
+      alert("Failed to generate PDF. Please try again.");
+    }
+  };
+
+  const handleLogout = () => {
+    if (window.confirm("Are you sure you want to logout?")) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      navigate('/login');
+    }
+  };
+
+  const handleSubmitCompliance = async () => {
+              if (!documents.fssai && !documents.gst) {
+                alert('Please select at least one document (FSSAI or GST)');
+                return;
+              }
+              
+              const formData = new FormData();
+              if (documents.fssai) formData.append('fssaiDoc', documents.fssai);
+              if (documents.gst) formData.append('gstDoc', documents.gst);
+              
+              try {
+                await submitVendorCompliance(formData);
+                alert('✅ Documents submitted for admin review!\\nStatus reset to Pending. Await approval.');
+                setDocuments({ fssai: null, gst: null }); // Reset form
+                fetchVendorData(); // Refresh profile/status
+              } catch (error) {
+                console.error('Compliance submit error:', error);
+                alert('❌ Submit failed: ' + error.message);
+              }
+            };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <DashboardOverview 
+            profile={profile}
+            revenue={dashboardStats.totalRevenue}
+            ordersToday={dashboardStats.todayOrders}
+            activeUsers={dashboardStats.activeSubscribers}
+            pendingPayout={dashboardStats.pendingPayout}
+            kitchenStatus={{ isOpen: kitchenOpen }}
+            onToggleKitchen={handleShopToggle}
+            onTabChange={setActiveTab}
+            preparationList={{ total: 0, regular: 0, jain: 0, veg: 0 }}
+          />
+        );
+
+      case 'commission':
+        return <CommissionHistory />;
+
+      case 'menu':
+        return <WeeklyMenuPlanner />;
+
+      case 'orders':
+        return (
+          <div className="v-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Orders & Upcoming Deliveries</h3>
+              <div style={{ display: 'flex', gap: '10px' }}><input type="date" className="v-input" style={{ width: 'auto', margin: 0 }} /><button style={{ background: '#1e293b', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer' }}>Filter</button></div>
+            </div>
+            <table className="v-table v-table-orders">
+              <thead><tr><th>Order ID</th><th>Customer Name</th><th>Meal Preference</th><th>Delivery Slot</th></tr></thead>
+              <tbody>
+                {vendorOrders.map(o => (
+                  <tr key={o._id}>
+                    <td>#{o._id.slice(-6)}</td>
+                    <td>{o.userId?.name || 'Customer'}</td>
+                    <td>{o.mealPreference}</td>
+                    <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'customers':
+        return (
+          <div className="v-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3>Active Subscriptions</h3>
+              {/* <div style={{ background: '#fff3ed', color: '#f26522', padding: '5px 15px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>Total: {activeSubscriptions.filter(s => s.status !== "Expired").length}</div> */}
+            </div>
+            <table className="v-table">
+              <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Total Orders</th></tr></thead>
+              <tbody>
+                {customers.map((c) => (
+                  <tr key={c._id}>
+                    <td style={{ fontWeight: 'bold' }}>{c.name}</td>
+                    <td>{c.phone}</td>
+                    <td>{c.email}</td>
+                    <td style={{ fontWeight: '600', color: '#f26522' }}>{c.totalOrders || 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'reports':
+        return (
+          <div className="v-card">
+            <div className="pdf-watermark">MEALSETU PARTNER</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Payment Report</h3>
+              <button onClick={handleDownloadPDF} disabled={filterLoading} style={{ background: '#f26522', color: 'white', border: 'none', padding: '12px 25px', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}>
+                {filterLoading ? '⏳ Loading...' : '📥 Download PDF'}
+              </button>
+            </div>
+            <div style={{ marginTop: '20px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <label style={{ fontWeight: '600' }}>Filter:</label>
+              <select 
+                className="v-input" 
+                style={{ width: '200px' }} 
+                value={orderFilter} 
+                onChange={(e) => handleFilterChange(e.target.value)}
+              >
+                <option value="daily">Daily (Today)</option>
+                <option value="weekly">Weekly (Last 7 days)</option>
+                <option value="monthly">Monthly (Last 30 days)</option>
+              </select>
+              <button 
+                onClick={() => fetchFilteredOrders(orderFilter)} 
+                style={{ background: '#1e293b', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
+              >
+                Apply Filter
+              </button>
+            </div>
+            
+            {/* Summary Stats */}
+            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
+              <div style={{ background: '#f4f7fe', padding: '15px', borderRadius: '10px', flex: 1 }}>
+                <p style={{ color: '#a3aed0', margin: 0, fontSize: '12px' }}>Total Orders</p>
+                <h3 style={{ color: '#2b3674', margin: '5px 0 0 0' }}>{filteredOrders.length}</h3>
+              </div>
+              <div style={{ background: '#f4f7fe', padding: '15px', borderRadius: '10px', flex: 1 }}>
+                <p style={{ color: '#a3aed0', margin: 0, fontSize: '12px' }}>Total Amount</p>
+                <h3 style={{ color: '#2b3674', margin: '5px 0 0 0' }}>₹{filteredOrders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0).toFixed(2)}</h3>
+              </div>
+              <div style={{ background: '#f4f7fe', padding: '15px', borderRadius: '10px', flex: 1 }}>
+                <p style={{ color: '#a3aed0', margin: 0, fontSize: '12px' }}>Cash Payments</p>
+                <h3 style={{ color: '#2b3674', margin: '5px 0 0 0' }}>{filteredOrders.filter(o => o.paymentMethod === 'Cash').length}</h3>
+              </div>
+              <div style={{ background: '#f4f7fe', padding: '15px', borderRadius: '10px', flex: 1 }}>
+                <p style={{ color: '#a3aed0', margin: 0, fontSize: '12px' }}>UPI Payments</p>
+                <h3 style={{ color: '#2b3674', margin: '5px 0 0 0' }}>{filteredOrders.filter(o => o.paymentMethod === 'UPI').length}</h3>
+              </div>
+            </div>
+
+            <div style={{ maxHeight: '400px', overflowY: 'auto', marginTop: '30px' }}>
+              <table className="v-table">
+                <thead><tr><th>Username</th><th>Amount</th><th>Payment Method</th><th>Plan Type</th><th>Meal Preference</th><th>Date</th></tr></thead>
+                <tbody>
+                  {filterLoading ? (
+                    <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>Loading...</td></tr>
+                  ) : filteredOrders.length > 0 ? (
+                    filteredOrders.map((order) => (
+                      <tr key={order._id}>
+                        <td style={{ fontWeight: 'bold' }}>{order.username || 'Unknown'}</td>
+                        <td>₹{(Number(order.amount) || 0).toFixed(2)}</td>
+                        <td>
+                          <span style={{ 
+                            padding: '4px 10px', 
+                            borderRadius: '20px', 
+                            background: order.paymentMethod === 'UPI' ? '#dcfce7' : '#fef3c7',
+                            color: order.paymentMethod === 'UPI' ? '#16a34a' : '#d97706',
+                            fontWeight: '600',
+                            fontSize: '12px'
+                          }}>
+                            {order.paymentMethod || 'Cash'}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{ 
+                            padding: '4px 10px', 
+                            borderRadius: '20px', 
+                            background: order.planType === 'Monthly' ? '#dbeafe' : order.planType === 'Weekly' ? '#f3e8ff' : '#f1f5f9',
+                            color: order.planType === 'Monthly' ? '#1d4ed8' : order.planType === 'Weekly' ? '#7c3aed' : '#64748b',
+                            fontWeight: '600',
+                            fontSize: '12px'
+                          }}>
+                            {order.planType || 'Trial'}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{ 
+                            padding: '4px 10px', 
+                            borderRadius: '20px', 
+                            background: order.mealPreference === 'Jain' ? '#fef3c7' : '#dcfce7',
+                            color: order.mealPreference === 'Jain' ? '#d97706' : '#16a34a',
+                            fontWeight: '600',
+                            fontSize: '12px'
+                          }}>
+                            {order.mealPreference || 'Regular'}
+                          </span>
+                        </td>
+                        <td>{order.orderDate ? new Date(order.orderDate).toLocaleDateString('en-IN') : 'N/A'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#a3aed0' }}>No orders found for this period. Click "Apply Filter" to load data.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case 'profile':
+        return (
+          <div className="v-card">
+            <h3 style={{ color: '#2b3674' }}>Kitchen Profile Settings</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginTop: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Kitchen Name</label><input className="v-input" name="kitchenName" value={profile.kitchenName} onChange={handleProfileChange} /></div>
+                <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Complete Address</label><textarea className="v-input" name="address" style={{ height: '100px', paddingTop: '10px' }} value={profile.address} onChange={handleProfileChange} /></div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ marginBottom: '20px' }}>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>Profile Picture</p>
+                  <div style={{ width: '150px', height: '150px', borderRadius: '50%', border: '2px dashed #cbd5e1', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
+                    {imageLoading ? (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#e2e8f0' }}>
+                        <span style={{ fontSize: '30px' }}>⏳</span>
+                      </div>
+                    ) : profile.image ? (
+                      <img 
+                        src={resolveImageUrl(profile.image)} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        alt="Preview" 
+                        onError={(e) => { e.target.onerror = null; e.target.src = ''; }}
+                        onLoad={() => setImageLoading(false)}
+                      />
+                    ) : (
+                      <span style={{ color: '#94a3b8', fontSize: '12px' }}>No Image</span>
+                    )}
+                  </div>
+                  <input type="file" accept="image/*" id="imageUpload" hidden onChange={handleImageUpload} />
+                  <label htmlFor="imageUpload" style={{ display: 'inline-block', marginTop: '10px', padding: '8px 16px', background: '#f26522', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>Change</label>
+                </div>
+                <div>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>Kitchen Banner/Poster</p>
+                  <div style={{ width: '200px', height: '100px', borderRadius: '12px', border: '2px dashed #cbd5e1', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
+                    {profile.kitchenPoster ? (
+                      <img 
+                        src={resolveImageUrl(profile.kitchenPoster)} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        alt="Kitchen Poster" 
+                        onError={(e) => { e.target.onerror = null; e.target.src = ''; }}
+                      />
+                    ) : (
+                      <span style={{ color: '#94a3b8', fontSize: '12px' }}>No Banner</span>
+                    )}
+                  </div>
+                  <input type="file" accept="image/*" id="kitchenPosterUpload" hidden onChange={handleKitchenPosterUpload} />
+                  <label htmlFor="kitchenPosterUpload" style={{ display: 'inline-block', marginTop: '10px', padding: '8px 16px', background: '#16a34a', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>Upload Banner</label>
+                </div>
+              </div>
+            </div>
+            <button 
+              className="v-nav-btn" 
+              style={{ background: '#2b3674', color: 'white', width: '200px', justifyContent: 'center', marginTop: '30px' }} 
+              onClick={handleSaveProfile}
+              disabled={loading}
+            >
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        );
+
+      // --- NEW RENDER CONTENT CASES ---
+      case 'reviews':
+        return (
+          <div className="v-card">
+            <h3>Customer Reviews & Feedback</h3>
+            
+            {/* Rating Summary */}
+            {reviews && reviews.reviews && reviews.reviews.length > 0 && (
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '20px', 
+                marginBottom: '20px',
+                padding: '15px',
+                background: '#f8fafc',
+                borderRadius: '10px'
+              }}>
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '36px', fontWeight: 'bold', color: '#f26522' }}>
+                    {reviews.averageRating || 0}
+                  </span>
+                  <div style={{ color: '#f59e0b', fontSize: '20px' }}>
+                    {'⭐'.repeat(Math.round(reviews.averageRating || 0))}
+                  </div>
+                  <small style={{ color: '#64748b' }}>{reviews.totalReviews || 0} reviews</small>
+                </div>
+                <div style={{ flex: 1 }}>
+                  {/* <p style={{ margin: 0, color: '#16a34a', fontWeight: '600' }}>
+                    ✓ Reviews sorted by rating (Excellent first)
+                  </p>
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                    5-star and 4-star reviews are pinned to the top
+                  </p> */}
+                </div>
+              </div>
+            )}
+            
+            <div style={{ marginTop: '20px' }}>
+              {reviews && reviews.reviews && reviews.reviews.length > 0 ? (
+                reviews.reviews.map((rev, idx) => (
+                  <div key={rev._id || idx} style={{ 
+                    padding: '15px', 
+                    borderBottom: '1px solid #f4f7fe',
+                    background: rev.rating >= 4 ? '#f0fdf4' : rev.rating <= 2 ? '#fef2f2' : '#fff',
+                    marginBottom: '10px',
+                    borderRadius: '8px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <strong style={{ fontSize: '16px', color: '#2b3674' }}>{rev.user}</strong>
+                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{rev.date}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span style={{ 
+                          display: 'inline-block',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          background: rev.rating >= 4 ? '#dcfce7' : rev.rating <= 2 ? '#fee2e2' : '#fef3c7',
+                          color: rev.rating >= 4 ? '#16a34a' : rev.rating <= 2 ? '#dc2626' : '#d97706',
+                          fontWeight: '600',
+                          fontSize: '14px'
+                        }}>
+                          {'⭐'.repeat(rev.rating)} <span style={{ marginLeft: '5px' }}>{rev.rating}/5</span>
+                        </span>
+                      </div>
+                    </div>
+                    {rev.comment && (
+                      <p style={{ color: '#444', fontSize: '14px', margin: '10px 0 0 0', lineHeight: '1.5' }}>
+                        {rev.comment}
+                      </p>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                  <p style={{ fontSize: '18px' }}>📝 No reviews yet</p>
+                  <p>Reviews from customers will appear here after they rate your service.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+
+      case 'compliance':
+        return (
+          <div className="v-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Kitchen Compliance & Licenses</h3>
+<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+  {isApproved === true ? (
+    <span style={{
+      background: '#dcfce7',
+      color: '#16a34a',
+      border: '1px solid #16a34a',
+      padding: '8px 20px',
+      borderRadius: '20px',
+      fontWeight: '700',
+      fontSize: '14px'
+    }}>
+      Approved by Admin
+    </span>
+  ) : isApproved === false && rejectionReason ? (
+    <span style={{
+      background: '#fef2f2',
+      color: '#ef4444',
+      border: '1px solid #ef4444',
+      padding: '8px 20px',
+      borderRadius: '20px',
+      fontWeight: '700',
+      fontSize: '14px'
+    }}>
+      Rejected
+    </span>
+  ) : (
+    <span style={{
+      background: '#fff7ed',
+      color: '#f26522',
+      border: '1px solid #fed7aa',
+      padding: '8px 20px',
+      borderRadius: '20px',
+      fontWeight: '700',
+      fontSize: '14px'
+    }}>
+      Pending Admin Approval
+    </span>
+  )}
+</div>
+            </div>
+            
+            {rejectionReason && !isApproved && (
+              <div style={{ 
+                background: '#fef2f2', 
+                border: '1px solid #fecaca', 
+                borderRadius: '12px', 
+                padding: '20px', 
+                marginTop: '20px',
+                marginBottom: '30px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '20px' }}>⚠️</span>
+                  <h4 style={{ color: '#dc2626', margin: 0 }}>Admin Rejection Reason</h4>
+                </div>
+                <p style={{ color: '#991b1b', lineHeight: '1.6', margin: 0 }}>
+                  {rejectionReason}
+                </p>
+              </div>
+            )}
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '30px' }}>
+              <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
+                <p><strong>FSSAI License</strong></p>
+                <input type="file" onChange={(e) => setDocuments({...documents, fssai: e.target.files[0]})} />
+                {documents.fssai && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.fssai.name}</p>}
+              </div>
+              <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
+                <p><strong>GST/Tax Document</strong></p>
+                <input type="file" onChange={(e) => setDocuments({...documents, gst: e.target.files[0]})} />
+                {documents.gst && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.gst.name}</p>}
+              </div>
+            </div>
+            {/* // COMPLIANCE SUBMISSION HANDLER - NEW FOR BUG FIX
+            const handleSubmitCompliance = async () => {
+              if (!documents.fssai && !documents.gst) {
+                alert('Please select at least one document (FSSAI or GST)');
+                return;
+              }
+              
+              const formData = new FormData();
+              if (documents.fssai) formData.append('fssaiDoc', documents.fssai);
+              if (documents.gst) formData.append('gstDoc', documents.gst);
+              
+              try {
+                await submitVendorCompliance(formData);
+                alert('✅ Documents submitted for admin review!\\nStatus reset to Pending. Await approval.');
+                setDocuments({ fssai: null, gst: null }); // Reset form
+                fetchVendorData(); // Refresh profile/status
+              } catch (error) {
+                console.error('Compliance submit error:', error);
+                alert('❌ Submit failed: ' + error.message);
+              }
+            }; */}
+
+            <button 
+              className="v-nav-btn" 
+              style={{ background: '#f26522', color: 'white', marginTop: '20px', width: '200px', justifyContent: 'center' }}
+              onClick={handleSubmitCompliance}
+            >
+              Submit for Approval
+            </button>
+          </div>
+        );
+
+      case 'complaints':
+        return (
+          <div className="v-card">
+            <h3>Customer Complaints</h3>
+            <div style={{ marginTop: '20px' }}>
+              {complaints.length === 0 && <div style={{ color: '#a3aed0' }}>No complaints</div>}
+              {complaints.map(c => (
+                <div key={c._id} style={{ padding: '12px', borderBottom: '1px solid #f4f7fe' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong>{c.userId?.name}</strong>
+                    <span style={{ color: '#a3aed0' }}>{new Date(c.createdAt).toLocaleString()}</span>
+                  </div>
+                  <p style={{ margin: '8px 0' }}>{c.message}</p>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={async () => {
+                      const resp = prompt('Reply to complaint (will mark Resolved):');
+                      if (resp !== null) {
+                        try {
+                          await resolveVendorComplaint(c._id, 'Resolved', resp);
+                          alert('Complaint resolved');
+                          fetchVendorData();
+                        } catch (e) { alert('Failed to resolve'); }
+                      }
+                    }} style={{ background: '#16a34a', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Resolve</button>
+                    <button onClick={async () => {
+                      const resp = prompt('Reject reason (optional):');
+                      try {
+                        await resolveVendorComplaint(c._id, 'Rejected', resp || 'Rejected by vendor');
+                        alert('Complaint rejected');
+                        fetchVendorData();
+                      } catch (e) { alert('Failed to reject'); }
+                    }} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+
+      case 'offers':
+        return <VendorOffers />;
+
+      case 'trials':
+        return (
+          <TrialSettings 
+            trialSettings={trialSettings}
+            setTrialSettings={setTrialSettings}
+            savingTrialSettings={savingTrialSettings}
+            trialSettingsMessage={trialSettingsMessage}
+            setTrialSettingsMessage={setTrialSettingsMessage}
+            fetchVendorData={fetchVendorData}
+          />
+        );
+
+      default: return null;
+    }
+  };
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>Loading vendor data...</div>;
+  }
+
+  if (error) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', color: 'red' }}>Error: {error}</div>;
+  }
+
+  return (
+    <div className="vendor-container">
+      <aside className="v-sidebar">
+        <h2 style={{ color: '#f26522', fontWeight: '800', marginBottom: '30px' }}>MealSetu</h2>
+        <nav style={{ flex: 1 }}>
+          <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Overview</button>
+          <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}> Menu Planner</button>
+          <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}> Order Tracking</button>
+          <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}> My Customers</button>
+          <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}> Reports & PDF</button>
+          <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => setActiveTab('commission')}>
+             Commission
+          </button>
+          {/* NEW BUTTONS ADDED TO SIDEBAR */}
+          <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}> Reviews</button>
+          <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}> Compliance</button>
+          <button className={`v-nav-btn ${activeTab === 'offers' ? 'active' : ''}`} onClick={() => setActiveTab('offers')}> Offers</button>
+          <button className={`v-nav-btn ${activeTab === 'trials' ? 'active' : ''}`} onClick={() => setActiveTab('trials')}> Trial Settings</button>
+          <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}> Edit Profile</button>
+        </nav>
+        <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>  Logout</button>
+      </aside>
+
+      <main className="vendor-main">
+        {/* NEW NOTIFICATION UI ADDED AT TOP OF MAIN */}
+        {notifications.length > 0 && (
+          <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {notifications.map(n => (
+              <div key={n.id} style={{ background: '#2b3674', color: 'white', padding: '15px 25px', borderRadius: '12px', boxShadow: '0 10px 15px rgba(0,0,0,0.1)', display: 'flex', gap: '15px', alignItems: 'center' }}>
+                <span>{n.type === 'order' ? '🔔' : '📝'}</span>
+                <span>{n.text}</span>
+                <button onClick={() => setNotifications(notifications.filter(notif => notif.id !== n.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <header className="vendor-header">
+          <div className="vendor-header-left">
+            <h1 className="vendor-title">Vendor Portal</h1>
+            <p className="vendor-subtitle">Manage your kitchen operations</p>
+          </div>
+          <div className="kitchen-status-bar">
+            <span className={`kitchen-status-text kitchen-status-${kitchenOpen ? 'open' : 'closed'}`}>
+              {kitchenOpen ? '● Kitchen is Open' : '○ Kitchen is Closed'}
+            </span>
+            <button className="kitchen-toggle-btn" onClick={handleShopToggle}>
+              {kitchenOpen ? 'Close Shop' : 'Open Shop'}
+            </button>
+          </div>
+        </header>
+
+        {renderContent()}
+      </main>
+    </div>
+  );
+};
+
+export default VendorDashboard;
+
+// ================= Weekly Menu Planner Component =================
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const WeeklyMenuPlanner = () => {
+  const [weeklyPlan, setWeeklyPlan] = useState({
+    Monday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Tuesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Wednesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Thursday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Friday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Saturday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Sunday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' }
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  // Fetch existing weekly plan on mount
+  useEffect(() => {
+    const fetchWeeklyPlan = async () => {
+      try {
+        setLoading(true);
+        const data = await getWeeklyPlan();
+        if (data.weeklyPlan) {
+          setWeeklyPlan(data.weeklyPlan);
+        }
+      } catch (error) {
+        console.warn('Failed to load weekly plan:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchWeeklyPlan();
+  }, []);
+
+  // Handle input changes for a specific day
+  const handleDayChange = (day, field, value) => {
+    setWeeklyPlan(prev => ({
+      ...prev,
+      [day]: {
+        ...prev[day],
+        [field]: value
+      }
+    }));
+  };
+
+  // Batch Save - Save entire week's schedule in one API call
+  const handleBatchSave = async () => {
+    try {
+      setSaving(true);
+      setMessage({ type: '', text: '' });
+      
+      await saveWeeklyPlan(weeklyPlan);
+      
+      setMessage({ type: 'success', text: 'Weekly menu plan saved successfully!' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to save weekly plan: ' + error.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="v-card" style={{ textAlign: 'center', padding: '40px' }}>
+        <p>Loading weekly menu plan...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="v-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
+        <div>
+          <h3 style={{ color: '#2b3674', margin: 0 }}>Weekly Menu Planner</h3>
+          <p style={{ color: '#a3aed0', margin: '5px 0 0 0', fontSize: '14px' }}>
+            Manage your 7-day rolling schedule (Monday to Sunday)
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ 
+            fontSize: '12px', 
+            padding: '5px 12px', 
+            borderRadius: '20px',
+            background: '#f4f7fe',
+            color: '#2b3674'
+          }}>
+            📅 Rolling Week
+          </span>
+        </div>
+      </div>
+
+      {/* Success/Error Message */}
+      {message.text && (
+        <div style={{ 
+          padding: '12px 20px', 
+          borderRadius: '8px', 
+          marginBottom: '20px',
+          background: message.type === 'success' ? '#dcfce7' : '#fef2f2',
+          color: message.type === 'success' ? '#16a34a' : '#ef4444',
+          fontWeight: '500'
+        }}>
+          {message.text}
+        </div>
+      )}
+
+      {/* 7-Day Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+        {DAYS_OF_WEEK.map(day => (
+          <div 
+            key={day} 
+            style={{ 
+              background: '#f8fafc', 
+              borderRadius: '12px', 
+              padding: '20px',
+              border: '1px solid #e2e8f0'
+            }}
+          >
+            {/* Day Header */}
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '10px',
+              marginBottom: '15px',
+              paddingBottom: '10px',
+              borderBottom: '2px solid #f26522'
+            }}>
+              <span style={{ fontSize: '20px' }}>
+                {day === 'Monday' ? '' : day === 'Tuesday' ? '' : day === 'Wednesday' ? '' : day === 'Thursday' ? '' : day === 'Friday' ? '' : day === 'Saturday' ? '' : ''}
+              </span>
+              <h4 style={{ margin: 0, color: '#2b3674', fontSize: '16px' }}>{day}</h4>
+            </div>
+
+            {/* Main Course Input */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                 Main Course
+              </label>
+              <input 
+                type="text"
+                className="v-input"
+                placeholder="e.g. Paneer Butter Masala"
+                value={weeklyPlan[day].mainCourse}
+                onChange={(e) => handleDayChange(day, 'mainCourse', e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {/* Alternative Sabji Input */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                 Alt Sabji
+              </label>
+              <input 
+                type="text"
+                className="v-input"
+                placeholder="e.g. Mix Veg Fry"
+                value={weeklyPlan[day].altSabji}
+                onChange={(e) => handleDayChange(day, 'altSabji', e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {/* Second Alternative Sabji Input */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                 2nd Alt Sabji
+              </label>
+              <input 
+                type="text"
+                className="v-input"
+                placeholder="e.g. Aloo Gobhi"
+                value={weeklyPlan[day].altSabji2 || ''}
+                onChange={(e) => handleDayChange(day, 'altSabji2', e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {/* Sides Input */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                 Sides
+              </label>
+              <input 
+                type="text"
+                className="v-input"
+                placeholder="e.g. Dal Fry + Rice + Roti"
+                value={weeklyPlan[day].sides}
+                onChange={(e) => handleDayChange(day, 'sides', e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {/* Special Add-ons Input */}
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                   Special Add-ons
+              </label>
+              <input 
+                type="text"
+                className="v-input"
+                placeholder="e.g. Sweet + Salad + Papad"
+                value={weeklyPlan[day].specialAddOns}
+                onChange={(e) => handleDayChange(day, 'specialAddOns', e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Batch Save Button */}
+      <div style={{ marginTop: '30px', textAlign: 'center' }}>
+        <button 
+          onClick={handleBatchSave}
+          disabled={saving}
+          style={{ 
+            background: saving ? '#94a3b8' : '#f26522',
+            color: 'white',
+            border: 'none',
+            padding: '15px 50px',
+            borderRadius: '12px',
+            fontSize: '16px',
+            fontWeight: '600',
+            cursor: saving ? 'not-allowed' : 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 4px 14px rgba(242, 101, 34, 0.3)'
+          }}
+        >
+          {saving ? (
+            <> Saving...</>
+          ) : (
+            <> Batch Save Weekly Plan</>
+          )}
+        </button>
+        <p style={{ color: '#a3aed0', fontSize: '12px', marginTop: '10px' }}>
+          Saves all 7 days in one API call
+        </p>
+      </div>
+    </div>
+  );
+};

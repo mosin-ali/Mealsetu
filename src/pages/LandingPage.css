@@ -1,0 +1,378 @@
+/* MODERN LANDING PAGE THEME - FIXED BANNER & LEFT ALIGNMENT */
+:root {
+    --primary-orange: #f26522;
+    --dark-navy: #0f172a;
+    --text-gray: #64748b;
+    --glass-bg: rgba(255, 255, 255, 0.8);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    color: var(--dark-navy);
+    line-height: 1.6;
+}
+
+/* NAVIGATION (Glassmorphism) */
+.landing-nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 8%;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    z-index: 1000;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+}
+
+.brand-name {
+    font-weight: 800;
+    color: var(--primary-orange);
+    font-size: 1.8rem;
+    letter-spacing: -1px;
+}
+
+.nav-links a {
+    text-decoration: none;
+    color: var(--dark-navy);
+    margin: 0 15px;
+    font-weight: 500;
+    transition: 0.3s;
+}
+
+.nav-links a:hover {
+    color: var(--primary-orange);
+}
+
+.nav-login-btn {
+    background: var(--primary-orange);
+    color: white !important;
+    padding: 10px 30px;
+    border-radius: 50px;
+    margin-left: 20px;
+    font-weight: 700;
+}
+
+/* --- FIXED HERO SECTION --- */
+.hero-banner {
+    height: 100vh;
+    width: 100%;
+    /* 1. Use light gradient to make text readable without 'blacking out' the banner */
+    /* 2. background-repeat: no-repeat PREVENTS the double image issue */
+    background: linear-gradient(to right, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.4) 50%, rgba(255, 255, 255, 0) 100%),
+        url('C:/Users/hisun/Desktop/Mealsetu/src/pages/image/image.png');
+    background-size: cover;
+    /* Ensures the image fits the screen properly */
+    background-position: center right;
+    /* Keeps the food/subject on the right visible */
+    background-repeat: no-repeat;
+    /* CRITICAL: Stops the image from doubling */
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    /* Aligns content to the left */
+    padding-left: 8%;
+    /* Matches Nav padding */
+}
+
+.hero-content {
+    text-align: left;
+    /* Forces text to left */
+    max-width: 650px;
+    z-index: 10;
+}
+
+.hero-text-bg h1 {
+    font-size: 4rem;
+    /* Modern bold heading */
+    color: var(--dark-navy);
+    /* Dark text for better visibility on a clear banner */
+    text-align: left;
+    line-height: 1.1;
+    font-weight: 800;
+    margin-bottom: 30px;
+    text-shadow: none;
+    /* Clean look */
+}
+
+/* Responsive adjustment for Mobile */
+@media (max-width: 768px) {
+    .hero-banner {
+        padding-left: 5%;
+        background: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.8)),
+            url('C:/Users/hisun/Desktop/Mealsetu/src/pages/image/image.png');
+        background-size: cover;
+    }
+
+    .hero-text-bg h1 {
+        font-size: 2.5rem;
+    }
+
+    .contact-details-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .contact-card {
+        padding: 28px;
+    }
+
+    .sub-section#contact {
+        padding: 60px 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .contact-card {
+        border-radius: 16px;
+        padding: 20px;
+    }
+
+    .social-buttons {
+        flex-direction: column;
+    }
+
+    .social-btn {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .section-heading {
+        font-size: 28px;
+    }
+}
+
+.nav-free-btn {
+    display: inline-block;
+    background: var(--primary-orange);
+    color: white;
+    text-decoration: none;
+    padding: 16px 45px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border-radius: 50px;
+    transition: all 0.3s ease;
+    box-shadow: 0 10px 20px rgba(242, 101, 34, 0.3);
+}
+
+.nav-free-btn:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 30px rgba(242, 101, 34, 0.4);
+}
+
+/* --- REST OF SECTIONS --- */
+.landing-section,
+.sub-section {
+    padding: 100px 10%;
+    text-align: center;
+}
+
+.section-heading {
+    font-size: 36px;
+    font-weight: 900;
+    color: #0f172a;
+    letter-spacing: 1px;
+    margin-bottom: 2rem;
+    position: relative;
+    display: inline-block;
+}
+
+.section-heading::after {
+    content: '';
+    position: absolute;
+    width: 60%;
+    height: 5px;
+    background: var(--primary-orange);
+    bottom: -12px;
+    left: 20%;
+}
+
+.image-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+    margin-top: 40px;
+}
+
+.image-gallery img {
+    width: 100%;
+    height: 350px;
+    object-fit: cover;
+    border-radius: 20px;
+    transition: 0.4s ease;
+}
+
+.sub-section#contact {
+  background: linear-gradient(180deg, #f0f4f8, #ffffff);
+  padding: 100px 40px;
+  text-align: center;
+}
+
+.contact-card {
+  max-width: 1600px;
+  width: 100%;
+  margin: 40px auto;
+  background: white;
+  border-radius: 28px;
+  padding: 48px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.08);
+  border: 1px solid #f0f4f8;
+  text-align: left;
+}
+
+.contact-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+}
+
+.contact-item {
+  background: linear-gradient(145deg, #ffffff, #f8fafc);
+  border-radius: 20px;
+  padding: 28px 24px;
+  border: 1.5px solid #e8edf2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.contact-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #f26522;
+  border-radius: 0 4px 4px 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.contact-item:hover {
+  background: white;
+  border-color: #f26522;
+  box-shadow: 0 8px 24px rgba(242, 101, 34, 0.12);
+  transform: translateY(-4px);
+}
+
+.contact-item:hover::before {
+  opacity: 1;
+}
+
+.contact-icon {
+  font-size: 28px;
+  color: #f26522;
+  margin-bottom: 6px;
+  width: 48px;
+  height: 48px;
+  background: #fff7ed;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.contact-label {
+  font-size: 10px;
+  font-weight: 900;
+  color: #b0bec5;
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  margin-bottom: 4px;
+}
+
+.contact-value {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a202c;
+  line-height: 1.6;
+}
+
+.mailto-link {
+  color: #f26522;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.mailto-link:hover {
+  text-decoration: underline;
+}
+
+.contact-divider {
+  border: none;
+  height: 2px;
+  background: linear-gradient(to right, transparent, #e2e8f0, #e2e8f0, transparent);
+  margin: 40px 0;
+}
+
+.social-section {
+  text-align: center;
+}
+
+.social-heading {
+  font-size: 13px;
+  font-weight: 900;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 24px;
+}
+
+.social-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.social-btn {
+  border-radius: 50px;
+  padding: 14px 36px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  color: white;
+  letter-spacing: 0.4px;
+  border: none;
+}
+
+.social-btn.facebook {
+  background: linear-gradient(135deg, #1877f2, #0d6efd);
+}
+
+.social-btn.facebook:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(24, 119, 242, 0.50);
+}
+
+.social-btn.twitter {
+  background: linear-gradient(135deg, #2d2d2d, #0f172a);
+}
+
+.social-btn.twitter:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.40);
+}
+
+.landing-footer {
+    background: var(--dark-navy);
+    color: #94a3b8;
+    padding: 50px 0;
+    text-align: center;
+}

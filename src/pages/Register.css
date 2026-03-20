@@ -1,0 +1,350 @@
+.auth-container {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #fef2e2 0%, #ffffff 100%);
+  padding: 20px;
+  overflow: hidden; /* Prevents the whole page from scrolling */
+}
+
+.modern-register-card {
+  width: 950px;
+  height: 600px; /* Maintains fixed height */
+  background: white;
+  border-radius: 30px;
+  display: flex;
+  box-shadow: 0 25px 50px -12px rgba(242, 101, 34, 0.15);
+  overflow: hidden; /* Contains internal elements */
+}
+
+/* --- Left Section (Fixed) --- */
+.auth-sidebar {
+  width: 35%;
+  background: #f26522;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 40px;
+  text-align: center;
+  flex-shrink: 0; /* Prevents sidebar from squishing when scrolling starts */
+}
+
+.circular-upload {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  border: 3px solid white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: 0.3s;
+}
+
+.circular-upload img { 
+  width: 100%; 
+  height: 100%; 
+  object-fit: cover; 
+}
+
+/* --- Right Section (Scrollable Area) --- */
+.auth-form-content {
+  width: 65%;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* ENABLE SCROLLING FOR HIDDEN FIELDS */
+}
+
+/* Custom Scrollbar Styling for a Modern Look */
+.auth-form-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.auth-form-content::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.auth-form-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.auth-form-content::-webkit-scrollbar-thumb:hover {
+  background: #f26522; /* Changes to brand color on hover */
+}
+
+.grid-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Maintains two-column grid */
+  gap: 15px;
+  margin-top: 20px;
+  padding-bottom: 20px; /* Extra space at bottom to see last field clearly */
+}
+
+.full-width { 
+  grid-column: span 2; 
+}
+
+.input-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 5px;
+}
+
+.input-field input {
+  width: 100%;
+  padding: 10px 15px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  outline: none;
+  transition: 0.2s;
+}
+
+.input-field input:focus { 
+  border-color: #f26522; 
+  box-shadow: 0 0 0 3px rgba(242, 101, 34, 0.1); 
+}
+
+.role-selector {
+  display: flex;
+  background: #f1f5f9;
+  padding: 5px;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  position: sticky; /* Keeps tabs at the top while scrolling */
+  top: 0;
+  z-index: 10;
+}
+
+.role-selector button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #64748b;
+  background: transparent;
+}
+
+.role-selector button.active {
+  background: white;
+  color: #f26522;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+
+.submit-btn {
+  grid-column: span 2;
+  background: #f26522;
+  color: white;
+  border: none;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+/* Document Upload Styling */
+.file-input-wrapper {
+  width: 100%;
+}
+
+.file-label {
+  display: block;
+  width: 100%;
+  padding: 10px 15px;
+  background: #f8fafc;
+  border: 1.5px dashed #cbd5e1;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #64748b;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: 0.2s;
+}
+
+.file-label:hover {
+  border-color: #f26522;
+  background: #fffaf8;
+  color: #f26522;
+}
+
+/* Form Validation Styles */
+.field-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
+  display: block;
+  font-weight: 500;
+}
+
+.input-error {
+  border: 1.5px solid #ef4444 !important;
+  background-color: #fef2f2 !important;
+}
+
+.input-valid {
+  border: 1.5px solid #16a34a !important;
+}
+
+.form-error-summary {
+  background: #fef2f2;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #ef4444;
+  margin-bottom: 16px;
+}
+
+/* OTP Verification Modal Styles */
+.otp-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.3s ease;
+}
+
+.otp-modal {
+  background: white;
+  width: 400px;
+  padding: 35px;
+  border-radius: 24px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.otp-modal-title {
+  font-size: 22px;
+  color: #1e293b;
+  margin-bottom: 10px;
+}
+
+.otp-modal-desc {
+  font-size: 14px;
+  color: #64748b;
+  margin-bottom: 25px;
+}
+
+.otp-error-message {
+  background: #fef2f2;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #ef4444;
+  margin-bottom: 15px;
+}
+
+.otp-inputs-container {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.otp-input-box {
+  width: 45px;
+  height: 55px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: bold;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.otp-input-box:focus {
+  border-color: #f26522;
+  box-shadow: 0 0 0 3px rgba(242, 101, 34, 0.1);
+}
+
+.otp-countdown {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 20px;
+}
+
+.otp-resend-btn {
+  background: none;
+  border: none;
+  color: #f26522;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.otp-resend-btn:hover {
+  opacity: 0.8;
+}
+
+.otp-resend-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.otp-verify-btn {
+  width: 100%;
+  background: #f26522;
+  color: white;
+  border: none;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.otp-verify-btn:hover:not(:disabled) {
+  background: #e55a1a;
+}
+
+.otp-verify-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Shake animation for wrong OTP */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+.otp-inputs-container.shake {
+  animation: shake 0.5s ease-in-out;
+}
