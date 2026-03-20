@@ -98,6 +98,7 @@ router.get('/commission/vendors', getCommissionVendors);
 // Commission reports
 router.get('/commission/report/csv', getCommissionReportCSV);
 
+
 // Commission seed (one-time)
 router.post('/commission/seed-tiers', seedDefaultTiers);
 

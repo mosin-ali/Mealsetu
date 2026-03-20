@@ -7,53 +7,34 @@ const Complaint = require('../models/Complaint');
 const Subscription = require('../models/Subscription');
 const Payout = require('../models/Payout');
 const Commission = require('../models/Commission');
+const CommissionSetting = require('../models/CommissionSetting');
 const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform profilePic path to full URL
 const transformProfilePic = (profilePic, req) => {
   if (!profilePic) return null;
-  
-  // If already a full URL, return as is
   if (profilePic.startsWith('http://') || profilePic.startsWith('https://')) {
     return profilePic;
   }
-  
-  // Use dynamic protocol and host from request - works in both dev and production
   const backendUrl = `${req.protocol}://${req.get('host')}`;
-  
-  // Remove any double slashes
   let cleanPath = profilePic.replace(/\/+/g, '/');
-  
-  // If path starts with /uploads, prepend backend URL
   if (cleanPath.startsWith('/uploads/')) {
     return `${backendUrl}${cleanPath}`;
   }
-  
-  // For any other relative path, assume it's in uploads folder
   return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
 };
 
-// Helper function to transform kitchenPoster path to full URL (same as profilePic)
+// Helper function to transform kitchenPoster path to full URL
 const transformKitchenPoster = (kitchenPoster, req) => {
   if (!kitchenPoster) return null;
-  
-  // If already a full URL, return as is
   if (kitchenPoster.startsWith('http://') || kitchenPoster.startsWith('https://')) {
     return kitchenPoster;
   }
-  
-  // Use dynamic protocol and host from request
   const backendUrl = `${req.protocol}://${req.get('host')}`;
-  
-  // Remove any double slashes
   let cleanPath = kitchenPoster.replace(/\/+/g, '/');
-  
-  // If path starts with /uploads, prepend backend URL
   if (cleanPath.startsWith('/uploads/')) {
     return `${backendUrl}${cleanPath}`;
   }
-  
-  // For any other relative path, assume it's in uploads folder
   return `${backendUrl}/uploads/${cleanPath.replace(/^\/?uploads\//, '')}`;
 };
 
@@ -61,16 +42,14 @@ const transformKitchenPoster = (kitchenPoster, req) => {
 // @route   GET /api/vendor/me
 const getVendorProfile = async (req, res) => {
   try {
-    const vendor = await Vendor.findOne({ ownerId: req.user._id }).populate('ownerId', '-password');
+    const vendor = await Vendor.findOne({ ownerId: req.user._id })
+      .populate('ownerId', '-password');
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-    
-    // Transform profileImage and kitchenPoster to full URL
     const vendorObj = vendor.toObject();
     vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
     vendorObj.kitchenPoster = transformKitchenPoster(vendor.kitchenPoster, req);
-    
     res.json(vendorObj);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -83,26 +62,19 @@ const updateVendorProfile = async (req, res) => {
   try {
     const { kitchenName, address, pincode, phone } = req.body;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
     vendor.kitchenName = kitchenName || vendor.kitchenName;
     vendor.address = address || vendor.address;
     vendor.pincode = pincode || vendor.pincode;
     await vendor.save();
-
-    // Also update user phone if provided
     if (phone) {
       await User.findByIdAndUpdate(req.user._id, { phone });
     }
-
-    // Transform vendor to object and add profileImage and kitchenPoster with full URLs
     const vendorObj = vendor.toObject();
     vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
     vendorObj.kitchenPoster = transformKitchenPoster(vendor.kitchenPoster, req);
-
     res.json(vendorObj);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -124,14 +96,13 @@ const getVendorMenus = async (req, res) => {
   }
 };
 
-// @desc    Get vendor customers (unique users who ordered from this vendor) with total order count
+// @desc    Get vendor customers
 // @route   GET /api/vendor/customers
 const getVendorCustomers = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
 
-    // Use MongoDB aggregation to get unique customers with their total order counts
     const customerAggregation = await Order.aggregate([
       { $match: { vendorId: vendor._id } },
       {
@@ -144,11 +115,10 @@ const getVendorCustomers = async (req, res) => {
       { $match: { _id: { $ne: null } } }
     ]);
 
-    // Populate user details for each customer
     const customerIds = customerAggregation.map(c => c._id);
-    const users = await User.find({ _id: { $in: customerIds } }).select('name email phone');
-    
-    // Map the aggregation results with populated user data
+    const users = await User.find({ _id: { $in: customerIds } })
+      .select('name email phone');
+
     const customers = customerAggregation.map(c => {
       const user = users.find(u => u._id.toString() === c._id.toString());
       return {
@@ -162,7 +132,6 @@ const getVendorCustomers = async (req, res) => {
 
     res.json(customers);
   } catch (error) {
-    console.error('Error fetching vendor customers:', error);
     res.status(500).json({ message: 'Server Error' });
   }
 };
@@ -173,21 +142,21 @@ const getVendorComplaints = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
-
-    const complaints = await Complaint.find({ vendorId: vendor._id }).populate('userId', 'name email').sort({ createdAt: -1 });
+    const complaints = await Complaint.find({ vendorId: vendor._id })
+      .populate('userId', 'name email')
+      .sort({ createdAt: -1 });
     res.json(complaints);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
 };
 
-// @desc    Respond / resolve a complaint
+// @desc    Resolve a complaint
 // @route   PUT /api/vendor/complaints/:id
 const resolveComplaint = async (req, res) => {
   try {
     const complaint = await Complaint.findById(req.params.id);
     if (!complaint) return res.status(404).json({ message: 'Complaint not found' });
-
     complaint.status = req.body.status || complaint.status;
     if (req.body.response) complaint.response = req.body.response;
     await complaint.save();
@@ -197,22 +166,31 @@ const resolveComplaint = async (req, res) => {
   }
 };
 
-// @desc    Generate simple reports (orders count, earnings per day)
+// @desc    Generate reports
 // @route   GET /api/vendor/reports
 const getVendorReports = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
 
-    // Aggregate orders by date
     const agg = await Order.aggregate([
       { $match: { vendorId: vendor._id } },
-      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: '$orderDate' } }, totalOrders: { $sum: 1 }, totalEarnings: { $sum: '$amount' } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: '$orderDate' } },
+          totalOrders: { $sum: 1 },
+          totalEarnings: { $sum: '$amount' }
+        }
+      },
       { $sort: { _id: -1 } },
       { $limit: 30 }
     ]);
 
-    res.json(agg.map(a => ({ date: a._id, orders: a.totalOrders, earnings: a.totalEarnings })));
+    res.json(agg.map(a => ({
+      date: a._id,
+      orders: a.totalOrders,
+      earnings: a.totalEarnings
+    })));
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
@@ -223,13 +201,10 @@ const getVendorReports = async (req, res) => {
 const getVendorReviews = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    
-    // Fetch reviews with user info populated
     const reviews = await Review.find({ vendorId: vendor._id })
       .populate('userId', 'name')
-      .sort({ rating: -1, createdAt: -1 }); // Sentiment-Based Priority: 5-star first, then 4-star, etc.
+      .sort({ rating: -1, createdAt: -1 });
 
-    // Format reviews for vendor display with all required fields
     const formattedReviews = reviews.map(review => ({
       _id: review._id,
       user: review.customerName || review.userId?.name || 'Anonymous',
@@ -237,17 +212,16 @@ const getVendorReviews = async (req, res) => {
       stars: review.rating,
       comment: review.comment,
       date: new Date(review.createdAt).toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric'
+        day: 'numeric', month: 'short', year: 'numeric'
       }),
       createdAt: review.createdAt,
       orderId: review.orderId
     }));
 
-    // Calculate average rating for vendor
     const totalRating = reviews.reduce((sum, r) => sum + r.rating, 0);
-    const avgRating = reviews.length > 0 ? Math.round((totalRating / reviews.length) * 10) / 10 : 0;
+    const avgRating = reviews.length > 0
+      ? Math.round((totalRating / reviews.length) * 10) / 10
+      : 0;
 
     res.json({
       reviews: formattedReviews,
@@ -255,7 +229,6 @@ const getVendorReviews = async (req, res) => {
       totalReviews: reviews.length
     });
   } catch (error) {
-    console.error('Get vendor reviews error:', error);
     res.status(500).json({ message: 'Error fetching reviews' });
   }
 };
@@ -264,15 +237,9 @@ const getVendorReviews = async (req, res) => {
 // @route   POST /api/vendor/menu
 const addMenu = async (req, res) => {
   try {
-    // Ensure the logged-in user is actually a vendor owner
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
-
-    const newMenu = await Menu.create({
-      vendorId: vendor._id,
-      ...req.body // date, mainSabji, altSabji, etc.
-    });
-
+    const newMenu = await Menu.create({ vendorId: vendor._id, ...req.body });
     res.status(201).json(newMenu);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -284,60 +251,53 @@ const addMenu = async (req, res) => {
 const getVendorOrders = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    const orders = await Order.find({ vendorId: vendor._id }).populate('userId', 'name phone');
+    const orders = await Order.find({ vendorId: vendor._id })
+      .populate('userId', 'name phone');
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
 };
 
-// @desc    Get Vendor Orders with Date Filter (for PDF Report)
+// @desc    Get Vendor Orders with Date Filter
 // @route   GET /api/vendor/orders/filtered
 const getFilteredOrders = async (req, res) => {
   try {
-    const { filter } = req.query; // 'daily', 'weekly', 'monthly'
+    const { filter } = req.query;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
 
     const now = new Date();
     let startDate;
 
-    // Calculate start date based on filter
     if (filter === 'daily') {
-      // Today's orders
       startDate = new Date(now.setHours(0, 0, 0, 0));
     } else if (filter === 'weekly') {
-      // Last 7 days
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 7);
       startDate.setHours(0, 0, 0, 0);
     } else if (filter === 'monthly') {
-      // Last 30 days
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 30);
       startDate.setHours(0, 0, 0, 0);
     } else {
-      // No filter - return all orders
       startDate = new Date(0);
     }
 
     const orders = await Order.find({
       vendorId: vendor._id,
       orderDate: { $gte: startDate }
-    })
-      .populate('userId', 'name')
-      .sort({ orderDate: -1 });
+    }).populate('userId', 'name').sort({ orderDate: -1 });
 
-    // Format orders for PDF report with proper fallbacks - all dynamic fields
     const formattedOrders = orders.map(order => ({
       _id: order._id,
       orderId: order._id,
       username: order.userId?.name || order.customerName || 'Unknown',
       customerName: order.customerName || order.userId?.name || 'Unknown',
       amount: Number(order.amount) || 0,
-      paymentMethod: order.paymentMethod || 'Cash', // Dynamic: shows user's actual selection
-      planType: order.planType || 'Trial', // Dynamic: Trial, Monthly, Weekly based on user choice
-      mealPreference: order.mealPreference || 'Regular', // Dynamic: Regular or Jain
+      paymentMethod: order.paymentMethod || 'Cash',
+      planType: order.planType || 'Trial',
+      mealPreference: order.mealPreference || 'Regular',
       deliverySlot: order.deliverySlot || 'Lunch',
       orderDate: order.orderDate,
       paymentStatus: order.paymentStatus || 'Pending',
@@ -350,13 +310,12 @@ const getFilteredOrders = async (req, res) => {
   }
 };
 
-// @desc    Update Order Status (e.g. to 'Delivered')
+// @desc    Update Order Status
 // @route   PUT /api/vendor/orders/:id
 const updateOrderStatus = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
-
     order.orderStatus = req.body.status;
     await order.save();
     res.json(order);
@@ -365,103 +324,79 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
-// @desc    Get Dashboard Stats (Total Revenue, Today's Orders, Active Subscribers, Payment Breakdown)
+// @desc    Get Dashboard Stats
 // @route   GET /api/vendor/dashboard-stats
 const getDashboardStats = async (req, res) => {
   try {
-    // First get the vendor ID
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
 
-    // Get start and end of today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // MongoDB aggregation for Total Revenue (sum of all order amounts)
-    const revenueAggregation = await Order.aggregate([
+    const revenueAgg = await Order.aggregate([
       { $match: { vendorId: vendor._id } },
       { $group: { _id: null, totalRevenue: { $sum: '$amount' } } }
     ]);
-    const totalRevenue = revenueAggregation.length > 0 ? revenueAggregation[0].totalRevenue : 0;
+    const totalRevenue = revenueAgg[0]?.totalRevenue || 0;
 
-    // MongoDB aggregation for Today's Orders (count of orders with today's date)
-    const todayOrdersAggregation = await Order.aggregate([
-      { 
-        $match: { 
+    const todayOrdersAgg = await Order.aggregate([
+      {
+        $match: {
           vendorId: vendor._id,
           orderDate: { $gte: today, $lt: tomorrow }
-        } 
+        }
       },
       { $count: 'todayOrders' }
     ]);
-    const todayOrders = todayOrdersAggregation.length > 0 ? todayOrdersAggregation[0].todayOrders : 0;
+    const todayOrders = todayOrdersAgg[0]?.todayOrders || 0;
 
-    // MongoDB aggregation for Active Subscribers (subscriptions with status 'active')
-    const activeSubscribersAggregation = await Subscription.aggregate([
-      { 
-        $match: { 
-          vendorId: vendor._id,
-          status: 'active'
-        } 
-      },
+    const activeSubscribersAgg = await Subscription.aggregate([
+      { $match: { vendorId: vendor._id, status: 'active' } },
       { $count: 'activeSubscribers' }
     ]);
-    const activeSubscribers = activeSubscribersAggregation.length > 0 ? activeSubscribersAggregation[0].activeSubscribers : 0;
+    const activeSubscribers = activeSubscribersAgg[0]?.activeSubscribers || 0;
 
-    // Get pending payout from new Commission model (sum of pending amounts)
-    const vendorId = vendor._id;
-    const pendingCommissions = await require('../models/Commission').aggregate([
-      { 
-        $match: { 
-          vendorId: vendorId,
-          status: { $in: ['pending', 'overdue'] }
-        } 
-      },
-      { $group: { _id: null, totalPending: { $sum: '$amount' } } }
-    ]);
-    const pendingPayout = pendingCommissions.length > 0 ? pendingCommissions[0].totalPending : 0;
-
-    // NEW: Get Cash Payments breakdown (amount + count)
-    const cashPaymentsAggregation = await Order.aggregate([
-      { 
-        $match: { 
+    const pendingCommissions = await Commission.aggregate([
+      {
+        $match: {
           vendorId: vendor._id,
-          paymentMethod: 'Cash'
-        } 
+          status: { $in: ['pending', 'overdue'] }
+        }
       },
-      { 
-        $group: { 
-          _id: null, 
+      { $group: { _id: null, totalPending: { $sum: '$commission_amount' } } }
+    ]);
+    const pendingPayout = pendingCommissions[0]?.totalPending || 0;
+
+    const cashAgg = await Order.aggregate([
+      { $match: { vendorId: vendor._id, paymentMethod: 'Cash' } },
+      {
+        $group: {
+          _id: null,
           totalCashAmount: { $sum: '$amount' },
           cashCount: { $sum: 1 }
-        } 
+        }
       }
     ]);
-    const cashPaymentsTotal = cashPaymentsAggregation.length > 0 ? cashPaymentsAggregation[0].totalCashAmount : 0;
-    const cashPaymentsCount = cashPaymentsAggregation.length > 0 ? cashPaymentsAggregation[0].cashCount : 0;
+    const cashPaymentsTotal = cashAgg[0]?.totalCashAmount || 0;
+    const cashPaymentsCount = cashAgg[0]?.cashCount || 0;
 
-    // NEW: Get UPI Payments breakdown (amount + count)
-    const upiPaymentsAggregation = await Order.aggregate([
-      { 
-        $match: { 
-          vendorId: vendor._id,
-          paymentMethod: 'UPI'
-        } 
-      },
-      { 
-        $group: { 
-          _id: null, 
+    const upiAgg = await Order.aggregate([
+      { $match: { vendorId: vendor._id, paymentMethod: 'UPI' } },
+      {
+        $group: {
+          _id: null,
           totalUPIAmount: { $sum: '$amount' },
           upiCount: { $sum: 1 }
-        } 
+        }
       }
     ]);
-    const upiPaymentsTotal = upiPaymentsAggregation.length > 0 ? upiPaymentsAggregation[0].totalUPIAmount : 0;
-    const upiPaymentsCount = upiPaymentsAggregation.length > 0 ? upiPaymentsAggregation[0].upiCount : 0;
+    const upiPaymentsTotal = upiAgg[0]?.totalUPIAmount || 0;
+    const upiPaymentsCount = upiAgg[0]?.upiCount || 0;
 
     res.json({
       totalRevenue,
@@ -478,7 +413,7 @@ const getDashboardStats = async (req, res) => {
   }
 };
 
-// @desc    Save Weekly Menu Plan (Batch Save for all 7 days)
+// @desc    Save Weekly Menu Plan
 // @route   PUT /api/vendor/weekly-plan
 const saveWeeklyPlan = async (req, res) => {
   try {
@@ -486,21 +421,15 @@ const saveWeeklyPlan = async (req, res) => {
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
     const { weeklyPlan } = req.body;
-    
-    // Validate the weeklyPlan structure
     if (!weeklyPlan || typeof weeklyPlan !== 'object') {
       return res.status(400).json({ message: 'Invalid weekly plan format' });
     }
-
-    // Update vendor's weeklyPlan
     vendor.weeklyPlan = weeklyPlan;
     await vendor.save();
-
-    res.json({ 
-      message: 'Weekly plan saved successfully', 
-      weeklyPlan: vendor.weeklyPlan 
+    res.json({
+      message: 'Weekly plan saved successfully',
+      weeklyPlan: vendor.weeklyPlan
     });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -515,34 +444,30 @@ const getWeeklyPlan = async (req, res) => {
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
     res.json({ weeklyPlan: vendor.weeklyPlan });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Get Vendor's Weekly Plan (Public - for users to view)
-// @route   GET /api/vendors/:vendorId/weekly-plan
+// @desc    Get Vendor Weekly Plan (Public)
 const getVendorWeeklyPlan = async (req, res) => {
   try {
     const { vendorId } = req.params;
     const vendor = await Vendor.findById(vendorId);
-    
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor not found' });
     }
-
-    res.json({ 
+    res.json({
       weeklyPlan: vendor.weeklyPlan,
-      kitchenName: vendor.kitchenName 
+      kitchenName: vendor.kitchenName
     });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Get Shop Status (Open/Close)
+// @desc    Get Shop Status
 // @route   GET /api/vendor/shop-status
 const getShopStatus = async (req, res) => {
   try {
@@ -550,7 +475,6 @@ const getShopStatus = async (req, res) => {
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
     res.json({
       isOpen: vendor.isOpen,
       closureStartDate: vendor.closureStartDate,
@@ -561,13 +485,12 @@ const getShopStatus = async (req, res) => {
   }
 };
 
-// @desc    Toggle Shop Status (Open/Close) - Also extends user subscriptions when reopening
+// @desc    Toggle Shop Status
 // @route   PUT /api/vendor/shop-status
 const toggleShopStatus = async (req, res) => {
   try {
     const { isOpen, closureEndDate } = req.body;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
@@ -576,19 +499,16 @@ const toggleShopStatus = async (req, res) => {
     vendor.isOpen = isOpen;
 
     if (isOpen === false) {
-      // Closing the shop - record the closure start date
       vendor.closureStartDate = new Date();
       vendor.closureEndDate = closureEndDate ? new Date(closureEndDate) : null;
       await vendor.save();
 
-      // Send email notification to all active subscribers about the closure
       try {
         const activeSubscriptions = await Subscription.find({
           vendorId: vendor._id,
           status: 'active'
         }).populate('userId', 'email name');
 
-        // Get unique user emails
         const userEmails = new Map();
         activeSubscriptions.forEach(sub => {
           if (sub.userId && sub.userId.email) {
@@ -596,30 +516,20 @@ const toggleShopStatus = async (req, res) => {
           }
         });
 
-        // Send closure notification email to each user
         for (const [_, user] of userEmails) {
-          const closureEmailSubject = `MealSetu - ${vendor.kitchenName} is Temporarily Closed`;
-          const closureEmailHtml = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          await sendEmail(
+            user.email,
+            `MealSetu - ${vendor.kitchenName} is Temporarily Closed`,
+            `<div style="font-family: Arial, sans-serif;">
               <h1 style="color: #f26522;">Kitchen Temporarily Closed</h1>
               <p>Dear ${user.name},</p>
-              <p>We regret to inform you that <strong>${vendor.kitchenName}</strong> is temporarily closed.</p>
-              <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
-                <p><strong>Kitchen:</strong> ${vendor.kitchenName}</p>
-                <p><strong>Closed At:</strong> ${new Date().toLocaleString()}</p>
-                <p><strong>Reason:</strong> Temporary Service Interruption</p>
-              </div>
-              <p>Your subscription has been paused during this period. When the kitchen reopens, your subscription will be automatically extended to compensate for the downtime.</p>
-              <p>We apologize for any inconvenience caused. Thank you for your patience and support!</p>
-              <hr/>
-              <p style="color: #999; font-size: 12px;">MealSetu - Quality Food, Delivered with Care</p>
-            </div>
-          `;
-          await sendEmail(user.email, closureEmailSubject, closureEmailHtml);
+              <p><strong>${vendor.kitchenName}</strong> is temporarily closed.</p>
+              <p>Your subscription has been paused and will be extended when the kitchen reopens.</p>
+            </div>`
+          );
         }
       } catch (emailError) {
-        console.error('Failed to send closure notification emails:', emailError);
-        // Don't fail the request if email fails
+        console.error('Failed to send closure emails:', emailError);
       }
 
       return res.json({
@@ -629,18 +539,16 @@ const toggleShopStatus = async (req, res) => {
         closureEndDate: vendor.closureEndDate,
         subscriptionsExtended: 0
       });
+
     } else if (isOpen === true && previousStatus === false) {
-      // Re-opening the shop - calculate closure duration and extend subscriptions
       if (!vendor.closureStartDate) {
-        // No closure recorded, just reopen
         vendor.isOpen = true;
         vendor.closureStartDate = null;
         vendor.closureEndDate = null;
         await vendor.save();
-        
         return res.json({
           message: 'Kitchen opened successfully',
-          isOpen: vendor.isOpen,
+          isOpen: true,
           subscriptionsExtended: 0
         });
       }
@@ -649,32 +557,27 @@ const toggleShopStatus = async (req, res) => {
       const closureEnd = new Date();
       const diffTime = Math.abs(closureEnd - closureStart);
       const closureDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
-      // Extend subscriptions only if shop was closed for at least 1 day
+
       let subscriptionsExtended = 0;
       const extendedSubscriptions = [];
-      
+
       if (closureDays >= 1) {
-        // Find all active subscriptions for this vendor
         const activeSubscriptions = await Subscription.find({
           vendorId: vendor._id,
           status: 'active'
         }).populate('userId', 'email name');
 
-        // Extend each subscription
         for (const subscription of activeSubscriptions) {
           const currentExpiry = new Date(subscription.expiryDate);
           const now = new Date();
           const previousExpiry = new Date(currentExpiry);
-          
-          // Only extend if subscription hasn't expired
+
           if (currentExpiry > now) {
             currentExpiry.setDate(currentExpiry.getDate() + closureDays);
             subscription.expiryDate = currentExpiry;
             await subscription.save();
             subscriptionsExtended++;
-            
-            // Store user info for email
+
             if (subscription.userId) {
               extendedSubscriptions.push({
                 user: subscription.userId,
@@ -685,50 +588,39 @@ const toggleShopStatus = async (req, res) => {
           }
         }
 
-        // Send reopening notification emails with new expiry dates
         try {
           for (const extSub of extendedSubscriptions) {
-            const reopenEmailSubject = `MealSetu - ${vendor.kitchenName} is Back in Service!`;
-            const reopenEmailHtml = `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h1 style="color: #16a34a;">Great News! Kitchen is Back!</h1>
+            await sendEmail(
+              extSub.user.email,
+              `MealSetu - ${vendor.kitchenName} is Back in Service!`,
+              `<div style="font-family: Arial, sans-serif;">
+                <h1 style="color: #16a34a;">Kitchen Reopened!</h1>
                 <p>Dear ${extSub.user.name},</p>
-                <p>We are happy to inform you that <strong>${vendor.kitchenName}</strong> is now back in service!</p>
-                <div style="background-color: #dcfce7; padding: 20px; margin: 20px 0; border-radius: 10px;">
-                  <p><strong>🎉 Kitchen Reopened:</strong> ${vendor.kitchenName}</p>
-                  <p><strong>📅 Downtime Duration:</strong> ${closureDays} day(s)</p>
-                  <hr style="border-color: #86efac; margin: 15px 0;"/>
-                  <p style="color: #166534;"><strong>Your Subscription Has Been Extended!</strong></p>
-                  <p><strong>Previous Expiry:</strong> ${extSub.previousExpiry}</p>
-                  <p><strong style="color: #16a34a; font-size: 18px;">New Expiry Date: ${extSub.newExpiry}</strong></p>
-                </div>
-                <p>Your subscription has been automatically extended by <strong>${closureDays} day(s)</strong> to compensate for the temporary service interruption.</p>
-                <p>You can now place your meal orders. Thank you for your patience and continued support!</p>
-                <hr/>
-                <p style="color: #999; font-size: 12px;">MealSetu - Quality Food, Delivered with Care</p>
-              </div>
-            `;
-            await sendEmail(extSub.user.email, reopenEmailSubject, reopenEmailHtml);
+                <p><strong>${vendor.kitchenName}</strong> is back in service!</p>
+                <p>Subscription extended by ${closureDays} day(s).</p>
+                <p><strong>New Expiry: ${extSub.newExpiry}</strong></p>
+              </div>`
+            );
           }
         } catch (emailError) {
-          console.error('Failed to send reopening notification emails:', emailError);
-          // Don't fail the request if email fails
+          console.error('Failed to send reopening emails:', emailError);
         }
       }
 
-      // Clear closure data
       vendor.closureStartDate = null;
       vendor.closureEndDate = null;
       await vendor.save();
 
       return res.json({
-        message: `Kitchen opened successfully! ${subscriptionsExtended > 0 ? `${subscriptionsExtended} subscription(s) extended by ${closureDays} day(s)` : ''}`,
+        message: `Kitchen opened! ${subscriptionsExtended > 0
+          ? `${subscriptionsExtended} subscription(s) extended by ${closureDays} day(s)`
+          : ''}`,
         isOpen: vendor.isOpen,
-        closureDays: closureDays,
-        subscriptionsExtended: subscriptionsExtended
+        closureDays,
+        subscriptionsExtended
       });
+
     } else {
-      // No change in status
       await vendor.save();
       return res.json({
         message: 'Kitchen status unchanged',
@@ -745,61 +637,43 @@ const toggleShopStatus = async (req, res) => {
 const updateVendorProfilePic = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
-    // Check if file was uploaded
     if (!req.file) {
       return res.status(400).json({ message: 'Please upload an image file' });
     }
-
-    // Update the profileImage field with the file path
     vendor.profileImage = `/uploads/${req.file.filename}`;
     await vendor.save();
-
-    // Return full URL for the profile image
     const profileImageUrl = transformProfilePic(vendor.profileImage, req);
-
     res.json({
       message: 'Profile picture updated successfully',
       profileImage: profileImageUrl
     });
   } catch (error) {
-    console.error('Error updating profile picture:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Update vendor kitchen poster/banner
+// @desc    Update vendor kitchen poster
 // @route   PUT /api/vendor/me/kitchen-poster
 const updateKitchenPoster = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
-    // Check if file was uploaded
     if (!req.file) {
       return res.status(400).json({ message: 'Please upload an image file' });
     }
-
-    // Update the kitchenPoster field with the file path
     vendor.kitchenPoster = `/uploads/${req.file.filename}`;
     await vendor.save();
-
-    // Return full URL for the kitchen poster
     const kitchenPosterUrl = transformKitchenPoster(vendor.kitchenPoster, req);
-
     res.json({
       message: 'Kitchen poster updated successfully',
       kitchenPoster: kitchenPosterUrl
     });
   } catch (error) {
-    console.error('Error updating kitchen poster:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
@@ -810,37 +684,29 @@ const updateTrialSettings = async (req, res) => {
   try {
     const { trialEnabled, trialFee } = req.body;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
-
-    // Update trial settings
-    if (trialEnabled !== undefined) {
-      vendor.trialEnabled = trialEnabled;
-    }
+    if (trialEnabled !== undefined) vendor.trialEnabled = trialEnabled;
     if (trialFee !== undefined) {
-      // trialFee must be a positive number or zero
       const fee = Number(trialFee);
       if (isNaN(fee) || fee < 0) {
         return res.status(400).json({ message: 'trialFee must be a positive number or zero' });
       }
       vendor.trialFee = fee;
     }
-
     await vendor.save();
-
     res.json({
       message: 'Trial settings updated successfully',
       trialEnabled: vendor.trialEnabled,
       trialFee: vendor.trialFee
     });
   } catch (error) {
-    console.error('Error updating trial settings:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
+// @desc    Submit vendor compliance
 const submitVendorCompliance = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
@@ -848,37 +714,23 @@ const submitVendorCompliance = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    console.log('🔄 Resubmitting vendor:', vendor._id, 'Previous status:', vendor.status, 'isApproved:', vendor.isApproved);
-
-    // Handle uploaded documents
     if (req.files) {
+      const normalizePath = (filePath) => {
+        let normalized = filePath.replace(/\\/g, '/');
+        if (normalized.includes('uploads/')) {
+          const parts = normalized.split('uploads/');
+          normalized = '/uploads/' + parts[parts.length - 1];
+        }
+        return normalized;
+      };
       if (req.files.fssaiDoc) {
-        const normalizePath = (filePath) => {
-          let normalized = filePath.replace(/\\/g, '/');
-          if (normalized.includes('uploads/')) {
-            const parts = normalized.split('uploads/');
-            normalized = '/uploads/' + parts[parts.length - 1];
-          }
-          return normalized;
-        };
         vendor.fssaiLicense = normalizePath(req.files.fssaiDoc[0].path);
-        console.log('📄 FSSAI uploaded:', vendor.fssaiLicense);
       }
       if (req.files.gstDoc) {
-        const normalizePath = (filePath) => {
-          let normalized = filePath.replace(/\\/g, '/');
-          if (normalized.includes('uploads/')) {
-            const parts = normalized.split('uploads/');
-            normalized = '/uploads/' + parts[parts.length - 1];
-          }
-          return normalized;
-        };
         vendor.gstDocument = normalizePath(req.files.gstDoc[0].path);
-        console.log('📄 GST uploaded:', vendor.gstDocument);
       }
     }
 
-    // Reset ALL approval fields for resubmission
     const updateResult = await Vendor.findByIdAndUpdate(
       vendor._id,
       {
@@ -894,78 +746,159 @@ const submitVendorCompliance = async (req, res) => {
       { new: true, runValidators: false }
     );
 
-    console.log('✅ Vendor resubmitted:', updateResult._id, 
-                'New status:', updateResult.status, 
-                'isApproved:', updateResult.isApproved,
-                'resubmittedAt:', updateResult.resubmittedAt,
-                'rejectionReason:', updateResult.rejectionReason);
-
-    res.json({ 
-      message: 'Documents submitted successfully. Status reset to pending for admin review.',
+    res.json({
+      message: 'Documents submitted successfully.',
       vendorId: updateResult._id,
       newStatus: updateResult.status
     });
   } catch (error) {
-    console.error('❌ Submit compliance ERROR:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// ===== COMMISSION CONTROLLER FUNCTIONS =====
-// @desc    Get vendor commission summary (current month)
+// ===== COMMISSION FUNCTIONS =====
+
+// @desc    Get vendor commission summary (current week)
 // @route   GET /api/vendor/commission/summary
 const getCommissionSummary = async (req, res) => {
   try {
-    const vendorId = req.vendor?._id || req.user._id;
-    
-    // Current month YYYY-MM
+    // STEP 1: Get real vendor using ownerId
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+    const vendorId = vendor._id;
+
+    // STEP 2: Current WEEK range (Monday to Sunday)
     const now = new Date();
-    const currentMonth = now.toISOString().slice(0, 7); // YYYY-MM
-    
-    // Calculate current month earnings
-    const { calculateMonthlyEarning } = require('../utils/commissionUtils');
-    const earningData = await calculateMonthlyEarning(vendorId, currentMonth);
-    
-    // Get tier
-    const { getTierForEarnings } = require('../utils/commissionUtils');
-    const tier = await getTierForEarnings(earningData.total_earning);
-    
-    // Pending commission for current month
-    const currentCommission = await Commission.findOne({
-      vendorId,
+
+    // Get Monday of current week
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...6=Sat
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() + diffToMonday);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    // Get Sunday of current week
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    // Week key like "2026-W12" for database
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const weekNumber = Math.ceil(
+      (((startOfWeek - startOfYear) / 86400000) + 1) / 7
+    );
+    const currentMonth = `${now.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+
+    // Week label like "20 Mar - 26 Mar 2026"
+    const weekLabel = `${startOfWeek.toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'short'
+    })} - ${endOfWeek.toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'short', year: 'numeric'
+    })}`;
+
+    console.log('Commission Summary vendorId:', vendorId);
+    console.log('Week range:', startOfWeek, '->', endOfWeek);
+    console.log('Week key:', currentMonth);
+
+    // STEP 3: Sum ALL orders this week for this vendor
+    const allOrders = await Order.find({
+      vendorId: vendorId,
+      orderDate: { $gte: startOfWeek, $lte: endOfWeek }
+    });
+
+    console.log('All orders this week:', allOrders.length);
+
+    const totalEarning = allOrders.reduce((sum, order) => {
+      return sum + (order.amount || 0);
+    }, 0);
+
+    console.log('Total earning this week:', totalEarning);
+
+    // STEP 4: Find correct commission tier
+    let commissionRate = 3;
+    let tierName = 'Starter';
+
+    const tiers = await CommissionSetting.find({ isActive: true })
+      .sort({ minEarning: 1 });
+
+    console.log('Tiers found:', tiers.length);
+
+    if (tiers.length > 0) {
+      for (const tier of tiers) {
+        if (
+          totalEarning >= tier.minEarning &&
+          (tier.maxEarning === null || totalEarning <= tier.maxEarning)
+        ) {
+          commissionRate = tier.ratePercent;
+          tierName = tier.tierName;
+          break;
+        }
+      }
+    }
+
+    // STEP 5: Calculate commission amounts
+    const commissionDue = Math.round(totalEarning * commissionRate / 100);
+    const netPayout = totalEarning - commissionDue;
+
+    // STEP 6: Check existing commission record for this week
+    const existingCommission = await Commission.findOne({
+      vendorId: vendorId,
       month: currentMonth
     });
-    
-    const commissionDue = currentCommission ? currentCommission.commission_amount : Math.round(earningData.total_earning * tier.ratePercent / 100);
-    
-    res.status(200).json({
-      currentMonth,
-      total_earning: earningData.total_earning,
-      total_orders: earningData.totalOrders,
-      commission_rate: tier.ratePercent,
-      commission_due: commissionDue,
-      net_payout: earningData.total_earning - commissionDue,
-      tier_name: tier.tierName,
-      status: currentCommission?.status || 'not_generated'
+
+    const status = existingCommission
+      ? existingCommission.status
+      : 'not_generated';
+
+    console.log('Commission response:', {
+      totalEarning,
+      commissionRate,
+      commissionDue,
+      netPayout
     });
+
+    // STEP 7: Send response
+    res.status(200).json({
+      total_earning: totalEarning,
+      commission_rate: commissionRate,
+      commission_due: commissionDue,
+      net_payout: netPayout,
+      tier_name: tierName,
+      current_month: weekLabel,
+      month: currentMonth,
+      status: status,
+      orders_count: allOrders.length
+    });
+
   } catch (error) {
-    console.error('Commission summary error:', error);
+    console.error('getCommissionSummary error:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Get vendor pending payout summary (legacy - for dashboard)
+// @desc    Get pending payout (legacy dashboard)
 const getPendingPayout = async (req, res) => {
   try {
-    const vendorId = req.vendor?._id || req.user._id;
-    
-    const { getCommissionSummary } = require('../utils/commissionUtils');
-    
-    const summary = await getCommissionSummary({ vendor: { _id: vendorId }, user: { _id: vendorId } }, { json: () => ({}) });
-    
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(200).json({ pendingAmount: 0, overdueAmount: 0 });
+    }
+
+    const pendingCommissions = await Commission.aggregate([
+      {
+        $match: {
+          vendorId: vendor._id,
+          status: { $in: ['pending', 'overdue'] }
+        }
+      },
+      { $group: { _id: null, totalPending: { $sum: '$commission_amount' } } }
+    ]);
+
     res.status(200).json({
-      pendingAmount: summary.commissionDue || 0,
-      overdueAmount: 0, // Calculate from overdue records
+      pendingAmount: pendingCommissions[0]?.totalPending || 0,
+      overdueAmount: 0,
       pendingCount: 1,
       overdueCount: 0
     });
@@ -974,81 +907,107 @@ const getPendingPayout = async (req, res) => {
   }
 };
 
-// @desc    Get all commissions for logged-in vendor
-// @route   GET /api/vendor/my-commissions
+// @desc    Get all commissions for vendor
+// @route   GET /api/vendor/commission/history
 const getMyCommissions = async (req, res) => {
   try {
-    const vendorId = req.vendor?._id || req.user._id;
-    
-    const commissions = await Commission.find({ vendorId })
-      .sort({ createdAt: -1 });
-    
-    res.status(200).json({ 
-      commissions 
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(200).json({ commissions: [], total: 0 });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const commissions = await Commission.find({ vendorId: vendor._id })
+      .sort({ month: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Commission.countDocuments({ vendorId: vendor._id });
+
+    res.status(200).json({
+      commissions,
+      total,
+      page,
+      pages: Math.ceil(total / limit)
     });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Vendor records commission payment
-// @route   POST /api/vendor/pay-commission
+// @desc    Vendor submits commission payment proof
+// @route   POST /api/vendor/commission/pay
 const payCommission = async (req, res) => {
   try {
+    const CommissionPayment = require('../models/CommissionPayment');
+
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
     const { commissionId, paymentMethod, transactionId } = req.body;
-    const vendorId = req.vendor?._id || req.user._id;
-    
-    const commission = await Commission.findById(commissionId);
+    const proofFile = req.file;
+
+    const commission = await Commission.findOne({
+      _id: commissionId,
+      vendorId: vendor._id
+    });
+
     if (!commission) {
-      return res.status(404).json({ message: 'Commission not found' });
+      return res.status(404).json({ message: 'Commission record not found' });
     }
-    
-    if (commission.vendorId.toString() !== vendorId.toString()) {
-      return res.status(403).json({ message: 'Unauthorized' });
+
+    let proofUrl = null;
+    if (proofFile) {
+      proofUrl = `/uploads/commission-proofs/${proofFile.filename}`;
     }
-    
-    // Update commission as paid
-    commission.status = 'paid';
-    commission.paidAt = new Date();
-    commission.paymentMethod = paymentMethod;
-    commission.transactionId = transactionId;
+
+    const payment = await CommissionPayment.create({
+      vendorEarningId: commission._id,
+      vendorId: vendor._id,
+      amount_paid: commission.commission_amount,
+      payment_method: paymentMethod || 'upi',
+      utr_number: transactionId || '',
+      proof_url: proofUrl,
+      paid_at: new Date(),
+      verified_by_admin: false
+    });
+
+    commission.status = 'pending_verification';
+    commission.payment_proof_url = proofUrl;
+    commission.payment_date = new Date();
     await commission.save();
-    
-    // Send confirmation email to vendor
-    const vendor = await Vendor.findById(vendorId).populate('ownerId', 'email');
-    const vendorEmail = vendor?.ownerId?.email;
-    if (vendorEmail) {
-      const emailHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px;">
-          <h2 style="color: #16a34a;">✅ Commission Payment Confirmed</h2>
-          <p>Amount: ₹${commission.amount}</p>
-          <p>Transaction ID: ${transactionId || 'N/A'}</p>
-          <p>Method: ${paymentMethod}</p>
-          <p>Paid At: ${commission.paidAt.toLocaleString()}</p>
-          <hr/>
-          <p>Thank you for using MealSetu!</p>
-        </div>
-      `;
-      await sendEmail(vendorEmail, 'Commission Payment Confirmed - MealSetu', emailHtml);
+
+    try {
+      const vendorWithOwner = await Vendor.findById(vendor._id)
+        .populate('ownerId', 'email name');
+      if (vendorWithOwner?.ownerId?.email) {
+        await sendEmail(
+          vendorWithOwner.ownerId.email,
+          'Commission Payment Submitted - MealSetu',
+          `<div style="font-family: Arial, sans-serif;">
+            <h2 style="color: #f97316;">Payment Proof Submitted</h2>
+            <p>Amount: ₹${commission.commission_amount}</p>
+            <p>Week: ${commission.month}</p>
+            <p>Status: Pending Admin Verification</p>
+          </div>`
+        );
+      }
+    } catch (emailErr) {
+      console.error('Email failed:', emailErr.message);
     }
-    
-    // Send notification to admin
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      const adminHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px;">
-          <h2 style="color: #f26522;">Vendor Recorded Payment</h2>
-          <p>Vendor: ${vendor?.kitchenName}</p>
-          <p>Commission ID: ${commission._id}</p>
-          <p>Amount: ₹${commission.amount}</p>
-          <p>Transaction: ${transactionId}</p>
-        </div>
-      `;
-      await sendEmail(adminEmail, 'Vendor Commission Payment Recorded', adminHtml);
-    }
-    
-    res.status(200).json({ message: 'Payment recorded successfully' });
+
+    res.status(200).json({
+      message: 'Payment proof submitted. Awaiting admin verification.',
+      payment
+    });
+
   } catch (error) {
+    console.error('payCommission error:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };

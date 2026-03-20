@@ -487,7 +487,7 @@ const markCommissionPaid = async (req, res) => {
 const getCommissionTiers = async (req, res) => {
   try {
     const CommissionSetting = require('../models/CommissionSetting');
-    const tiers = await CommissionSetting.find({ isActive: true }).sort({ minEarning: 1 });
+    const tiers = await CommissionSetting.find({ }).sort({ minEarning: 1 });
     res.status(200).json({ tiers });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -658,7 +658,7 @@ const verifyCommissionPayment = async (req, res) => {
 // @route   GET /api/admin/commission/report/csv
 const getCommissionReportCSV = async (req, res) => {
   try {
-    const Commission = require('../models/Commission');
+    const { Commission } = require('../models/Commission');
     const commissions = await Commission.find({})
       .populate('vendorId', 'kitchenName')
       .lean();

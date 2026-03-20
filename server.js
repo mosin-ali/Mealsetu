@@ -17,6 +17,52 @@ const { startOfferActivationCron } = require('./cron/offerActivation');
 const { startTrialExpiryCron } = require('./cron/trialExpiry');
 const { startUserActivityCron } = require('./cron/userActivityCron');
 const { verifyEmailConnection } = require('./utils/emailUtils');
+const { startWeeklyCommissionCron } = require('./cron/weeklyCommission');
+
+// ===== SEED DEFAULT COMMISSION TIERS =====
+const seedDefaultTiers = async () => {
+  try {
+    const CommissionSetting = require('./models/CommissionSetting');
+    const count = await CommissionSetting.countDocuments();
+    if (count === 0) {
+      await CommissionSetting.insertMany([
+        {
+          tierName: 'Starter',
+          minEarning: 0,
+          maxEarning: 10000,
+          ratePercent: 3,
+          isActive: true
+        },
+        {
+          tierName: 'Growth',
+          minEarning: 10001,
+          maxEarning: 50000,
+          ratePercent: 5,
+          isActive: true
+        },
+        {
+          tierName: 'Pro',
+          minEarning: 50001,
+          maxEarning: 100000,
+          ratePercent: 8,
+          isActive: true
+        },
+        {
+          tierName: 'Enterprise',
+          minEarning: 100001,
+          maxEarning: null,
+          ratePercent: 10,
+          isActive: true
+        }
+      ]);
+      console.log('✅ Default commission tiers seeded successfully');
+    } else {
+      console.log(`✅ Commission tiers already exist: ${count} tiers`);
+    }
+  } catch (error) {
+    console.error('❌ Tier seeding failed:', error.message);
+  }
+};
 
 const app = express();
 
@@ -25,20 +71,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Public route for getting vendor's weekly plan (no auth required)
+// Public route for getting vendor weekly plan (no auth required)
 app.get('/api/vendor-profile/:vendorId', async (req, res) => {
   try {
     const Vendor = require('./models/Vendor');
     const { vendorId } = req.params;
     const vendor = await Vendor.findById(vendorId);
-    
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor not found' });
     }
-
-    res.json({ 
+    res.json({
       weeklyPlan: vendor.weeklyPlan,
-      kitchenName: vendor.kitchenName 
+      kitchenName: vendor.kitchenName
     });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -51,12 +95,15 @@ app.use('/api/vendor', vendorRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Connect to MongoDB and conditionally seed database
+// ===== START SERVER =====
 const startServer = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB Connected');
-    
+    console.log('✅ MongoDB Connected');
+
+    // Seed default commission tiers if empty
+    await seedDefaultTiers();
+
     // Check if database is empty and auto-seed if needed
     const empty = await isDatabaseEmpty();
     if (empty) {
@@ -73,56 +120,29 @@ const startServer = async () => {
     } else {
       console.log('📊 Database contains existing data. Skipping auto-seed.\n');
     }
-    
+
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, async () => {
-      console.log(`Server running on port ${PORT}`);
-      
-      // Verify email configuration at startup
+      console.log(`🚀 Server running on port ${PORT}`);
+
+      // Verify email configuration
       await verifyEmailConnection();
-      
-      // Start the offer activation cron job
+
+      // Start cron jobs
       startOfferActivationCron();
-      
-      // Start the trial expiry cron job
       startTrialExpiryCron();
-      
-      // Start the user activity cron job
-      const { startUserActivityCron } = require('./cron/userActivityCron');
       startUserActivityCron();
-      
-      // COMMISSION CRON JOBS
-      const cron = require('node-cron');
-      
-// 1st Midnight: Generate MONTHLY commissions (previous month) - REPLACED WEEKLY
-      cron.schedule('0 0 1 * *', async () => {
-        console.log('🧾 Running MONTHLY commission generation...');
-        try {
-          const { generateMonthlyCommissions } = require('./utils/commissionUtils');
-          await generateMonthlyCommissions();
-        } catch (error) {
-          console.error('Monthly commission cron error:', error);
-        }
-      });
-      
-      // Daily 9AM: Check overdue commissions (uses utils)
-      cron.schedule('0 9 * * *', async () => {
-        console.log('⚠️  Checking overdue commissions...');
-        try {
-          const { setOverdueCommissions } = require('./utils/commissionUtils');
-          await setOverdueCommissions();
-        } catch (error) {
-          console.error('Overdue cron error:', error);
-        }
-      });
-      
-      console.log('⏰ Commission cron jobs scheduled (MONTHLY + DAILY)');
+
+      // Start weekly commission cron
+      startWeeklyCommissionCron();
+
+      console.log('⏰ All cron jobs started');
     });
+
   } catch (err) {
-    console.error('MongoDB connection error:', err);
+    console.error('❌ MongoDB connection error:', err);
     process.exit(1);
   }
 };
 
 startServer();
-

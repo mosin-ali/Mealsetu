@@ -6,10 +6,20 @@ const commissionSchema = new mongoose.Schema({
     ref: 'Vendor', 
     required: true 
   },
-  month: {
-    type: String, // YYYY-MM format
-    required: true
-  },
+  // month: {
+  //   type: String, // YYYY-MM format
+  //   required: true
+  // },
+
+  // Now stores week key like "2026-W12" instead of "2026-03"
+week: {
+  type: String,
+  required: true
+},
+month: {
+  type: String,
+  default: null
+},
   totalOrders: {
     type: Number,
     default: 0
