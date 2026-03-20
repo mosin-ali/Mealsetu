@@ -1,7 +1,27 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getPlatformSettings, updateCommissionRate, getPendingVendors, getAllUsers, approveVendor, rejectVendor, getAllVendorsForAdmin, getVendorSubscribers, getAdminProfile, updateAdminProfile, getPublicAdminContact } = require('../controllers/adminController');
-
+const { 
+  getPlatformSettings, 
+  updateCommissionRate, 
+  getPendingVendors, 
+  getAllUsers, 
+  approveVendor, 
+  rejectVendor, 
+  getAllVendorsForAdmin, 
+  getVendorSubscribers, 
+  getAdminProfile, 
+  updateAdminProfile, 
+  getPublicAdminContact, 
+  getAllCommissions, 
+  getCommissionSummary, 
+  markCommissionPaid,
+  getCommissionTiers,
+  updateCommissionTiers,
+  getCommissionVendors,
+  getCommissionReportCSV,
+  seedDefaultTiers,
+  verifyCommissionPayment
+} = require('../controllers/adminController');
 const router = express.Router();
 
 // All routes require Admin role
@@ -62,5 +82,26 @@ router.get('/fix-vendor-statuses', async (req, res) => {
 
 router.get('/profile', getAdminProfile);
 router.put('/profile', updateAdminProfile);
+
+// Commission routes
+router.get('/commissions', getAllCommissions);
+router.get('/commissions/summary', getCommissionSummary);
+router.put('/commissions/:id/mark-paid', markCommissionPaid);
+
+// Commission tiers
+router.get('/commission/tiers', getCommissionTiers);
+router.put('/commission/tiers', updateCommissionTiers);
+
+// Commission vendors overview
+router.get('/commission/vendors', getCommissionVendors);
+
+// Commission reports
+router.get('/commission/report/csv', getCommissionReportCSV);
+
+// Commission seed (one-time)
+router.post('/commission/seed-tiers', seedDefaultTiers);
+
+// Commission payment verification
+router.post('/commission/verify/:paymentId', verifyCommissionPayment);
 
 module.exports = router;

@@ -410,6 +410,301 @@ const getPublicAdminContact = async (req, res) => {
   }
 };
 
+// ===== COMMISSION CONTROLLER FUNCTIONS =====
+// @desc    Get all commissions (admin view)
+const getAllCommissions = async (req, res) => {
+  try {
+    const commissions = await Commission.find({})
+      .populate('vendorId', 'kitchenName ownerId')
+      .populate('vendorId.ownerId', 'email')
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({ commissions });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get commission summary statistics
+const getCommissionSummary = async (req, res) => {
+  try {
+    const summary = await Commission.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          pendingCount: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, '$count', 0] } },
+          pendingAmount: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, '$totalAmount', 0] } },
+          paidCount: { $sum: { $cond: [{ $eq: ['$status', 'paid'] }, '$count', 0] } },
+          paidAmount: { $sum: { $cond: [{ $eq: ['$status', 'paid'] }, '$totalAmount', 0] } },
+          overdueCount: { $sum: { $cond: [{ $eq: ['$status', 'overdue'] }, '$count', 0] } },
+          overdueAmount: { $sum: { $cond: [{ $eq: ['$status', 'overdue'] }, '$totalAmount', 0] } }
+        }
+      }
+    ]);
+    
+    const stats = summary[0] || {};
+    res.status(200).json({
+      pendingAmount: stats.pendingAmount || 0,
+      paidAmount: stats.paidAmount || 0,
+      overdueAmount: stats.overdueAmount || 0,
+      pendingCount: stats.pendingCount || 0,
+      paidCount: stats.paidCount || 0,
+      overdueCount: stats.overdueCount || 0
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+
+// @route   PUT /api/admin/commissions/:id/mark-paid
+const markCommissionPaid = async (req, res) => {
+  try {
+    const commission = await Commission.findById(req.params.id);
+    if (!commission) {
+      return res.status(404).json({ message: 'Commission not found' });
+    }
+    
+    commission.status = 'paid';
+    commission.paidAt = new Date();
+    await commission.save();
+    
+    res.status(200).json(commission);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get commission tiers
+// @route   GET /api/admin/commission/tiers
+const getCommissionTiers = async (req, res) => {
+  try {
+    const CommissionSetting = require('../models/CommissionSetting');
+    const tiers = await CommissionSetting.find({ isActive: true }).sort({ minEarning: 1 });
+    res.status(200).json({ tiers });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Update commission tiers (bulk)
+// @route   PUT /api/admin/commission/tiers
+const updateCommissionTiers = async (req, res) => {
+  try {
+    const CommissionSetting = require('../models/CommissionSetting');
+    const { tiers } = req.body;
+    
+    if (!Array.isArray(tiers)) {
+      return res.status(400).json({ message: 'Tiers must be an array' });
+    }
+    
+    // Upsert all tiers by tierName
+    const updatedTiers = [];
+    for (const tier of tiers) {
+      const result = await CommissionSetting.findOneAndUpdate(
+        { tierName: tier.tierName },
+        {
+          $set: {
+            tierName: tier.tierName,
+            minEarning: tier.minEarning,
+            maxEarning: tier.maxEarning,
+            ratePercent: tier.ratePercent,
+            isActive: tier.isActive !== false
+          }
+        },
+        { upsert: true, new: true }
+      );
+      updatedTiers.push(result);
+    }
+    
+    res.status(200).json({ 
+      message: 'Commission tiers updated successfully',
+      tiers: updatedTiers 
+    });
+  } catch (error) {
+    console.error('Update tiers error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get commission vendors overview
+// @route   GET /api/admin/commission/vendors
+const getCommissionVendors = async (req, res) => {
+  try {
+    const CommissionSetting = require('../models/CommissionSetting');
+    const Commission = require('../models/Commission');
+    
+    const { month, status, search } = req.query;
+    
+    let match = {};
+    if (month) match.month = month;
+    if (status) match.status = status;
+    
+    const commissions = await Commission.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: 'vendors',
+          localField: 'vendorId',
+          foreignField: '_id',
+          as: 'vendor'
+        }
+      },
+      { $unwind: '$vendor' },
+      {
+        $lookup: {
+          from: 'commissionpayments',
+          localField: '_id',
+          foreignField: 'vendorEarningId',
+          as: 'payments'
+        }
+      },
+      {
+        $addFields: {
+          latestPayment: { $arrayElemAt: ['$payments', -1] }
+        }
+      },
+      {
+        $project: {
+          vendor_name: '$vendor.kitchenName',
+          month: 1,
+          total_earning: 1,
+          commission_rate: 1,
+          commission_amount: 1,
+          status: 1,
+          amount_paid: { $ifNull: ['$latestPayment.amount_paid', 0] },
+          payment_status: '$latestPayment.status',
+          proof_url: '$latestPayment.proof_url',
+          paid_at: { $ifNull: ['$latestPayment.paid_at', null] }
+        }
+      },
+      { $sort: { month: -1 } }
+    ]);
+    
+    let vendors = commissions;
+    if (search) {
+      vendors = vendors.filter(v => v.vendorName.toLowerCase().includes(search.toLowerCase()));
+    }
+    
+    res.status(200).json({ vendors });
+  } catch (error) {
+    console.error('Get commission vendors error:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Verify commission payment
+// @route   POST /api/admin/commission/verify/:paymentId
+const verifyCommissionPayment = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { action } = req.body; // 'confirm' or 'reject'
+    
+    const CommissionPayment = require('../models/CommissionPayment');
+    const Commission = require('../models/Commission');
+    
+    const payment = await CommissionPayment.findById(paymentId).populate('vendorEarningId');
+    
+    if (!payment) {
+      return res.status(404).json({ message: 'Payment not found' });
+    }
+    
+    if (action === 'confirm') {
+      payment.status = 'confirmed';
+      payment.verifiedByAdmin = req.user._id;
+      payment.verifiedAt = new Date();
+      await payment.save();
+      
+      // Update commission
+      payment.vendorEarningId.status = 'paid';
+      payment.vendorEarningId.adminVerifiedAt = new Date();
+      await payment.vendorEarningId.save();
+      
+      // Email vendor
+      const vendor = await Vendor.findById(payment.vendorId).populate('ownerId');
+      if (vendor.ownerId.email) {
+        await sendEmail(
+          vendor.ownerId.email,
+          'Commission Payment Verified',
+          `<p>Your payment of ₹${payment.amountPaid} has been verified by admin.</p>`
+        );
+      }
+      
+      res.json({ message: 'Payment verified successfully' });
+    } else if (action === 'reject') {
+      payment.status = 'rejected';
+      payment.notes = req.body.notes;
+      await payment.save();
+      
+      res.json({ message: 'Payment rejected' });
+    } else {
+      res.status(400).json({ message: 'Invalid action' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+
+
+// @desc    Get commission report CSV
+// @route   GET /api/admin/commission/report/csv
+const getCommissionReportCSV = async (req, res) => {
+  try {
+    const Commission = require('../models/Commission');
+    const commissions = await Commission.find({})
+      .populate('vendorId', 'kitchenName')
+      .lean();
+    
+    let csv = 'Vendor,Month,Total Orders,Total Earning,Rate,Commission Amount,Status,Due Date\n';
+    
+    commissions.forEach(c => {
+      csv += `"${c.vendorId.kitchenName}","${c.month}",${c.total_orders},"₹${c.total_earning}",${c.commission_rate}%,₹${c.commission_amount},"${c.status}","${c.due_date?.toLocaleDateString() || ''}"\n`;
+    });
+    
+    res.header('Content-Type', 'text/csv');
+    res.attachment('mealsetu-commissions.csv');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ message: 'CSV generation failed' });
+  }
+};
+
+// @desc    Seed default commission tiers (runs if empty)
+// @route   POST /api/admin/commission/seed-tiers
+const seedDefaultTiers = async (req, res) => {
+  try {
+    const CommissionSetting = require('../models/CommissionSetting');
+    const count = await CommissionSetting.countDocuments();
+    
+    if (count > 0) {
+      return res.json({ message: 'Tiers already exist', count });
+    }
+    
+    const defaultTiers = [
+      { tierName: 'Starter', minEarning: 0, maxEarning: 10000, ratePercent: 3, isActive: true },
+      { tierName: 'Growth', minEarning: 10001, maxEarning: 50000, ratePercent: 5, isActive: true },
+      { tierName: 'Pro', minEarning: 50001, maxEarning: 100000, ratePercent: 8, isActive: true },
+      { tierName: 'Enterprise', minEarning: 100001, maxEarning: null, ratePercent: 10, isActive: true }
+    ];
+    
+    await CommissionSetting.insertMany(defaultTiers);
+    
+    res.json({ message: 'Default tiers seeded', tiers: defaultTiers });
+  } catch (error) {
+    res.status(500).json({ message: 'Seeding failed', error: error.message });
+  }
+};
+
+// ===== END COMMISSION FUNCTIONS =====
+
 module.exports = { 
   getPlatformSettings, 
   updateCommissionRate, 
@@ -422,7 +717,17 @@ module.exports = {
   autoMarkInactiveUsers,
   getAdminProfile,
   updateAdminProfile,
-  getPublicAdminContact
+  getPublicAdminContact,
+  getAllCommissions,
+  getCommissionSummary,
+  markCommissionPaid,
+  getCommissionTiers,
+  updateCommissionTiers,
+  getCommissionVendors,
+  verifyCommissionPayment,
+  getCommissionReportCSV,
+  seedDefaultTiers
 };
+
 
 

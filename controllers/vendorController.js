@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Complaint = require('../models/Complaint');
 const Subscription = require('../models/Subscription');
 const Payout = require('../models/Payout');
+const Commission = require('../models/Commission');
 const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform profilePic path to full URL
@@ -411,17 +412,18 @@ const getDashboardStats = async (req, res) => {
     ]);
     const activeSubscribers = activeSubscribersAggregation.length > 0 ? activeSubscribersAggregation[0].activeSubscribers : 0;
 
-    // Also get pending payout from Payout collection
-    const pendingPayoutAggregation = await Payout.aggregate([
+    // Get pending payout from new Commission model (sum of pending amounts)
+    const vendorId = vendor._id;
+    const pendingCommissions = await require('../models/Commission').aggregate([
       { 
         $match: { 
-          vendorId: vendor._id,
-          status: 'Pending'
+          vendorId: vendorId,
+          status: { $in: ['pending', 'overdue'] }
         } 
       },
-      { $group: { _id: null, totalPending: { $sum: '$totalEarning' } } }
+      { $group: { _id: null, totalPending: { $sum: '$amount' } } }
     ]);
-    const pendingPayout = pendingPayoutAggregation.length > 0 ? pendingPayoutAggregation[0].totalPending : 0;
+    const pendingPayout = pendingCommissions.length > 0 ? pendingCommissions[0].totalPending : 0;
 
     // NEW: Get Cash Payments breakdown (amount + count)
     const cashPaymentsAggregation = await Order.aggregate([
@@ -909,6 +911,150 @@ const submitVendorCompliance = async (req, res) => {
   }
 };
 
+// ===== COMMISSION CONTROLLER FUNCTIONS =====
+// @desc    Get vendor commission summary (current month)
+// @route   GET /api/vendor/commission/summary
+const getCommissionSummary = async (req, res) => {
+  try {
+    const vendorId = req.vendor?._id || req.user._id;
+    
+    // Current month YYYY-MM
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7); // YYYY-MM
+    
+    // Calculate current month earnings
+    const { calculateMonthlyEarning } = require('../utils/commissionUtils');
+    const earningData = await calculateMonthlyEarning(vendorId, currentMonth);
+    
+    // Get tier
+    const { getTierForEarnings } = require('../utils/commissionUtils');
+    const tier = await getTierForEarnings(earningData.total_earning);
+    
+    // Pending commission for current month
+    const currentCommission = await Commission.findOne({
+      vendorId,
+      month: currentMonth
+    });
+    
+    const commissionDue = currentCommission ? currentCommission.commission_amount : Math.round(earningData.total_earning * tier.ratePercent / 100);
+    
+    res.status(200).json({
+      currentMonth,
+      total_earning: earningData.total_earning,
+      total_orders: earningData.totalOrders,
+      commission_rate: tier.ratePercent,
+      commission_due: commissionDue,
+      net_payout: earningData.total_earning - commissionDue,
+      tier_name: tier.tierName,
+      status: currentCommission?.status || 'not_generated'
+    });
+  } catch (error) {
+    console.error('Commission summary error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get vendor pending payout summary (legacy - for dashboard)
+const getPendingPayout = async (req, res) => {
+  try {
+    const vendorId = req.vendor?._id || req.user._id;
+    
+    const { getCommissionSummary } = require('../utils/commissionUtils');
+    
+    const summary = await getCommissionSummary({ vendor: { _id: vendorId }, user: { _id: vendorId } }, { json: () => ({}) });
+    
+    res.status(200).json({
+      pendingAmount: summary.commissionDue || 0,
+      overdueAmount: 0, // Calculate from overdue records
+      pendingCount: 1,
+      overdueCount: 0
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get all commissions for logged-in vendor
+// @route   GET /api/vendor/my-commissions
+const getMyCommissions = async (req, res) => {
+  try {
+    const vendorId = req.vendor?._id || req.user._id;
+    
+    const commissions = await Commission.find({ vendorId })
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({ 
+      commissions 
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Vendor records commission payment
+// @route   POST /api/vendor/pay-commission
+const payCommission = async (req, res) => {
+  try {
+    const { commissionId, paymentMethod, transactionId } = req.body;
+    const vendorId = req.vendor?._id || req.user._id;
+    
+    const commission = await Commission.findById(commissionId);
+    if (!commission) {
+      return res.status(404).json({ message: 'Commission not found' });
+    }
+    
+    if (commission.vendorId.toString() !== vendorId.toString()) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+    
+    // Update commission as paid
+    commission.status = 'paid';
+    commission.paidAt = new Date();
+    commission.paymentMethod = paymentMethod;
+    commission.transactionId = transactionId;
+    await commission.save();
+    
+    // Send confirmation email to vendor
+    const vendor = await Vendor.findById(vendorId).populate('ownerId', 'email');
+    const vendorEmail = vendor?.ownerId?.email;
+    if (vendorEmail) {
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <h2 style="color: #16a34a;">✅ Commission Payment Confirmed</h2>
+          <p>Amount: ₹${commission.amount}</p>
+          <p>Transaction ID: ${transactionId || 'N/A'}</p>
+          <p>Method: ${paymentMethod}</p>
+          <p>Paid At: ${commission.paidAt.toLocaleString()}</p>
+          <hr/>
+          <p>Thank you for using MealSetu!</p>
+        </div>
+      `;
+      await sendEmail(vendorEmail, 'Commission Payment Confirmed - MealSetu', emailHtml);
+    }
+    
+    // Send notification to admin
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (adminEmail) {
+      const adminHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <h2 style="color: #f26522;">Vendor Recorded Payment</h2>
+          <p>Vendor: ${vendor?.kitchenName}</p>
+          <p>Commission ID: ${commission._id}</p>
+          <p>Amount: ₹${commission.amount}</p>
+          <p>Transaction: ${transactionId}</p>
+        </div>
+      `;
+      await sendEmail(adminEmail, 'Vendor Commission Payment Recorded', adminHtml);
+    }
+    
+    res.status(200).json({ message: 'Payment recorded successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// ===== END COMMISSION FUNCTIONS =====
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -931,5 +1077,9 @@ module.exports = {
   toggleShopStatus,
   getShopStatus,
   updateTrialSettings,
-  submitVendorCompliance
+  submitVendorCompliance,
+  getCommissionSummary,
+  getPendingPayout,
+  getMyCommissions,
+  payCommission,
 };

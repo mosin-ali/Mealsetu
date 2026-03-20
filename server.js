@@ -90,6 +90,33 @@ const startServer = async () => {
       // Start the user activity cron job
       const { startUserActivityCron } = require('./cron/userActivityCron');
       startUserActivityCron();
+      
+      // COMMISSION CRON JOBS
+      const cron = require('node-cron');
+      
+// 1st Midnight: Generate MONTHLY commissions (previous month) - REPLACED WEEKLY
+      cron.schedule('0 0 1 * *', async () => {
+        console.log('🧾 Running MONTHLY commission generation...');
+        try {
+          const { generateMonthlyCommissions } = require('./utils/commissionUtils');
+          await generateMonthlyCommissions();
+        } catch (error) {
+          console.error('Monthly commission cron error:', error);
+        }
+      });
+      
+      // Daily 9AM: Check overdue commissions (uses utils)
+      cron.schedule('0 9 * * *', async () => {
+        console.log('⚠️  Checking overdue commissions...');
+        try {
+          const { setOverdueCommissions } = require('./utils/commissionUtils');
+          await setOverdueCommissions();
+        } catch (error) {
+          console.error('Overdue cron error:', error);
+        }
+      });
+      
+      console.log('⏰ Commission cron jobs scheduled (MONTHLY + DAILY)');
     });
   } catch (err) {
     console.error('MongoDB connection error:', err);
