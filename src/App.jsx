@@ -8,28 +8,34 @@ import VendorDashboard from './pages/VendorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import OrderPage from './pages/OrderPage';
 import ResetPassword from './pages/ResetPassword';
+import { OrderProvider } from './context/OrderContext';
+import { ToastProvider } from './components/common/Toast';
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        {/* The first page that opens */}
-        <Route path="/" element={<LandingPage />} /> 
-        
-        {/* Other pages */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/user-dashboard" element={<UserDashboard />} />
-        <Route path="/vendor-dashboard" element={<VendorDashboard />} />
-        <Route path="/admin-dashboard" element={<AdminDashboard />} />
+     <ToastProvider> {/* ✅ FIRST */}
+      <OrderProvider> {/* ✅ SECOND */}
+        <Router>
+          <Routes>
+            {/* The first page that opens */}
+            <Route path="/" element={<LandingPage />} /> 
+            
+            {/* Other pages */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/user-dashboard" element={<UserDashboard />} />
+            <Route path="/vendor-dashboard" element={<VendorDashboard />} />
+            <Route path="/admin-dashboard" element={<AdminDashboard />} />
 
-        <Route path="/order" element={<OrderPage />} />
+            <Route path="/order" element={<OrderPage />} />
 
-        {/* Password Reset */}
-        <Route path="/reset-password/:token" element={<ResetPassword />} />
+            {/* Password Reset */}
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-      </Routes>
-    </Router>
+          </Routes>
+        </Router>
+         </OrderProvider>
+    </ToastProvider>
   );
 }
 

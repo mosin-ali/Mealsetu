@@ -24,7 +24,7 @@ const WelcomeCard = ({ user, onDetectLocation, onSecuritySettings }) => {
         </div>
       </div>
       <div className="welcome-actions">
-        <button className="btn-primary detect-btn" onClick={onDetectLocation}>Detect Location</button>
+        {/* <button className="btn-primary detect-btn" onClick={onDetectLocation}>Detect Location</button> */}
         {/* <button className="security-btn" onClick={onSecuritySettings}>Security Settings</button> */}
       </div>
     </div>

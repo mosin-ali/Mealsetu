@@ -100,9 +100,7 @@ export const resendRegisterOTP = (userId) => {
 
 // ============ USER ENDPOINTS ============
 export const getCurrentUser = () => {
-  return apiCall('/users/me', {
-    method: 'GET',
-  });
+  return apiCall('/users/me', { method: 'GET' });
 };
 
 export const updateUserProfile = (userId, data) => {
@@ -126,11 +124,11 @@ export const changePassword = (userId, currentPassword, newPassword) => {
   });
 };
 
-export const getMenus = (date = null) => {
+export const getMenus = (date = null, pincode = null) => {
   const timestamp = Date.now();
-  const url = date
-    ? `/users/menus?date=${date}&_t=${timestamp}`
-    : `/users/menus?_t=${timestamp}`;
+  let url = `/users/menus?_t=${timestamp}`;
+  if (date) url += `&date=${date}`;
+  if (pincode) url += `&pincode=${pincode}`;
   return apiCall(url, { method: 'GET' });
 };
 
@@ -220,6 +218,11 @@ export const extendSubscriptionOrder = (plan, vendorId, paymentMethod = 'Cash') 
   });
 };
 
+// ✅ SINGLE checkSubscriptionPaymentStatus — duplicate removed
+export const checkSubscriptionPaymentStatus = (orderId) => {
+  return apiCall(`/users/orders/${orderId}/payment-status`);
+};
+
 // ============ TRIAL ENDPOINTS ============
 export const createTrialOrder = (vendorId, paymentMethod = 'Cash', mealPreference = 'Regular') => {
   return apiCall('/users/trial', {
@@ -236,6 +239,18 @@ export const getTrialEligibility = (vendorId) => {
 export const getVendorProfile = () => {
   return apiCall('/vendor/me', { method: 'GET' });
 };
+
+export const getJainMenu = () => apiCall('/vendor/jain-menu');
+export const saveJainMenu = (data) => apiCall('/vendor/jain-menu', {
+  method: 'POST',
+  body: JSON.stringify(data)
+});
+
+export const getPricing = () => apiCall('/vendor/pricing');
+export const savePricing = (pricing) => apiCall('/vendor/pricing', {
+  method: 'POST',
+  body: JSON.stringify(pricing)
+});
 
 export const updateVendorProfile = (data) => {
   return apiCall('/vendor/me', {
@@ -456,6 +471,25 @@ export const vendorPayCommission = (formData) => {
     body: formData,
   });
 };
+
+// ============ PINCODE ENDPOINTS ============
+export const getVendorsByPincode = (pincode, userLat = null, userLon = null) => {
+  let url = `/users/vendors-by-pincode?pincode=${pincode}`;
+  if (userLat !== null && userLon !== null) {
+    url += `&userLat=${userLat}&userLon=${userLon}`;
+  }
+  return apiCall(url);
+};
+
+export const checkPincodeAvailability = (pincode) => {
+  return apiCall(`/users/check-pincode?pincode=${pincode}`);
+};
+
+// ============ USER PINCODE UPDATE ============
+export const updateUserPincode = (pincode) => apiCall('/users/pincode', {
+  method: 'PATCH',
+  body: JSON.stringify({ pincode })
+});
 
 // ============ LEGACY COMPATIBILITY ============
 export const getVendorPendingPayout = () => {

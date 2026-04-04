@@ -1,9 +1,12 @@
-import React, { useState, useMemo, useEffect } from 'react'; 
+import React, { useState, useMemo, useEffect, useContext } from 'react';
+import { useToast } from '../components/common/Toast';
+
+
 import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './VendorDashboard.css';
-import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance } from '../utils/api';
+import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing } from '../utils/api';
 import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
 import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
 import VendorOffers from '../components/dashboard/vendor/VendorOffers';
@@ -19,18 +22,19 @@ const VendorDashboard = () => {
   const [filteredOrders, setFilteredOrders] = useState([]);
   const [filterLoading, setFilterLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  
   const [error, setError] = useState('');
 
   // --- PROFILE STATE ---
-  const [profile, setProfile] = useState({
-    kitchenName: "",
-    address: "",
-    phone: "",
-    image: null,
-    kitchenPoster: null,
-    profileImage: null
-  });
-
+ const [profile, setProfile] = useState({
+  kitchenName: "",
+  address: "",
+  phone: "",
+  upiId: "",   
+  image: null,
+  kitchenPoster: null,
+  profileImage: null
+});
   // State to track if there's a new image to upload
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedKitchenPoster, setSelectedKitchenPoster] = useState(null);
@@ -62,6 +66,16 @@ const VendorDashboard = () => {
   });
   const [savingTrialSettings, setSavingTrialSettings] = useState(false);
   const [trialSettingsMessage, setTrialSettingsMessage] = useState({ type: '', text: '' });
+
+  // Pricing state
+  const [pricing, setPricing] = useState([
+    { type: 'daily', price: 80, active: false },
+    { type: 'weekly', price: 500, active: false },
+    { type: 'monthly', price: 1800, active: false }
+  ]);
+  const [savingPricing, setSavingPricing] = useState(false);
+  const [pricingMessage, setPricingMessage] = useState({ type: '', text: '' });
+  const [pricingErrors, setPricingErrors] = useState({});
 
   // --- DASHBOARD STATS STATE ---
   const [dashboardStats, setDashboardStats] = useState({
@@ -120,6 +134,36 @@ const VendorDashboard = () => {
         }
       };
 
+
+  const fetchPricing = async () => {
+    if (activeTab !== 'pricing') return;
+
+    try {
+      const data = await getPricing();
+
+      const pricingArray = ['daily', 'weekly', 'monthly'].map(planType => ({
+        type: planType,
+        price: data.pricing?.[planType]?.price ?? '',
+        active: data.pricing?.[planType]?.is_active === true ? true : false
+      }));
+      setPricing(pricingArray);
+      if (!data.pricing) {
+        setPricing([
+          { type: 'daily', price: '', active: false },
+          { type: 'weekly', price: '', active: false },
+          { type: 'monthly', price: '', active: false }
+        ]);
+      }
+
+    } catch (error) {
+      console.warn('Failed to load pricing:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchPricing();
+  }, [activeTab]);
+
   // Handle shop open/close toggle
   const handleShopToggle = async () => {
     try {
@@ -130,20 +174,24 @@ const VendorDashboard = () => {
       
       if (newStatus === false) {
         // Closing the shop
-        alert('Kitchen closed successfully! Users have been notified.');
+        addToast('Kitchen closed successfully! Users have been notified.', 'success');
       } else {
         // Opening the shop
         if (result.subscriptionsExtended > 0) {
-          alert(`Kitchen opened successfully! ${result.subscriptionsExtended} subscription(s) have been extended by ${result.closureDays} day(s).`);
+          addToast(`Kitchen opened successfully! ${result.subscriptionsExtended} subscription(s) extended by ${result.closureDays} days.`, 'success');
         } else {
-          alert('Kitchen opened successfully!');
+        addToast('Kitchen opened successfully!', 'success');
         }
       }
     } catch (error) {
+      const { addToast } = useToast();
       console.error('Error toggling shop status:', error);
-      alert('Failed to update shop status: ' + error.message);
+      addToast('Failed to update shop status: ' + error.message, 'error');
     }
   };
+
+
+
 
   const fetchVendorData = async () => {
     try {
@@ -155,14 +203,15 @@ const VendorDashboard = () => {
       const resolvedImage = resolveImageUrl(vendorData.profileImage);
       const resolvedKitchenPoster = resolveImageUrl(vendorData.kitchenPoster);
       
-      setProfile({
-        kitchenName: vendorData.kitchenName,
-        address: vendorData.address,
-        phone: vendorData.ownerId?.phone || "",
-        image: resolvedImage,
-        kitchenPoster: resolvedKitchenPoster,
-        profileImage: vendorData.profileImage
-      });
+     setProfile({
+      kitchenName: vendorData.kitchenName,
+      address: vendorData.address,
+      phone: vendorData.ownerId?.phone || "",
+      upiId: vendorData.upiId || "",   
+      image: resolvedImage,
+      kitchenPoster: resolvedKitchenPoster,
+      profileImage: vendorData.profileImage
+    });
       
       // Image has been resolved, stop loading
       setImageLoading(false);
@@ -295,8 +344,72 @@ const VendorDashboard = () => {
     return `${window.location.origin}${imagePath.startsWith('/') ? '' : '/'}${imagePath}`;
   };
 
+
+
+// const handleSavePricing = async () => {
+//   try {
+//     setSavingPricing(true);
+//     setPricingMessage({ type: '', text: '' });
+
+//     const activePlans = pricing.filter(p => p.active);
+
+//     if (activePlans.length === 0) {
+//       setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
+//       return;
+//     }
+
+//     const formattedPricing = pricing.map(p => ({
+//         type: p.type,
+//         price: Number(p.price), // ✅ ensure number
+//         active: p.active === true
+//       }));
+
+//       await savePricing(formattedPricing);
+
+//     setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
+
+//   } catch (error) {
+//     setPricingMessage({ type: 'error', text: error.message });
+//   } finally {
+//     setSavingPricing(false);
+//   }
+// };
+
+
+
+const handleSavePricing = async () => {
+  try {
+    setSavingPricing(true);
+    setPricingMessage({ type: '', text: '' });
+
+    const activePlans = pricing.filter(p => p.active);
+
+    if (activePlans.length === 0) {
+      setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
+      return;
+    }
+
+    const formattedPricing = pricing.map(p => ({
+      type: p.type,
+      price: Number(p.price), // ✅ FIX
+      active: p.active === true
+    }));
+
+    console.log("Sending pricing:", formattedPricing); // debug
+
+    await savePricing(formattedPricing);
+
+    setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
+
+  } catch (error) {
+    setPricingMessage({ type: 'error', text: error.message });
+  } finally {
+    setSavingPricing(false);
+  }
+};
   // Enhanced handleSaveProfile with proper persistence and state update - now includes image and kitchen poster upload
   const handleSaveProfile = async () => {
+    const { addToast } = useToast();
     try {
       setLoading(true);
       
@@ -349,10 +462,11 @@ const VendorDashboard = () => {
       }
       
       // Now update the profile text fields
-      const updatedVendor = await updateVendorProfile({
+     const updatedVendor = await updateVendorProfile({
         kitchenName: profile.kitchenName,
         address: profile.address,
-        phone: profile.phone
+        phone: profile.phone,
+        upiId: profile.upiId   // ✅ ADD THIS
       });
       
       // Use the uploaded image URLs (which have full URLs) if available, otherwise use the updated vendor's values
@@ -385,14 +499,17 @@ const VendorDashboard = () => {
       };
       localStorage.setItem('user', JSON.stringify(updatedUser));
       
-      alert('Profile updated successfully! Changes will persist after refresh.');
+      addToast('Profile updated successfully! Changes will persist after refresh.', 'success');
     } catch (err) {
       console.error('Failed to update profile:', err);
-      alert('Failed to update profile: ' + err.message);
+      addToast('Failed to update profile: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
   };
+
+
+
 
   const reportData = useMemo(() => {
     const data = [];
@@ -730,6 +847,18 @@ const VendorDashboard = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Kitchen Name</label><input className="v-input" name="kitchenName" value={profile.kitchenName} onChange={handleProfileChange} /></div>
                 <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Complete Address</label><textarea className="v-input" name="address" style={{ height: '100px', paddingTop: '10px' }} value={profile.address} onChange={handleProfileChange} /></div>
+                <div>
+                  <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                    UPI ID
+                  </label>
+                  <input
+                    className="v-input"
+                    name="upiId"
+                    value={profile.upiId}
+                    onChange={handleProfileChange}
+                    placeholder="example@upi"
+                  />
+                </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ marginBottom: '20px' }}>
@@ -1018,6 +1147,108 @@ const VendorDashboard = () => {
       case 'offers':
         return <VendorOffers />;
 
+      case 'pricing':
+        return (
+          <div className="v-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
+              <div>
+                <h3 style={{ color: '#2b3674', margin: 0 }}>Meal Pricing Plans</h3>
+                <p style={{ color: '#a3aed0', margin: '5px 0 0 0', fontSize: '14px' }}>
+                  Set your Daily/Weekly/Monthly prices. <strong>At least 1 plan must be active.</strong>
+                </p>
+              </div>
+              {/* <span style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '20px', background: pricing.filter(p => p.active).length > 0 ? '#dcfce7' : '#fee2e2', color: pricing.filter(p => p.active).length > 0 ? '#16a34a' : '#ef4444' }}>
+                Active: {pricing.filter(p => p.active).length}/3
+              </span> */}
+              <span
+                  style={{
+                    fontSize: '12px',
+                    padding: '5px 12px',
+                    borderRadius: '20px',
+                    background:
+                      (Array.isArray(pricing) ? pricing : []).filter(p => p.active).length > 0
+                        ? '#dcfce7'
+                        : '#fee2e2',
+                    color:
+                      (Array.isArray(pricing) ? pricing : []).filter(p => p.active).length > 0
+                        ? '#16a34a'
+                        : '#ef4444'
+                  }}
+                >
+                  Active: {(Array.isArray(pricing) ? pricing : []).filter(p => p.active).length}/3
+                </span>
+            </div>
+
+            {pricingMessage.text && (
+              <div style={{ 
+                padding: '12px 20px', 
+                borderRadius: '8px', 
+                marginBottom: '20px',
+                background: pricingMessage.type === 'success' ? '#dcfce7' : '#fef2f2',
+                color: pricingMessage.type === 'success' ? '#16a34a' : '#ef4444',
+                fontWeight: '500'
+              }}>
+                {pricingMessage.text}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+              {pricing.map((plan, index) => (
+                <div key={plan.type} className={`pricing-card ${plan.active ? 'active' : ''}`}>
+                  <div className="pricing-header">
+                    <h4>{plan.type.charAt(0).toUpperCase() + plan.type.slice(1)} Plan</h4>
+                    <label className="toggle-switch">
+                      <input 
+                        type="checkbox" 
+                        checked={pricing.find(p => p.type === plan.type)?.active === true}
+                        onChange={(e) => {
+                          const checked = e.target.checked === true;
+                          setPricing(prev => prev.map(p => 
+                            p.type === plan.type ? { ...p, active: checked } : p
+                          ));
+                        }}
+                      />
+                      <span className="slider"></span>
+                    </label>
+                  </div>
+                  <div className="price-input-group">
+                    <label>Price per {plan.type}</label>
+                    <div className="price-input-wrapper">
+                      <span>₹</span>
+                      <input 
+                        type="number" 
+                        min="1"
+                        max="99999"
+                        value={pricing.find(p => p.type === plan.type)?.price ?? ''}
+                        onChange={(e) => {
+                          const newPrice = Number(e.target.value);
+                          setPricing(prev => prev.map(p => 
+                            p.type === plan.type ? { ...p, price: newPrice } : p
+                          ));
+                        }}
+                        className="price-input"
+                      />
+                    </div>
+                    {pricingErrors[index] && (
+                      <span className="error">{pricingErrors[index]}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ textAlign: 'center', marginTop: '30px' }}>
+              <button 
+                onClick={handleSavePricing}
+                disabled={savingPricing || pricing.filter(p => p.active).length === 0}
+                className="save-pricing-btn"
+              >
+                {savingPricing ? 'Saving...' : 'Save Pricing Changes'}
+              </button>
+            </div>
+          </div>
+        );
+
       case 'trials':
         return (
           <TrialSettings 
@@ -1049,6 +1280,9 @@ const VendorDashboard = () => {
         <nav style={{ flex: 1 }}>
           <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Overview</button>
           <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}> Menu Planner</button>
+          <button className={`v-nav-btn ${activeTab === 'pricing' ? 'active' : ''}`} onClick={() => setActiveTab('pricing')}>
+            <span style={{ marginRight: '8px' }}>₹</span>Meal Pricing
+          </button>
           <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}> Order Tracking</button>
           <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}> My Customers</button>
           <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}> Reports & PDF</button>
@@ -1095,7 +1329,7 @@ const VendorDashboard = () => {
         </header>
 
         {renderContent()}
-      </main>
+  </main>
     </div>
   );
 };
@@ -1115,6 +1349,23 @@ const WeeklyMenuPlanner = () => {
     Saturday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
     Sunday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' }
   });
+
+  // Jain menu state
+  const [jainSettings, setJainSettings] = useState({ offersJainMenu: false });
+  const [jainWeeklyPlan, setJainWeeklyPlan] = useState({
+    Monday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Tuesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Wednesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Thursday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Friday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Saturday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+    Sunday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' }
+  });
+  const [loadingJain, setLoadingJain] = useState(true);
+  const [savingJain, setSavingJain] = useState(false);
+  const [jainMessage, setJainMessage] = useState({ type: '', text: '' });
+  const [jainToggleLoading, setJainToggleLoading] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -1134,10 +1385,28 @@ const WeeklyMenuPlanner = () => {
         setLoading(false);
       }
     };
+
+    const fetchJainMenu = async () => {
+      try {
+        setLoadingJain(true);
+        const data = await getJainMenu();
+        setJainSettings({ offersJainMenu: data.offersJainMenu || false });
+        if (data.jainWeeklyPlan) {
+          setJainWeeklyPlan(data.jainWeeklyPlan);
+        }
+      } catch (error) {
+        console.warn('Failed to load Jain menu:', error);
+        setJainSettings({ offersJainMenu: false });
+      } finally {
+        setLoadingJain(false);
+      }
+    };
+
     fetchWeeklyPlan();
+    fetchJainMenu();
   }, []);
 
-  // Handle input changes for a specific day
+// Handle input changes for REGULAR menu
   const handleDayChange = (day, field, value) => {
     setWeeklyPlan(prev => ({
       ...prev,
@@ -1148,6 +1417,94 @@ const WeeklyMenuPlanner = () => {
     }));
   };
 
+  // Handle input changes for JAIN menu
+  const handleJainDayChange = (day, field, value) => {
+    setJainWeeklyPlan(prev => ({
+      ...prev,
+      [day]: {
+        ...prev[day],
+        [field]: value
+      }
+    }));
+  };
+
+  // Jain Toggle Handler - Optimistic + API call
+  const handleJainToggle = async (e) => {
+    const newValue = e.target.checked;
+    try {
+      setJainToggleLoading(true);
+      
+      // Optimistic UI update
+      setJainSettings(prev => ({ offersJainMenu: newValue }));
+      
+      // // API call
+      // await saveJainMenu({
+      //   offersJainMenu: newValue,
+      //   jainWeeklyPlan: jainWeeklyPlan
+      // });
+
+      if (newValue) {
+  // Check at least one day has data before enabling
+  const hasData = Object.values(jainWeeklyPlan).some(
+    day => day.mainCourse && day.mainCourse.trim() !== ''
+  );
+
+  if (!hasData) {
+    alert('⚠️ Please fill Jain menu first before enabling');
+    return;
+  }
+}
+
+await saveJainMenu({
+  offersJainMenu: newValue,
+  jainWeeklyPlan: jainWeeklyPlan
+});
+      
+    } catch (error) {
+      // Revert on error
+      setJainSettings(prev => ({ offersJainMenu: !newValue }));
+      alert('Failed to update Jain toggle: ' + error.message);
+    } finally {
+      setJainToggleLoading(false);
+    }
+  };
+
+  // Save Jain Menu with validation
+  const handleSaveJainMenu = async () => {
+    try {
+      setSavingJain(true);
+      setJainMessage({ type: '', text: '' });
+      
+      // Validation: mainCourse required for every day
+      const errors = [];
+      DAYS_OF_WEEK.forEach(day => {
+        if (!jainWeeklyPlan[day].mainCourse.trim()) {
+          errors.push(`${day}: Main course is required`);
+        }
+      });
+      
+      if (errors.length > 0) {
+        setJainMessage({ type: 'error', text: errors.join('; ') });
+        return;
+      }
+      
+      await saveJainMenu({
+        offersJainMenu: true,
+        jainWeeklyPlan: jainWeeklyPlan
+      });
+      
+      setJainMessage({ type: 'success', text: 'Jain menu saved successfully!' });
+      setTimeout(() => setJainMessage({ type: '', text: '' }), 4000);
+      
+    } catch (error) {
+      setJainMessage({ type: 'error', text: error.message || 'Failed to save Jain menu' });
+    } finally {
+      setSavingJain(false);
+    }
+  };
+
+
+  
   // Batch Save - Save entire week's schedule in one API call
   const handleBatchSave = async () => {
     try {
@@ -1165,6 +1522,29 @@ const WeeklyMenuPlanner = () => {
     }
   };
 
+//   const handleSavePricing = async () => {
+//   try {
+//     setSavingPricing(true);
+//     setPricingMessage({ type: '', text: '' });
+
+//     const activePlans = pricing.filter(p => p.active);
+
+//     if (activePlans.length === 0) {
+//       setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
+//       return;
+//     }
+
+//     await savePricing(pricing);
+
+//     setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
+
+//   } catch (error) {
+//     setPricingMessage({ type: 'error', text: error.message });
+//   } finally {
+//     setSavingPricing(false);
+//   }
+// };
+
   if (loading) {
     return (
       <div className="v-card" style={{ textAlign: 'center', padding: '40px' }}>
@@ -1175,6 +1555,183 @@ const WeeklyMenuPlanner = () => {
 
   return (
     <div className="v-card">
+      {/* ===== JAIN MENU SETTINGS - NEW TOP SECTION ===== */}
+      <div style={{ background: '#fff8f0', padding: '20px', borderRadius: '12px', border: '2px solid #f26522', marginBottom: '25px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <div>
+            <h3 style={{ color: '#f26522', margin: 0, fontSize: '18px' }}>🟢 Jain Menu Settings</h3>
+            <p style={{ color: '#a3aed0', margin: '5px 0 0 0', fontSize: '14px' }}>
+              Offer Jain (no onion/garlic) menu to customers
+            </p>
+          </div>
+        </div>
+
+        {/* Toggle Switch */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <label className="toggle-switch-large" style={{ fontSize: '16px', fontWeight: '600' }}>
+            <input 
+              type="checkbox" 
+              checked={jainSettings.offersJainMenu} 
+              onChange={handleJainToggle}
+              disabled={jainToggleLoading}
+            />
+            <span className="slider-large"></span>
+            Offer Jain Menu to customers
+          </label>
+          {jainToggleLoading && <div style={{ width: '20px', height: '20px', border: '2px solid #f3f4f6', borderTop: '2px solid #f26522', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />}
+        </div>
+
+        {/* Disabled Info Box */}
+        {!jainSettings.offersJainMenu && !loadingJain && (
+          <div style={{ 
+            background: '#f3f4f6', 
+            border: '1px solid #d1d5db', 
+            borderRadius: '8px', 
+            padding: '15px', 
+            marginTop: '15px',
+            color: '#6b7280'
+          }}>
+            ℹ️ Jain menu is disabled. Customers will see "Jain menu not available for your kitchen."
+          </div>
+        )}
+
+        {/* Jain Weekly Planner - Conditional */}
+        {jainSettings.offersJainMenu && (
+          <>
+            <h4 style={{ color: '#f26522', margin: '20px 0 15px 0', fontSize: '16px' }}>Jain Menu — Weekly Schedule</h4>
+            
+            {/* Jain Message */}
+            {jainMessage.text && (
+              <div style={{ 
+                padding: '12px 20px', 
+                borderRadius: '8px', 
+                marginBottom: '20px',
+                background: jainMessage.type === 'success' ? '#dcfce7' : '#fef2f2',
+                color: jainMessage.type === 'success' ? '#16a34a' : '#ef4444'
+              }}>
+                {jainMessage.text}
+              </div>
+            )}
+
+            {/* Jain 7-Day Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+              {DAYS_OF_WEEK.map(day => (
+                <div key={day} style={{ background: '#f0fdf4', borderRadius: '12px', padding: '20px', border: '1px solid #bbf7d0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px', paddingBottom: '10px', borderBottom: '2px solid #16a34a' }}>
+                    <span style={{ fontSize: '20px' }}>🟢</span>
+                    <h4 style={{ margin: 0, color: '#166534', fontSize: '16px' }}>{day}</h4>
+                  </div>
+
+                  {/* Main Course */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      Main Course <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input 
+                      type="text"
+                      className="v-input"
+                      placeholder="Aloo Gobi, Lauki Sabji"
+                      value={jainWeeklyPlan[day].mainCourse}
+                      onChange={(e) => handleJainDayChange(day, 'mainCourse', e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* Alt Sabji */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      Alt Sabji
+                    </label>
+                    <input 
+                      type="text"
+                      className="v-input"
+                      placeholder="Mix Veg (no garlic), Tinda Sabji"
+                      value={jainWeeklyPlan[day].altSabji}
+                      onChange={(e) => handleJainDayChange(day, 'altSabji', e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* 2nd Alt Sabji */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      2nd Alt Sabji
+                    </label>
+                    <input 
+                      type="text"
+                      className="v-input"
+                      placeholder="Bhindi, Karela Sabji"
+                      value={jainWeeklyPlan[day].altSabji2 || ''}
+                      onChange={(e) => handleJainDayChange(day, 'altSabji2', e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* Sides */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      Sides
+                    </label>
+                    <input 
+                      type="text"
+                      className="v-input"
+                      placeholder="Roti, Rice (no onion/garlic)"
+                      value={jainWeeklyPlan[day].sides}
+                      onChange={(e) => handleJainDayChange(day, 'sides', e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* Special Add-ons */}
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      Special Add-ons
+                    </label>
+                    <input 
+                      type="text"
+                      className="v-input"
+                      placeholder="Jain Sweet, Cucumber Raita"
+                      value={jainWeeklyPlan[day].specialAddOns}
+                      onChange={(e) => handleJainDayChange(day, 'specialAddOns', e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Save Jain Menu Button */}
+            <div style={{ marginTop: '30px', textAlign: 'center' }}>
+              <button 
+                onClick={handleSaveJainMenu}
+                disabled={savingJain}
+                style={{ 
+                  background: savingJain ? '#94a3b8' : '#16a34a',
+                  color: 'white',
+                  border: 'none',
+                  padding: '15px 50px',
+                  borderRadius: '12px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: savingJain ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)'
+                }}
+              >
+                {savingJain ? (
+                  <>🟢 Saving...</>
+                ) : (
+                  <>🟢 Save Jain Menu</>
+                )}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ===== REGULAR WEEKLY PLANNER ===== */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
         <div>
           <h3 style={{ color: '#2b3674', margin: 0 }}>Weekly Menu Planner</h3>
@@ -1195,7 +1752,7 @@ const WeeklyMenuPlanner = () => {
         </div>
       </div>
 
-      {/* Success/Error Message */}
+      {/* Regular Success/Error Message */}
       {message.text && (
         <div style={{ 
           padding: '12px 20px', 
@@ -1209,7 +1766,7 @@ const WeeklyMenuPlanner = () => {
         </div>
       )}
 
-      {/* 7-Day Grid */}
+      {/* Regular 7-Day Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
         {DAYS_OF_WEEK.map(day => (
           <div 

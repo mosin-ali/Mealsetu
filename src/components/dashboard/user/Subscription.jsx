@@ -1,19 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Subscription.css';
 import './SubscriptionModal.css';
-import { apiCall, getMySubscription, getUpcomingOrders, extendSubscriptionOrder } from '../../../utils/api';
+import { apiCall, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus } from '../../../utils/api';
 
 const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLeaveStartChange, onLeaveEndChange, onMealTypeChange, onApplyLeave, onExtendSubscription, onSubscriptionActivated, vendorId }) => {
-  // State for dynamic subscription data
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [upcomingPlans, setUpcomingPlans] = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Ref to prevent duplicate API calls
   const isSubmittingRef = useRef(false);
 
-  // Fetch subscription data on mount
   useEffect(() => {
     fetchSubscriptionData();
   }, []);
@@ -22,16 +20,13 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
     setLoading(true);
     setError(null);
     try {
-      // Fetch current subscription
       const subData = await getMySubscription();
       setCurrentSubscription(subData);
-
-      // Fetch upcoming plans
       const upcomingData = await getUpcomingOrders();
       setUpcomingPlans(upcomingData || []);
+      setPendingCount(upcomingData?.length || 0);
     } catch (err) {
       console.error('Error fetching subscription data:', err);
-      // Don't set error - just means user has no subscription
       setCurrentSubscription(null);
       setUpcomingPlans([]);
     } finally {
@@ -39,7 +34,6 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
     }
   };
 
-  // Payment modal state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState('MONTHLY');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('Cash');
@@ -48,8 +42,9 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExtending, setIsExtending] = useState(false);
+  const [vendorDetails, setVendorDetails] = useState(null);
+  const [currentOrderId, setCurrentOrderId] = useState(null);
 
-  // Plan details
   const plans = [
     { id: 'WEEKLY', name: 'Weekly', price: 560, days: 7 },
     { id: 'MONTHLY', name: 'Monthly', price: 2000, days: 30 },
@@ -57,7 +52,6 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
 
   const selectedPlanDetails = plans.find(p => p.id === selectedPlan);
 
-  // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -68,65 +62,102 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
     });
   };
 
-  // Handle payment method selection
   const handlePaymentMethodSelect = (method) => {
     setSelectedPaymentMethod(method);
   };
 
-  // Handle confirm and subscribe button click
+  // ✅ SINGLE handleConfirmSubscribe — no duplicate
   const handleConfirmSubscribe = async () => {
-    // Immediately disable button to prevent double-clicks
+    if (upcomingPlans.length >= 3) {
+      alert("You have reached the maximum limit of 3 upcoming plan extensions.");
+      return;
+    }
     setIsProcessing(true);
-    
     if (selectedPaymentMethod === 'UPI') {
-      // Show QR code modal for UPI payment
-      setShowQRCode(true);
+      await createOrder('UPI');
     } else {
-      // For Cash, call order API directly
       await createOrder('Cash');
     }
   };
 
-  // Create order API call
+  // ✅ FIXED UPI flow: fetch vendor FIRST, validate upiId, then create order
   const createOrder = async (paymentMethod) => {
-    // Prevent duplicate API calls using ref
-    if (isSubmittingRef.current) {
-      return;
-    }
+    if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
-    
     setIsProcessing(true);
     setIsExtending(true);
+
     try {
       const selectedVendorId = vendorId;
-      
       if (!selectedVendorId) {
         throw new Error('No vendor available. Please try again later or contact support.');
       }
 
-      const response = await extendSubscriptionOrder(selectedPlan, selectedVendorId, paymentMethod);
+      if (paymentMethod === 'UPI') {
+        // Step 1: Fetch vendors FIRST
+        const vendorRes = await apiCall(`/users/vendors`);
+        console.log("Vendor API FULL:", vendorRes);
+        // const matchedVendor = Array.isArray(vendorRes)
+        //   ? vendorRes.find(v => v._id === selectedVendorId || v.vendorId === selectedVendorId)
+        //   : null;
 
-      // Success - close modals and show success
+        const vendorsList = Array.isArray(vendorRes)
+          ? vendorRes
+          : vendorRes.vendors || [];
+        
+        console.log("Selected Vendor ID:", selectedVendorId);
+        const matchedVendor = vendorsList.find(
+          v =>
+            String(v._id) === String(selectedVendorId) ||
+            String(v.vendorId) === String(selectedVendorId)
+        );
+        console.log("Vendors List:", vendorsList);
+        console.log("Matched Vendor:", matchedVendor);
+
+        if (!matchedVendor) {
+          alert("Vendor not found. Please try again.");
+          return;
+        }
+
+        // Step 2: Check if upiId exists - STOP if missing
+        if (!matchedVendor.upiId || matchedVendor.upiId.trim() === '') {
+          alert('This vendor has not configured UPI payments yet. Please select Cash or try another vendor.');
+          return;
+        }
+
+        // Step 3: Create order with real upiId available
+        const response = await extendSubscriptionOrder(selectedPlan, selectedVendorId, paymentMethod);
+        const orderId = response.order?._id;
+        setCurrentOrderId(orderId);
+
+        // Step 4: Set real vendor details
+        setVendorDetails({
+          upiId: matchedVendor.upiId?.trim(),
+          kitchenName: matchedVendor.name || matchedVendor.kitchenName
+        });
+
+        // Step 5-7: Show QR modal, polling starts automatically
+        setShowPaymentModal(false);   
+        setShowQRCode(true);
+        return;
+      } else {
+        // Cash flow unchanged
+        const response = await extendSubscriptionOrder(selectedPlan, selectedVendorId, paymentMethod);
+        const orderId = response.order?._id;
+        setCurrentOrderId(orderId);
+      }
+
+      // Cash payment success
       setShowPaymentModal(false);
-      setShowQRCode(false);
       setShowSuccessModal(true);
-
-      // Show success toast
       setShowSuccessToast(true);
       setTimeout(() => setShowSuccessToast(false), 3000);
-
-      // Refresh the subscription data to show the new upcoming plan
       await fetchSubscriptionData();
+      closeAllModals();
 
-      // Call the callback to update parent state
       if (onSubscriptionActivated) {
         onSubscriptionActivated(response);
       }
-      
-      // Also call the existing onExtendSubscription for backward compatibility
-      // if (onExtendSubscription) {
-      //   onExtendSubscription(selectedPlan, paymentMethod);
-      // }
 
     } catch (error) {
       console.error('Error creating order:', error);
@@ -138,24 +169,50 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
     }
   };
 
-  // Handle QR code payment confirmed
-  const handleQRPaymentConfirm = async () => {
+  // ✅ FIXED: Reset isExtending on cancel
+  const handleCancelQR = () => {
     setShowQRCode(false);
-    // Call order API with UPI payment
-    await createOrder('UPI');
+    setCurrentOrderId(null);
+    setVendorDetails(null);
+    setIsProcessing(false);
+    setIsExtending(false);
   };
 
-  // Close all modals
+  // ✅ FIXED: Show full success modal on paid=true
+  useEffect(() => {
+    if (!showQRCode || !currentOrderId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await checkSubscriptionPaymentStatus(currentOrderId);
+        if (response.paid) {
+          clearInterval(interval);
+          setShowQRCode(false);
+          setCurrentOrderId(null);
+          setVendorDetails(null);
+          setShowSuccessModal(true);
+          await fetchSubscriptionData();
+        } else if (response.timeout) {
+          clearInterval(interval);
+          setShowQRCode(false);
+          alert(response.message || 'Payment not received. Please try again.');
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [showQRCode, currentOrderId]);
+
   const closeAllModals = () => {
     setShowPaymentModal(false);
     setShowQRCode(false);
     setShowSuccessModal(false);
   };
 
-  // Check if confirm button should be disabled
   const isConfirmDisabled = isProcessing || !selectedPlan || !selectedPaymentMethod;
 
-  // Loading state
   if (loading) {
     return (
       <div className="subscription-container">
@@ -198,16 +255,24 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
             <h2 className="status-date" style={{ color: '#6b7280' }}>No Active Plan</h2>
           </div>
         )}
-        
-        {/* Show Extend Subscription button always when user has an active or trial plan */}
+
         {currentSubscription && currentSubscription.status === 'active' && (
-          <button className="btn-primary extend-btn" onClick={() => { setIsExtending(true); setShowPaymentModal(true); }} disabled={isExtending}>
+          <button
+            className={`btn-primary extend-btn ${upcomingPlans.length >= 3 ? 'disabled' : ''}`}
+            onClick={() => { setIsExtending(true); setShowPaymentModal(true); }}
+            disabled={isExtending || upcomingPlans.length >= 3}
+            title={upcomingPlans.length >= 3 ? "You have reached the maximum limit of 3 upcoming plan extensions." : ''}
+          >
             {isExtending ? 'Processing...' : 'Extend Subscription'}
           </button>
         )}
-        {/* Show Subscribe Now button only when user has no active plan */}
+
         {!currentSubscription && (
-          <button className="btn-primary extend-btn" onClick={() => { setIsExtending(true); setShowPaymentModal(true); }} disabled={isExtending}>
+          <button
+            className="btn-primary extend-btn"
+            onClick={() => { setIsExtending(true); setShowPaymentModal(true); }}
+            disabled={isExtending}
+          >
             {isExtending ? 'Processing...' : 'Subscribe Now'}
           </button>
         )}
@@ -264,18 +329,14 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
 
       {/* Subscribe Plan Modal */}
       {showPaymentModal && (
-        <div className="subscribe-modal-overlay" onClick={() => setShowPaymentModal(false)}>
+        <div className="subscribe-modal-overlay" onClick={() => { setShowPaymentModal(false); setIsExtending(false); }}>
           <div className="subscribe-modal-card" onClick={(e) => e.stopPropagation()}>
-            {/* Close Button */}
-            <button className="subscribe-modal-close" onClick={() => setShowPaymentModal(false)}>×</button>
-            
-            {/* Header */}
+            <button className="subscribe-modal-close" onClick={() => { setShowPaymentModal(false); setIsExtending(false); }}>×</button>
             <div className="subscribe-modal-header">
               <h2 className="subscribe-modal-title">Subscribe Now</h2>
               <p className="subscribe-modal-subtitle">Choose a plan that works best for you</p>
             </div>
-            
-            {/* Plan Selection */}
+
             <div className="plan-selection-grid">
               {plans.map((plan) => (
                 <div
@@ -298,7 +359,6 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
               ))}
             </div>
 
-            {/* Payment Method Selection */}
             <div className="payment-method-section">
               <h4 className="payment-method-heading">Payment Method</h4>
               <div className="payment-method-buttons">
@@ -317,7 +377,6 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
               </div>
             </div>
 
-            {/* Order Summary */}
             <div className="order-summary-box">
               {selectedPlan ? (
                 <div className="order-summary-content">
@@ -330,12 +389,11 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
               )}
             </div>
 
-            {/* Button Row */}
             <div className="subscribe-modal-button-row">
               <button className="btn-cancel" onClick={() => { setShowPaymentModal(false); setIsExtending(false); }}>
                 Cancel
               </button>
-              <button 
+              <button
                 className={`btn-confirm-subscribe ${isConfirmDisabled ? 'disabled' : ''}`}
                 onClick={handleConfirmSubscribe}
                 disabled={isConfirmDisabled}
@@ -347,35 +405,43 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
         </div>
       )}
 
-      {/* UPI QR Code Modal */}
+      {/* UPI QR Code Modal — ✅ Only Cancel button, no I've Paid */}
       {showQRCode && (
-        <div className="subscribe-modal-overlay" onClick={() => { setShowQRCode(false); setIsProcessing(false); }}>
+        <div className="subscribe-modal-overlay" onClick={handleCancelQR}>
           <div className="subscribe-modal-card" onClick={(e) => e.stopPropagation()}>
-            <button className="subscribe-modal-close" onClick={() => { setShowQRCode(false); setIsProcessing(false); }}>×</button>
+            <button className="subscribe-modal-close" onClick={handleCancelQR}>×</button>
             <div className="subscribe-modal-header">
               <h2 className="subscribe-modal-title">Scan to Pay</h2>
               <p className="subscribe-modal-subtitle">Amount: ₹{selectedPlanDetails?.price}</p>
             </div>
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <img 
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`upi://pay?pa=mealsetu@okhdfcbank&pn=MealSetu&am=${selectedPlanDetails?.price}&cu=INR&tn=Subscription Payment`)}`}
-                alt="UPI QR Code" 
-                style={{ width: '200px', height: '200px', borderRadius: '8px' }}
-              />
+              {vendorDetails?.upiId ? (
+                <>
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`upi://pay?pa=${vendorDetails.upiId}&pn=${encodeURIComponent(vendorDetails.kitchenName || 'MealSetu')}&am=${selectedPlanDetails?.price}&cu=INR&tn=${encodeURIComponent('MealSetu Subscription')}`)}`}
+                    alt="UPI QR Code"
+                    style={{ width: '200px', height: '200px', borderRadius: '8px' }}
+                  />
+                  <p style={{ marginTop: '12px', color: '#374151', fontWeight: '500' }}>
+                    Paying to: {vendorDetails.kitchenName} ({vendorDetails.upiId})
+                  </p>
+                </>
+              ) : (
+                <div style={{ padding: '40px', textAlign: 'center' }}>
+                  <p style={{ color: '#dc2626' }}>⚠ Payment not available. Please contact support.</p>
+                </div>
+              )}
             </div>
-            <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '20px' }}>
+            <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '8px' }}>
               Scan the QR code using any UPI app to pay ₹{selectedPlanDetails?.price}
             </p>
+            <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginBottom: '20px' }}>
+              ⏳ Waiting for payment confirmation automatically...
+            </p>
+            {/* ✅ Only Cancel button — no I've Paid, no Processing */}
             <div className="subscribe-modal-button-row">
-              <button className="btn-cancel" onClick={() => { setShowQRCode(false); setIsProcessing(false); }}>
+              <button className="btn-cancel" onClick={handleCancelQR}>
                 Cancel
-              </button>
-              <button 
-                className={`btn-confirm-subscribe ${isProcessing ? 'disabled' : ''}`}
-                onClick={handleQRPaymentConfirm}
-                disabled={isProcessing}
-              >
-                {isProcessing ? 'Processing...' : "I've Paid"}
               </button>
             </div>
           </div>
@@ -387,19 +453,19 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
         <div className="subscribe-modal-overlay" onClick={closeAllModals}>
           <div className="subscribe-modal-card" onClick={(e) => e.stopPropagation()}>
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ 
-                width: '80px', 
-                height: '80px', 
-                borderRadius: '50%', 
-                background: '#22c55e', 
-                display: 'flex', 
-                alignItems: 'center', 
+              <div style={{
+                width: '80px',
+                height: '80px',
+                borderRadius: '50%',
+                background: '#22c55e',
+                display: 'flex',
+                alignItems: 'center',
                 justifyContent: 'center',
                 margin: '0 auto 20px'
               }}>
                 <span style={{ fontSize: '40px', color: 'white' }}>✓</span>
               </div>
-              <h2 className="subscribe-modal-title" style={{ marginBottom: '10px' }}>Payment Successful!</h2>
+              <h2 className="subscribe-modal-title" style={{ marginBottom: '10px' }}>Payment Successful! 🎉</h2>
               <p className="subscribe-modal-subtitle" style={{ marginBottom: '20px' }}>
                 Your subscription has been extended successfully.
               </p>
@@ -409,9 +475,13 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
                 <p style={{ margin: '8px 0' }}><strong>Payment Method:</strong> {selectedPaymentMethod}</p>
                 <p style={{ margin: '8px 0' }}><strong>Valid For:</strong> {selectedPlanDetails?.days} days</p>
               </div>
-              <button 
-                className="btn-confirm-subscribe" 
-                onClick={closeAllModals}
+              <button
+                className="btn-confirm-subscribe"
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  setIsExtending(false);
+                  setIsProcessing(false);
+                }}
                 style={{ marginTop: '20px', width: '100%' }}
               >
                 Great!
@@ -425,4 +495,3 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
 };
 
 export default Subscription;
-

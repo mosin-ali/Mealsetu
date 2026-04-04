@@ -29,6 +29,7 @@ import AllReviewsModal from '../components/dashboard/user/AllReviewsModal';
 import PasswordModal from '../components/dashboard/user/PasswordModal';
 
 import { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, applyLeave, getUserSubscription, getActiveSubscriptionStatus, extendSubscription, getVendorWeeklyPlan, checkReviewEligibility, getApprovedVendors, getActiveOffers, redeemOffer, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, getClaimedOffers } from '../utils/api';
+import { OrderProvider } from '../context/OrderContext';
 
 
 
@@ -354,28 +355,30 @@ export default function UserDashboard() {
 
      
 
-      // Fetch subscription data
-
+      // Fetch subscription data - 404 expected if no active sub
       try {
-
         const subData = await getUserSubscription();
-
         setSubscription(subData);
-
       } catch (subErr) {
-
-        console.warn('No active subscription found');
-
+        if (subErr.message?.includes('No active subscription')) {
+          console.log('[UserDashboard] No active subscription found - normal');
+        } else {
+          console.warn('Subscription fetch error:', subErr.message);
+        }
+        setSubscription(null);
       }
-
      
-
-      // Fetch active subscription status (for trial button visibility)
+      // Fetch active subscription status (for trial button visibility) - 404 expected
       try {
         const statusData = await getActiveSubscriptionStatus();
         setHasActivePlan(statusData.hasActivePlan || false);
       } catch (statusErr) {
-        console.warn('Could not fetch subscription status');
+        if (statusErr.message?.includes('No active subscription')) {
+          console.log('[UserDashboard] No active plan found - trial available');
+        } else {
+          console.warn('Subscription status error:', statusErr.message);
+        }
+        setHasActivePlan(false);
       }
 
       // Fetch claimed offers on initial dashboard load so badges appear immediately
@@ -404,6 +407,11 @@ export default function UserDashboard() {
           fssai: m.fssaiNumber || '',
           workingDays: m.workingDays || 'Mon - Sat',
           timings: m.timings || '11:00 AM - 9:00 PM',
+          pricing: m.pricing || [],
+          offersJainMenu: m.offersJainMenu || false,
+          upiId: m.upiId || null,
+          jainWeeklyPlan: m.jainWeeklyPlan || {},
+
           // Menu items from Menu collection
           menuId: m._id,
           mainSabji: m.mainSabji || '',
@@ -417,6 +425,7 @@ export default function UserDashboard() {
           trialFee: m.trialFee || 0,
           reviews: []
         }));
+
         
         // If no menus found, fetch approved vendors as fallback
         if (mapped.length === 0) {
@@ -432,6 +441,10 @@ export default function UserDashboard() {
               fssai: v.fssaiNumber || v.fssai || '',
               workingDays: v.workingDays || 'Mon - Sat',
               timings: v.timings || '11:00 AM - 9:00 PM',
+              pricing: v.pricing || [],
+              offersJainMenu: v.offersJainMenu || false,
+              upiId: v.upiId || null,
+              jainWeeklyPlan: v.jainWeeklyPlan || {},
               weeklyPlan: v.weeklyPlan,
               // Include kitchenPoster from vendor data
               kitchenPoster: v.kitchenPoster || null,
@@ -440,6 +453,7 @@ export default function UserDashboard() {
               trialFee: v.trialFee || 0,
               reviews: []
             }));
+
           } catch (vendorErr) {
             console.warn('Failed to load vendors', vendorErr);
           }
@@ -996,16 +1010,13 @@ Transaction: ${transactionId}`,
       const vendorId = vendor.vendorId || vendor._id || vendor.id;
       if (!vendorId) return alert('Unable to place order: missing vendor id');
 
-      // Calculate amount based on selected plan from orderData
-      const PLAN_PRICES = {
-        'ONEDAY': 80,
-        'WEEKLY': 560,
-        'MONTHLY': 2000
-      };
-      
-      // Use orderData.plan if available, otherwise fall back to vendor price
-      const selectedPlan = orderData?.plan || 'ONEDAY';
-      const amount = PLAN_PRICES[selectedPlan] || parseInt(vendor.price || vendor.menuPrice || 80, 10);
+      // ✅ FIXED: Dynamic pricing from vendor.pricing using orderData.plan
+      const planTypeMap = { 'ONEDAY': 'daily', 'WEEKLY': 'weekly', 'MONTHLY': 'monthly' };
+      const selectedPlanKey = orderData?.plan || 'ONEDAY';
+      const selectedPlanType = planTypeMap[selectedPlanKey] || 'daily';
+      const activePricing = (vendor.pricing || []).filter(p => (p.active || p.is_active) && p.price > 0);
+      const matchedPlan = activePricing.find(p => p.type === selectedPlanType);
+      const amount = matchedPlan ? matchedPlan.price : (orderData?.totalAmount || orderData?.price || parseInt(vendor.price || 80, 10));
 
       if (!amount || amount <= 0) return alert('Unable to place order: invalid amount');
 
@@ -1014,23 +1025,16 @@ Transaction: ${transactionId}`,
       const mealPreference = /jain/i.test(mealPrefRaw) ? 'Jain' : 'Regular';
 
       // Call API with optional order data (plan, startDate, etc.)
-
       await placeOrder(vendorId, [], amount, 'Lunch', mealPreference, orderData);
 
       alert('Order placed successfully');
 
       const userOrders = await getUserOrders();
-
       setOrders(userOrders || []);
-
     } catch (e) {
-
       // If backend returned structured error, show it
-
       alert('Failed to place order: ' + (e.message || JSON.stringify(e)));
-
     }
-
   };
 
 
@@ -1190,14 +1194,16 @@ Transaction: ${transactionId}`,
 
 
         {activeTab === 'services' && (
-          <OrderMeals
-            tiffins={tiffins}
-            user={user}
-            hasActivePlan={hasActivePlan}
-            onOrder={(vendor, orderData) => handleOrder(vendor, orderData)}
-            onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
-            onWriteReview={(vendor) => handleWriteReview(vendor)}
-          />
+          <OrderProvider>
+            <OrderMeals
+              tiffins={tiffins}
+              user={user}
+              hasActivePlan={hasActivePlan}
+              onOrder={(vendor, orderData) => handleOrder(vendor, orderData)}
+              onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
+              onWriteReview={(vendor) => handleWriteReview(vendor)}
+            />
+          </OrderProvider>
         )}
 
 
@@ -1226,7 +1232,7 @@ Transaction: ${transactionId}`,
 
             onExtendSubscription={handleExtendSubscription}
 
-            vendorId={tiffins[0]?.vendorId}
+            vendorId={subscription?.vendorId || tiffins[0]?.vendorId}
 
             onSubscriptionActivated={(response) => {
               // Update hasActivePlan state to hide trial button immediately
