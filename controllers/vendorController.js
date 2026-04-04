@@ -7,7 +7,11 @@ const Complaint = require('../models/Complaint');
 const Subscription = require('../models/Subscription');
 const Payout = require('../models/Payout');
 const Commission = require('../models/Commission');
+const mongoose = require('mongoose');
+
+const VendorPricing = require('../models/VendorPricing');
 const CommissionSetting = require('../models/CommissionSetting');
+const JainMenu = require('../models/JainMenu');
 const { sendEmail } = require('../utils/emailUtils');
 
 // Helper function to transform profilePic path to full URL
@@ -60,7 +64,7 @@ const getVendorProfile = async (req, res) => {
 // @route   PUT /api/vendor/me
 const updateVendorProfile = async (req, res) => {
   try {
-    const { kitchenName, address, pincode, phone } = req.body;
+    const { kitchenName, address, pincode, phone, upiId } = req.body;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
@@ -68,6 +72,31 @@ const updateVendorProfile = async (req, res) => {
     vendor.kitchenName = kitchenName || vendor.kitchenName;
     vendor.address = address || vendor.address;
     vendor.pincode = pincode || vendor.pincode;
+    vendor.upiId = upiId || vendor.upiId;
+    
+    // Auto-geocode address to lat/lng using Nominatim
+    if (address && pincode) {
+      try {
+        const fullAddress = `${address}, ${pincode}, India`;
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
+          {
+            headers: { 
+              'User-Agent': 'MealSetu/1.0'
+            }
+          }
+        );
+        const geoData = await geoRes.json();
+        if (geoData && geoData[0]) {
+          vendor.latitude = parseFloat(geoData[0].lat);
+          vendor.longitude = parseFloat(geoData[0].lon);
+        }
+      } catch (geoError) {
+        console.log('Geocoding failed, continuing without coordinates:', geoError.message);
+        // Silently fail - set null (default)
+      }
+    }
+    
     await vendor.save();
     if (phone) {
       await User.findByIdAndUpdate(req.user._id, { phone });
@@ -449,6 +478,340 @@ const getWeeklyPlan = async (req, res) => {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
+
+// @desc    Get Jain Menu Settings
+// @route   GET /api/vendor/jain-menu
+// const getJainMenu = async (req, res) => {
+//   try {
+//     const vendor = await Vendor.findOne({ ownerId: req.user._id });
+//     if (!vendor) {
+//       return res.status(404).json({ message: 'Vendor profile not found' });
+//     }
+//     res.json({
+//       success: true,
+//       offersJainMenu: vendor.offersJainMenu || false,
+//       jainWeeklyPlan: vendor.jainWeeklyPlan || {}
+//     });
+//   } catch (error) {
+//     res.status(500).json({ message: 'Server Error', error: error.message });
+//   }
+// };
+
+// @desc    Update Jain Menu Settings
+// @route   POST /api/vendor/jain-menu
+const updateJainMenu = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor not found' });
+    }
+
+    const { offers_jain_menu, jain_menu } = req.body;
+
+    // Validate 7 days present
+    const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    if (!jain_menu || !Array.isArray(jain_menu) || jain_menu.length !== 7) {
+      return res.status(400).json({ success: false, message: 'jain_menu must be array of exactly 7 days' });
+    }
+
+    // Validate main_course required when enabled
+    if (offers_jain_menu) {
+      for (let i = 0; i < 7; i++) {
+        if (!jain_menu[i].main_course || jain_menu[i].main_course.trim() === '') {
+          return res.status(400).json({ success: false, message: `Main course required for day ${DAYS[i]}` });
+        }
+      }
+    }
+
+    // Update vendors table
+    vendor.offersJainMenu = offers_jain_menu;
+    await vendor.save();
+
+    // Simple delete + insert (no transaction)
+    await JainMenu.deleteMany({ vendor_id: vendor._id.toString() });
+    if (jain_menu.length > 0) {
+      const jainMenuDocs = jain_menu.map((dayData, index) => ({
+        vendor_id: vendor._id,
+        day: DAYS[index],
+        main_course: dayData.main_course || null,
+        alt_sabji: dayData.alt_sabji || null,
+        alt_sabji2: dayData.alt_sabji2 || null,
+        sides: dayData.sides || null,
+        special_addons: dayData.special_addons || null
+      }));
+      await JainMenu.insertMany(jainMenuDocs);
+    }
+
+    res.json({
+      success: true,
+      message: 'Jain menu updated successfully',
+      offersJainMenu: offers_jain_menu,
+      jainMenu: jain_menu
+    });
+  } catch (error) {
+    console.error('Jain menu update error:', error);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get Vendor Pricing
+// @route   GET /api/vendor/pricing
+const getVendorPricing = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    let pricingData = await VendorPricing.find({ vendor_id: vendor._id });
+    
+    // Fallback to Vendor.pricing if VendorPricing is empty
+    if (pricingData.length === 0 && vendor.pricing && vendor.pricing.length > 0) {
+      pricingData = vendor.pricing.map(p => ({
+        plan_type: p.type,
+        price: p.price,
+        is_active: p.active
+      }));
+    }
+    
+    const pricingMap = {};
+
+    ['daily', 'weekly', 'monthly'].forEach(planType => {
+      const plan = pricingData.find(p => p.plan_type === planType);
+      pricingMap[planType] = plan ? {
+        price: plan.price,
+        is_active: plan.is_active
+      } : { price: null, is_active: false };
+    });
+
+    res.json({
+      success: true,
+      pricing: pricingMap
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Update Vendor Pricing
+// @route   POST /api/vendor/pricing
+const updateVendorPricing = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor not found' });
+    }
+
+    let pricing = req.body.pricing;
+
+    // ✅ FIX: Handle both array format from frontend AND object format
+    let pricingObj = {};
+    if (Array.isArray(pricing)) {
+      // Convert array [{type:'daily', price:80, active:true}] → {daily: {price:80, is_active:true}}
+      pricing.forEach(plan => {
+        if (plan.type && plan.price !== undefined && plan.active !== undefined) {
+          pricingObj[plan.type] = {
+            price: Number(plan.price),
+            is_active: Boolean(plan.active)
+          };
+        }
+      });
+      pricing = pricingObj;
+    } else if (pricing && typeof pricing === 'object' && !Array.isArray(pricing)) {
+      // Already object format, validate keys
+      pricing = pricing;
+    } else {
+      return res.status(400).json({ success: false, message: 'pricing must be array or object' });
+    }
+
+    console.log('updateVendorPricing - converted pricing:', pricing);
+
+    const planTypes = ['daily', 'weekly', 'monthly'];
+    const activePlans = [];
+    const invalidPlans = [];
+
+    planTypes.forEach(planType => {
+      const plan = pricing[planType] || { price: null, is_active: false };
+      if (plan.is_active) {
+        activePlans.push(planType);
+        if (!plan.price || plan.price <= 0 || plan.price > 99999 || !Number.isInteger(plan.price)) {
+          invalidPlans.push(`${planType} price must be integer 1-99999`);
+        }
+      }
+    });
+
+    if (activePlans.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one plan must be active' });
+    }
+
+    if (invalidPlans.length > 0) {
+      return res.status(400).json({ success: false, message: invalidPlans.join('; ') });
+    }
+
+    // Delete existing pricing records
+    await VendorPricing.deleteMany({ vendor_id: vendor._id.toString() });
+    
+    // Create new pricing documents from object format
+    const pricingDocs = [];
+    planTypes.forEach(planType => {
+      const plan = pricing[planType];
+      pricingDocs.push({
+        vendor_id: vendor._id,
+        plan_type: planType,
+        price: plan.price || null,
+        is_active: plan.is_active || false
+      });
+    });
+    
+    await VendorPricing.insertMany(pricingDocs);
+
+    // Sync to Vendor.pricing embedded array (array format)
+    const vendorPricingArray = pricingDocs.map(doc => ({
+      type: doc.plan_type,
+      price: doc.price,
+      active: doc.is_active
+    }));
+    await Vendor.findByIdAndUpdate(vendor._id, { $set: { pricing: vendorPricingArray } });
+
+    res.json({
+      success: true,
+      message: 'Pricing updated successfully',
+      pricing: pricingObj  // Return converted object format for frontend consistency
+    });
+  } catch (error) {
+    console.error('Pricing update error:', error);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get Jain Menu Settings
+// @route   GET /api/vendor/jain-menu
+const getJainMenu = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+    res.json({
+      offersJainMenu: vendor.offersJainMenu,
+      jainWeeklyPlan: vendor.jainWeeklyPlan
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Save Jain Menu Settings (toggle + weekly plan)
+// @route   POST /api/vendor/jain-menu
+const saveJainMenu = async (req, res) => {
+  try {
+    console.log('saveJainMenu req.body:', JSON.stringify(req.body));
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+    const { offersJainMenu, jainWeeklyPlan } = req.body;
+    vendor.offersJainMenu = offersJainMenu !== undefined ? offersJainMenu : vendor.offersJainMenu;
+    if (jainWeeklyPlan) {
+      vendor.jainWeeklyPlan = jainWeeklyPlan;
+      vendor.markModified('jainWeeklyPlan');
+    }
+    await vendor.save();
+
+    const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    try {
+      await JainMenu.deleteMany({ vendor_id: vendor._id });
+      if (offersJainMenu && jainWeeklyPlan) {
+        const jainMenuDocs = DAYS.map(day => ({
+          vendor_id: vendor._id,
+          day: day,
+          main_course: jainWeeklyPlan[day]?.mainCourse || null,
+          alt_sabji: jainWeeklyPlan[day]?.altSabji || null,
+          alt_sabji2: jainWeeklyPlan[day]?.altSabji2 || null,
+          sides: jainWeeklyPlan[day]?.sides || null,
+          special_addons: jainWeeklyPlan[day]?.specialAddOns || null
+        }));
+        await JainMenu.insertMany(jainMenuDocs);
+      }
+    } catch (jainErr) {
+      console.error('Failed to save JainMenu collection:', jainErr.message);
+    }
+
+    console.log('After save offersJainMenu:', vendor.offersJainMenu, 'Monday mainCourse:', vendor.jainWeeklyPlan?.Monday?.mainCourse);
+    res.json({
+      message: 'Jain menu saved successfully',
+      offersJainMenu: vendor.offersJainMenu,
+      jainWeeklyPlan: vendor.jainWeeklyPlan
+    });
+  } catch (error) {
+    console.error('saveJainMenu error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Get Pricing Plans
+// @route   GET /api/vendor/pricing
+const getPricing = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+    res.json({ pricing: vendor.pricing });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc    Save Pricing Plans
+// @route   POST /api/vendor/pricing
+const savePricing = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor profile not found' });
+    }
+    const { pricing } = req.body;
+
+    // Validation 1: Every active plan must have price > 0
+    const invalidPlans = pricing.filter(p => p.active && (!p.price || p.price <= 0));
+    if (invalidPlans.length > 0) {
+      return res.status(400).json({
+        message: 'Active plans must have price > 0',
+        invalidPlans: invalidPlans.map(p => ({ type: p.type, price: p.price }))
+      });
+    }
+
+    // Validation 2: No duplicate plan types
+    const types = pricing.map(p => p.type);
+    const duplicateTypes = types.filter((type, index) => types.indexOf(type) !== index);
+    if (duplicateTypes.length > 0) {
+      return res.status(400).json({
+        message: 'Duplicate plan types detected',
+        duplicates: [...new Set(duplicateTypes)]
+      });
+    }
+
+    // Validation 3: At least one plan active
+    const activePlans = pricing.filter(p => p.active);
+    if (activePlans.length === 0) {
+      return res.status(400).json({
+        message: 'At least one plan must be active'
+      });
+    }
+
+    vendor.pricing = pricing;
+    await vendor.save();
+
+    res.json({
+      message: 'Pricing updated successfully',
+      pricing: vendor.pricing
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 
 // @desc    Get Vendor Weekly Plan (Public)
 const getVendorWeeklyPlan = async (req, res) => {
@@ -1014,6 +1377,39 @@ const payCommission = async (req, res) => {
 
 // ===== END COMMISSION FUNCTIONS =====
 
+// module.exports = {
+//   getVendorProfile,
+//   updateVendorProfile,
+//   updateVendorProfilePic,
+//   updateKitchenPoster,
+//   getVendorMenus,
+//   addMenu,
+//   getVendorOrders,
+//   getFilteredOrders,
+//   updateOrderStatus,
+//   getVendorReviews,
+//   getVendorCustomers,
+//   getVendorComplaints,
+//   resolveComplaint,
+//   getVendorReports,
+//   getDashboardStats,
+//   saveWeeklyPlan,
+//   getWeeklyPlan,
+//   getJainMenu,
+//   saveJainMenu,
+//   getPricing,
+//   savePricing,
+//   getVendorWeeklyPlan,
+//   toggleShopStatus,
+//   getShopStatus,
+//   updateTrialSettings,
+//   submitVendorCompliance,
+//   getCommissionSummary,
+//   getPendingPayout,
+//   getMyCommissions,
+//   payCommission,
+// };
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -1032,6 +1428,16 @@ module.exports = {
   getDashboardStats,
   saveWeeklyPlan,
   getWeeklyPlan,
+
+  // ✅ Jain
+  getJainMenu,
+  saveJainMenu,
+  updateJainMenu, // 🔥 ADD THIS
+
+  // ✅ Pricing
+  getVendorPricing, // 🔥 ADD THIS (you already created it above)
+  updateVendorPricing, // 🔥 ADD THIS
+
   getVendorWeeklyPlan,
   toggleShopStatus,
   getShopStatus,
@@ -1042,3 +1448,4 @@ module.exports = {
   getMyCommissions,
   payCommission,
 };
+

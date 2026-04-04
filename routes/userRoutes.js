@@ -1,6 +1,8 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getCurrentUser, getActiveSubscriptionStatus, updateUserProfile, updateUserProfilePic, changePassword, getMenus, getUserOrders, placeOrder, addReview, applyLeave, getUserSubscription, extendSubscription, getVendorStatus, getVendorReviews, getVendorRating, checkReviewEligibility, getApprovedVendors, createTrialOrder, getTrialEligibility, getMySubscription, getUpcomingOrders, extendSubscriptionOrder } = require('../controllers/userController');
+const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus } = require('../controllers/userController');
+
+
 const { getActiveOffers, redeemOffer, getClaimedOffers } = require('../controllers/offerController');
 const upload = require('../middleware/uploadMiddleware');
 
@@ -11,6 +13,10 @@ router.get('/menus', getMenus);
 
 // Public route to get all approved vendors (for user side)
 router.get('/vendors', getApprovedVendors);
+// Pincode routes (Public)
+    router.get('/vendors-by-pincode', getVendorsByPincode);
+
+
 
 // Public route to get vendor status (open/close)
 router.get('/vendor-status/:vendorId', getVendorStatus);
@@ -24,7 +30,6 @@ router.get('/vendor-rating/:vendorId', getVendorRating);
 // Protected routes (User only)
 router.get('/me', protect, getCurrentUser);
 router.get('/subscription', protect, authorize('user'), getUserSubscription);
-router.get('/subscription-status', protect, authorize('user'), getActiveSubscriptionStatus);
 router.put('/:id', protect, updateUserProfile);
 router.put('/:id/profile-pic', protect, upload.single('profilePic'), updateUserProfilePic);
 router.post('/:id/change-password', protect, changePassword);
@@ -40,6 +45,14 @@ router.get('/active-offers', protect, authorize('user'), getActiveOffers);
 router.get('/claimed-offers', protect, authorize('user'), getClaimedOffers);
 router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
 
+// Pincode routes (Public - no auth required as per user instructions)
+// TODO: implement these functions in userController.js
+// router.get('/check-pincode', checkPincodeAvailability);
+// router.get('/vendors-by-pincode', getVendorsByPincode);
+
+    
+
+
 // Trial routes
 router.post('/trial', protect, authorize('user'), createTrialOrder);
 router.get('/trial-eligibility/:vendorId', protect, authorize('user'), getTrialEligibility);
@@ -49,5 +62,6 @@ router.get('/subscription-status', protect, authorize('user'), getActiveSubscrip
 router.get('/orders/my-subscription', protect, authorize('user'), getMySubscription);
 router.get('/orders/upcoming', protect, authorize('user'), getUpcomingOrders);
 router.post('/orders/extend', protect, authorize('user'), extendSubscriptionOrder);
-
 module.exports = router;
+
+

@@ -6,7 +6,9 @@ const vendorSchema = new mongoose.Schema({
   // --- Profile Info ---
   kitchenName: { type: String, required: true },
   address: { type: String, required: true },
-  pincode: { type: String },
+pincode: { type: String },
+  latitude: { type: Number, default: null },
+  longitude: { type: Number, default: null },
   profileImage: { type: String },
   kitchenPoster: { type: String }, // Kitchen Banner/Poster Image
   isOpen: { type: Boolean, default: true },
@@ -46,6 +48,7 @@ rejectionReason: { type: String, default: null },
   
   // Optional display fields
   menuPrice: { type: Number, default: 80 },
+  upiId: { type: String, default: null },
   rating: { type: Number, default: 4.5 },
   workingDays: { type: String, default: 'Mon - Sat' },
   timings: { type: String, default: '11:00 AM - 09:00 PM' },
@@ -53,6 +56,26 @@ rejectionReason: { type: String, default: null },
   // --- Trial Settings ---
   trialEnabled: { type: Boolean, default: false }, // Vendor must explicitly enable trials
   trialFee: { type: Number, default: 0 }, // 0 = completely free, >0 = small charge for trial
+
+  // --- Jain Menu & Pricing ---
+  offersJainMenu: { type: Boolean, default: false },
+  jainWeeklyPlan: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {
+      Monday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Tuesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Wednesday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Thursday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Friday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Saturday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' },
+      Sunday: { mainCourse: '', altSabji: '', altSabji2: '', sides: '', specialAddOns: '' }
+    }
+  },
+  pricing: [{
+    type: { type: String, enum: ['daily', 'weekly', 'monthly'], required: true },
+    price: { type: Number, required: true, min: 1, max: 99999 },
+    active: { type: Boolean, default: false }
+  }],
 
   // --- OTP Verification Fields (for registration verification) ---
   resetOTP: { type: String },

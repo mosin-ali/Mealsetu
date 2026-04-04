@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, getVendorWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, updateJainMenu, getVendorPricing, updateVendorPricing, getVendorWeeklyPlan } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 
 const router = express.Router();
@@ -31,6 +31,14 @@ router.get('/dashboard-stats', getDashboardStats);
 // Weekly plan endpoints (Batch Save) - require vendor authentication
 router.get('/weekly-plan', getWeeklyPlan);
 router.put('/weekly-plan', saveWeeklyPlan);
+
+// Jain menu endpoints
+router.get('/jain-menu', getJainMenu);
+router.post('/jain-menu', saveJainMenu);
+
+// Pricing endpoints
+router.get('/pricing', getVendorPricing);
+router.post('/pricing', updateVendorPricing);
 
 // Shop status endpoints (Open/Close shop)
 router.get('/shop-status', getShopStatus);

@@ -48,6 +48,9 @@ const registerUser = async (req, res) => {
       kitchenName, kitchenAddress,    // Vendor specific
       adminKey                        // Admin specific
     } = req.body;
+    
+    // Fix3,5: Ensure pincode is saved for vendors too
+
 
     // Check for blocked temporary email domains (two-layer check)
     const emailLower = email.toLowerCase();
@@ -111,16 +114,41 @@ const registerUser = async (req, res) => {
         const fssaiPath = req.files['fssaiDoc'] ? normalizePath(req.files['fssaiDoc'][0].path) : null;
         const gstPath = req.files['gstDoc'] ? normalizePath(req.files['gstDoc'][0].path) : null;
 
-        await Vendor.create({
+        const newVendor = await Vendor.create({
             ownerId: user._id,
             kitchenName,
             address: kitchenAddress,
-            pincode,
+            pincode,  // Fix3: Save pincode
             fssaiLicense: fssaiPath,
             gstDocument: gstPath,
             profileImage: profilePicPath,
             kitchenPoster: kitchenPosterPath
         });
+        
+        // Fix5: Auto-geocode new vendor location (same as updateVendorProfile)
+        if (kitchenAddress && pincode) {
+          try {
+            const fullAddress = `${kitchenAddress}, ${pincode}, India`;
+            const geoRes = await fetch(
+              `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
+              {
+                headers: { 
+                  'User-Agent': 'MealSetu/1.0'
+                }
+              }
+            );
+            const geoData = await geoRes.json();
+            if (geoData && geoData[0]) {
+              newVendor.latitude = parseFloat(geoData[0].lat);
+              newVendor.longitude = parseFloat(geoData[0].lon);
+              await newVendor.save();
+            }
+          } catch (geoError) {
+            console.log('Geocoding failed during vendor registration:', geoError.message);
+            // Registration succeeds without coords
+          }
+        }
+
     }
 
     // 6. If Role is Admin, verify key

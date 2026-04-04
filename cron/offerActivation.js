@@ -356,19 +356,112 @@ const sendExpiryReminders = async () => {
   }
 };
 
+// New function for Bug 2: Process expired active subscriptions and activate next pending
+const processExpiredSubscriptions = async () => {
+  console.log('🔄 Running cron job: Processing expired subscriptions...');
+  try {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    const expiredSubs = await Subscription.find({
+      status: 'active',
+      expiryDate: { $lte: now }
+    }).populate('userId');
+
+    console.log(`📋 Found ${expiredSubs.length} expired subscriptions to process`);
+
+    for (const sub of expiredSubs) {
+      const userId = sub.userId._id;
+      try {
+        // Mark all expired active subs for this user
+        const result = await Subscription.updateMany(
+          { userId, status: 'active', expiryDate: { $lte: now } },
+          { status: 'expired' }
+        );
+        if (result.modifiedCount > 0) {
+          console.log(`⏰ Marked ${result.modifiedCount} expired subs for user ${sub.userId.name}`);
+        }
+
+        // Find next pending sub (earliest startDate)
+        const nextPending = await Subscription.findOne(
+          { userId, status: 'pending' }
+        ).sort({ startDate: 1 }).populate('vendorId');
+
+        if (nextPending) {
+          // Activate it
+          const startDate = new Date(now);
+          let durationDays = 7; // default
+          if (nextPending.planType === 'Weekly') durationDays = 7;
+          else if (nextPending.planType === 'Monthly') durationDays = 30;
+          else if (nextPending.planType === 'Trial') durationDays = 2;
+
+          const expiryDate = new Date(startDate);
+          expiryDate.setDate(expiryDate.getDate() + durationDays);
+
+          nextPending.status = 'active';
+          nextPending.startDate = startDate;
+          nextPending.expiryDate = expiryDate;
+          await nextPending.save();
+
+          // Update user expiry
+          await User.findByIdAndUpdate(userId, { expiryDate });
+
+          // Send notification email
+          const emailSubject = '🎉 Your New Subscription Plan is Now Active! - MealSetu';
+          const emailHtml = `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">🎉 New Plan Activated!</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+    <p>Dear <strong>${sub.userId.name}</strong>,</p>
+    <p>Your previous plan has expired and your next queued plan from <strong>${nextPending.vendorId?.kitchenName || 'MealSetu'}</strong> is now <strong>active</strong>!</p>
+    <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #16a34a;">
+      <h3 style="color: #16a34a;">📋 Active Plan Details</h3>
+      <p><strong>🏪 Kitchen:</strong> ${nextPending.vendorId?.kitchenName || 'MealSetu'}</p>
+      <p><strong>📦 Plan:</strong> ${nextPending.planType}</p>
+      <p><strong>📅 Start:</strong> ${startDate.toLocaleDateString('en-IN')}</p>
+      <p><strong>📅 End:</strong> ${expiryDate.toLocaleDateString('en-IN')}</p>
+    </div>
+    <p>Enjoy your meals! Your remaining plans stay queued.</p>
+  </div>
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p>MealSetu - Quality Food, Delivered with Care</p>
+  </div>
+</div>`;
+          await sendEmail(sub.userId.email, emailSubject, emailHtml);
+
+          console.log(`✅ Activated next pending sub ${nextPending._id} for user ${sub.userId.name}`);
+        } else {
+          console.log(`ℹ️ No pending subscription found for user ${sub.userId.name}`);
+        }
+      } catch (userError) {
+        console.error(`❌ Error processing user ${userId}:`, userError);
+      }
+    }
+    console.log('✅ Cron job completed: Processed expired subscriptions');
+  } catch (error) {
+    console.error('❌ Cron error in processExpiredSubscriptions:', error);
+  }
+};
+
+
+
 // Combined function to run all subscription-related cron tasks
 const processAllSubscriptions = async () => {
   console.log('=== Starting combined subscription cron job ===');
+  await processExpiredSubscriptions();
   await processPendingOfferOrders();
   await processPendingSubscriptionOrders();
   await sendExpiryReminders();
   console.log('=== Completed combined subscription cron job ===');
 };
 
+
 // Schedule cron job to run every day at midnight
 // The cron expression: '0 0 * * *' means at 00:00 (midnight) every day
 const startOfferActivationCron = () => {
-  console.log('📅 Subscription activation cron job scheduled to run daily at midnight');
+console.log('📅 Subscription cron job (incl. auto-activation on expiry) scheduled daily at midnight');
   
   // Run immediately on startup (for testing)
   // processAllSubscriptions();
@@ -381,9 +474,11 @@ const startOfferActivationCron = () => {
 
 module.exports = {
   startOfferActivationCron,
+  processExpiredSubscriptions,
   processPendingOfferOrders,
   processPendingSubscriptionOrders,
   sendExpiryReminders,
   processAllSubscriptions
 };
+
 
