@@ -159,6 +159,35 @@ const getVendorCustomers = async (req, res) => {
       };
     });
 
+    // Add manual customers
+    const manualOrders = await Order.find({
+      vendorId: vendor._id,
+      isManualOrder: true
+    });
+
+    // Add manual customers not already in list - improved duplicate check with normalized phone
+    manualOrders.forEach(order => {
+      const normalizedPhone = (order.manualCustomerPhone || '').replace(/[^0-9]/g, '');
+      const alreadyExists = customers.some(
+        c => {
+          const cPhone = (c.phone || '').replace(/[^0-9]/g, '');
+          return cPhone === normalizedPhone && cPhone.length >= 10;
+        }
+      );
+      if (!alreadyExists && normalizedPhone.length >= 10) {
+        customers.push({
+          _id: order._id,
+          name: order.manualCustomerName || 'Offline Customer',
+          email: '—',                          // ✅ Show dash instead of null
+          phone: order.manualCustomerPhone,
+          totalOrders: manualOrders.filter(
+            o => o.manualCustomerPhone === order.manualCustomerPhone
+          ).length,
+          isManual: true
+        });
+      }
+    });
+
     res.json(customers);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -271,6 +300,7 @@ const addMenu = async (req, res) => {
     const newMenu = await Menu.create({ vendorId: vendor._id, ...req.body });
     res.status(201).json(newMenu);
   } catch (error) {
+    console.error('Pricing save error:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
@@ -281,8 +311,25 @@ const getVendorOrders = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     const orders = await Order.find({ vendorId: vendor._id })
-      .populate('userId', 'name phone');
-    res.json(orders);
+      .populate('userId', 'name phone email');
+    
+    const formattedOrders = orders.map(order => ({
+      _id: order._id,
+      customerName: order.isManualOrder 
+        ? (order.manualCustomerName || 'Offline Customer')
+        : (order.userId?.name || 'Customer'),
+      phone: order.isManualOrder
+        ? (order.manualCustomerPhone || 'N/A')
+        : (order.userId?.phone || 'N/A'),
+      mealPreference: order.mealPreference,
+      orderDate: order.orderDate,
+      planType: order.planType,
+      amount: order.amount,
+      paymentMethod: order.paymentMethod,
+      isManualOrder: order.isManualOrder || false
+    }));
+    
+    res.json(formattedOrders);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
@@ -479,208 +526,156 @@ const getWeeklyPlan = async (req, res) => {
   }
 };
 
-// @desc    Get Jain Menu Settings
-// @route   GET /api/vendor/jain-menu
-// const getJainMenu = async (req, res) => {
-//   try {
-//     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-//     if (!vendor) {
-//       return res.status(404).json({ message: 'Vendor profile not found' });
-//     }
-//     res.json({
-//       success: true,
-//       offersJainMenu: vendor.offersJainMenu || false,
-//       jainWeeklyPlan: vendor.jainWeeklyPlan || {}
-//     });
-//   } catch (error) {
-//     res.status(500).json({ message: 'Server Error', error: error.message });
-//   }
-// };
-
-// @desc    Update Jain Menu Settings
-// @route   POST /api/vendor/jain-menu
-const updateJainMenu = async (req, res) => {
-  try {
-    const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    if (!vendor) {
-      return res.status(404).json({ success: false, message: 'Vendor not found' });
-    }
-
-    const { offers_jain_menu, jain_menu } = req.body;
-
-    // Validate 7 days present
-    const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    if (!jain_menu || !Array.isArray(jain_menu) || jain_menu.length !== 7) {
-      return res.status(400).json({ success: false, message: 'jain_menu must be array of exactly 7 days' });
-    }
-
-    // Validate main_course required when enabled
-    if (offers_jain_menu) {
-      for (let i = 0; i < 7; i++) {
-        if (!jain_menu[i].main_course || jain_menu[i].main_course.trim() === '') {
-          return res.status(400).json({ success: false, message: `Main course required for day ${DAYS[i]}` });
-        }
-      }
-    }
-
-    // Update vendors table
-    vendor.offersJainMenu = offers_jain_menu;
-    await vendor.save();
-
-    // Simple delete + insert (no transaction)
-    await JainMenu.deleteMany({ vendor_id: vendor._id.toString() });
-    if (jain_menu.length > 0) {
-      const jainMenuDocs = jain_menu.map((dayData, index) => ({
-        vendor_id: vendor._id,
-        day: DAYS[index],
-        main_course: dayData.main_course || null,
-        alt_sabji: dayData.alt_sabji || null,
-        alt_sabji2: dayData.alt_sabji2 || null,
-        sides: dayData.sides || null,
-        special_addons: dayData.special_addons || null
-      }));
-      await JainMenu.insertMany(jainMenuDocs);
-    }
-
-    res.json({
-      success: true,
-      message: 'Jain menu updated successfully',
-      offersJainMenu: offers_jain_menu,
-      jainMenu: jain_menu
-    });
-  } catch (error) {
-    console.error('Jain menu update error:', error);
-    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
-  }
-};
-
-// @desc    Get Vendor Pricing
-// @route   GET /api/vendor/pricing
-const getVendorPricing = async (req, res) => {
+// NEW MANUAL CUSTOMER FUNCTIONS - ADDED
+// @desc    Add Manual Customer
+// @route   POST /api/vendor/manual-customer
+const addManualCustomer = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    let pricingData = await VendorPricing.find({ vendor_id: vendor._id });
-    
-    // Fallback to Vendor.pricing if VendorPricing is empty
-    if (pricingData.length === 0 && vendor.pricing && vendor.pricing.length > 0) {
-      pricingData = vendor.pricing.map(p => ({
-        plan_type: p.type,
-        price: p.price,
-        is_active: p.active
-      }));
-    }
-    
-    const pricingMap = {};
+    const { name, phone, planType, startDate, paymentMethod, amount, deliveryPincode, mealPreference } = req.body;
 
-    ['daily', 'weekly', 'monthly'].forEach(planType => {
-      const plan = pricingData.find(p => p.plan_type === planType);
-      pricingMap[planType] = plan ? {
-        price: plan.price,
-        is_active: plan.is_active
-      } : { price: null, is_active: false };
+    const planTypeMapped = planType === 'trial' ? 'Trial' : planType === 'weekly' ? 'Weekly' : planType === 'monthly' ? 'Monthly' : 'Tiffin';
+
+    const newOrder = new Order({
+      userId: new mongoose.Types.ObjectId(),
+      vendorId: vendor._id,
+      customerName: name,
+      manualCustomerName: name,
+      manualCustomerPhone: phone,
+      manualCustomerPincode: deliveryPincode,
+      planType: planTypeMapped,
+      startDate: new Date(startDate),
+      amount: parseFloat(amount),
+      paymentStatus: 'Paid',
+      paymentMethod: paymentMethod || 'Cash',
+      orderStatus: 'Delivered',
+      mealPreference: mealPreference || 'Regular',
+      source: 'manual',
+      isManualOrder: true
     });
 
-    res.json({
-      success: true,
-      pricing: pricingMap
+    await newOrder.save();
+
+    res.status(201).json({
+      message: 'Manual customer added successfully',
+      order: newOrder
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+    console.error('Add manual customer error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// @desc    Update Vendor Pricing
-// @route   POST /api/vendor/pricing
-const updateVendorPricing = async (req, res) => {
+// @desc    Get Manual Customers
+// @route   GET /api/vendor/manual-customers
+const getManualCustomers = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
-      return res.status(404).json({ success: false, message: 'Vendor not found' });
+      return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    let pricing = req.body.pricing;
+    const manualOrders = await Order.find({
+      vendorId: vendor._id,
+      isManualOrder: true
+    }).sort({ createdAt: -1 }).select('-__v');
 
-    // ✅ FIX: Handle both array format from frontend AND object format
-    let pricingObj = {};
-    if (Array.isArray(pricing)) {
-      // Convert array [{type:'daily', price:80, active:true}] → {daily: {price:80, is_active:true}}
-      pricing.forEach(plan => {
-        if (plan.type && plan.price !== undefined && plan.active !== undefined) {
-          pricingObj[plan.type] = {
-            price: Number(plan.price),
-            is_active: Boolean(plan.active)
-          };
-        }
-      });
-      pricing = pricingObj;
-    } else if (pricing && typeof pricing === 'object' && !Array.isArray(pricing)) {
-      // Already object format, validate keys
-      pricing = pricing;
-    } else {
-      return res.status(400).json({ success: false, message: 'pricing must be array or object' });
-    }
+    res.json(manualOrders);
+  } catch (error) {
+    console.error('Get manual customers error:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
 
-    console.log('updateVendorPricing - converted pricing:', pricing);
+// @desc    Calculate Manual Order Amount
+// @route   GET /api/vendor/manual-customer/calculate
+const calculateManualOrderAmount = async (req, res) => {
+  try {
+    const { planType, startDate } = req.query;
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
-    const planTypes = ['daily', 'weekly', 'monthly'];
-    const activePlans = [];
-    const invalidPlans = [];
-
-    planTypes.forEach(planType => {
-      const plan = pricing[planType] || { price: null, is_active: false };
-      if (plan.is_active) {
-        activePlans.push(planType);
-        if (!plan.price || plan.price <= 0 || plan.price > 99999 || !Number.isInteger(plan.price)) {
-          invalidPlans.push(`${planType} price must be integer 1-99999`);
-        }
-      }
-    });
-
-    if (activePlans.length === 0) {
-      return res.status(400).json({ success: false, message: 'At least one plan must be active' });
-    }
-
-    if (invalidPlans.length > 0) {
-      return res.status(400).json({ success: false, message: invalidPlans.join('; ') });
-    }
-
-    // Delete existing pricing records
-    await VendorPricing.deleteMany({ vendor_id: vendor._id.toString() });
-    
-    // Create new pricing documents from object format
-    const pricingDocs = [];
-    planTypes.forEach(planType => {
-      const plan = pricing[planType];
-      pricingDocs.push({
+    let days = 0;
+    if (planType === 'trial') {
+      // 🔥 BUG FIX: Trial uses trialFee OR daily plan price OR 80
+      const dailyPricing = await VendorPricing.findOne({
         vendor_id: vendor._id,
-        plan_type: planType,
-        price: plan.price || null,
-        is_active: plan.is_active || false
+        plan_type: 'daily',
+        is_active: true
       });
+      
+      const trialPrice = vendor.trialFee || (dailyPricing?.price || 80);
+      const source = vendor.trialFee ? 'trial_fee' : dailyPricing ? 'daily_plan' : 'default';
+      
+      console.log(`📊 Trial pricing for ${vendor.kitchenName}: trialFee=${vendor.trialFee}, daily=${dailyPricing?.price}, final=${trialPrice}, source=${source}`);
+      
+      res.json({ 
+        amount: trialPrice,
+        days: 2, // Standard 2-day trial
+        dailyPrice: trialPrice,
+        planType,
+        vendorPrice: trialPrice,
+        startDate,
+        source,
+        usesDailyPlan: !!dailyPricing
+      });
+      return;
+    }
+    else if (planType === 'monthly') days = 30;
+
+    // ✅ PRIORITIZE VendorPricing collection (user-visible)
+    const vendorPricingDoc = await VendorPricing.findOne({ 
+      vendor_id: vendor._id, 
+      plan_type: planType,
+      is_active: true 
     });
     
-    await VendorPricing.insertMany(pricingDocs);
+    let planPricing = vendorPricingDoc ? {
+      planType: vendorPricingDoc.plan_type,
+      price: vendorPricingDoc.price,
+      active: true
+    } : null;
+    
+    // Fallback to Vendor.pricing array
+    if (!planPricing) {
+      const vendorPricingArray = Array.isArray(vendor.pricing) ? vendor.pricing : [];
+      planPricing = vendorPricingArray.find(
+        p => (p.planType === planType || p.type === planType) && p.active === true
+      );
+    }
+    
+  let price = planPricing?.price;
 
-    // Sync to Vendor.pricing embedded array (array format)
-    const vendorPricingArray = pricingDocs.map(doc => ({
-      type: doc.plan_type,
-      price: doc.price,
-      active: doc.is_active
-    }));
-    await Vendor.findByIdAndUpdate(vendor._id, { $set: { pricing: vendorPricingArray } });
+// ✅ If trial → use daily price
+if (!price && planType === 'trial') {
+  const dailyPlan = await VendorPricing.findOne({
+    vendor_id: vendor._id,
+    plan_type: { $regex: '^daily$', $options: 'i' },
+    is_active: true
+  });
 
-    res.json({
-      success: true,
-      message: 'Pricing updated successfully',
-      pricing: pricingObj  // Return converted object format for frontend consistency
+  price = dailyPlan?.price;
+}
+
+// ✅ final fallback
+if (!price) price = 80;
+    const amount = price;
+
+    res.json({ 
+      amount,
+      days,
+      dailyPrice: Math.round(price / days),
+      planType,
+      vendorPrice: price,
+      startDate,
+      source: planPricing ? 'vendor_pricing' : 'default'
     });
   } catch (error) {
-    console.error('Pricing update error:', error);
-    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+    res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
@@ -754,10 +749,14 @@ const saveJainMenu = async (req, res) => {
 const getPricing = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    if (!vendor) {
-      return res.status(404).json({ message: 'Vendor profile not found' });
-    }
-    res.json({ pricing: vendor.pricing });
+    if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
+    // Always return as array with planType field
+    const pricing = (vendor.pricing || []).map(p => ({
+      planType: p.planType,
+      price: p.price,
+      active: p.active
+    }));
+    res.json({ pricing });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
@@ -778,12 +777,12 @@ const savePricing = async (req, res) => {
     if (invalidPlans.length > 0) {
       return res.status(400).json({
         message: 'Active plans must have price > 0',
-        invalidPlans: invalidPlans.map(p => ({ type: p.type, price: p.price }))
+        invalidPlans: invalidPlans.map(p => ({ planType: p.planType, price: p.price }))
       });
     }
 
     // Validation 2: No duplicate plan types
-    const types = pricing.map(p => p.type);
+    const types = pricing.map(p => p.planType);
     const duplicateTypes = types.filter((type, index) => types.indexOf(type) !== index);
     if (duplicateTypes.length > 0) {
       return res.status(400).json({
@@ -800,8 +799,20 @@ const savePricing = async (req, res) => {
       });
     }
 
+    // Save to both Vendor.pricing AND VendorPricing collection (for user endpoints)
     vendor.pricing = pricing;
+    vendor.markModified('pricing');
     await vendor.save();
+
+    // Sync to VendorPricing collection for user frontend visibility
+    await VendorPricing.deleteMany({ vendor_id: vendor._id });
+    const pricingDocs = pricing.map(p => ({
+      vendor_id: vendor._id,
+      plan_type: p.planType,
+      price: p.price,
+      is_active: p.active
+    }));
+    await VendorPricing.insertMany(pricingDocs);
 
     res.json({
       message: 'Pricing updated successfully',
@@ -811,7 +822,6 @@ const savePricing = async (req, res) => {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
-
 
 // @desc    Get Vendor Weekly Plan (Public)
 const getVendorWeeklyPlan = async (req, res) => {
@@ -1375,41 +1385,6 @@ const payCommission = async (req, res) => {
   }
 };
 
-// ===== END COMMISSION FUNCTIONS =====
-
-// module.exports = {
-//   getVendorProfile,
-//   updateVendorProfile,
-//   updateVendorProfilePic,
-//   updateKitchenPoster,
-//   getVendorMenus,
-//   addMenu,
-//   getVendorOrders,
-//   getFilteredOrders,
-//   updateOrderStatus,
-//   getVendorReviews,
-//   getVendorCustomers,
-//   getVendorComplaints,
-//   resolveComplaint,
-//   getVendorReports,
-//   getDashboardStats,
-//   saveWeeklyPlan,
-//   getWeeklyPlan,
-//   getJainMenu,
-//   saveJainMenu,
-//   getPricing,
-//   savePricing,
-//   getVendorWeeklyPlan,
-//   toggleShopStatus,
-//   getShopStatus,
-//   updateTrialSettings,
-//   submitVendorCompliance,
-//   getCommissionSummary,
-//   getPendingPayout,
-//   getMyCommissions,
-//   payCommission,
-// };
-
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -1428,16 +1403,13 @@ module.exports = {
   getDashboardStats,
   saveWeeklyPlan,
   getWeeklyPlan,
-
-  // ✅ Jain
+  addManualCustomer,
+  getManualCustomers,
+  calculateManualOrderAmount,
   getJainMenu,
   saveJainMenu,
-  updateJainMenu, // 🔥 ADD THIS
-
-  // ✅ Pricing
-  getVendorPricing, // 🔥 ADD THIS (you already created it above)
-  updateVendorPricing, // 🔥 ADD THIS
-
+  getPricing,       // ✅ FIXED
+  savePricing,
   getVendorWeeklyPlan,
   toggleShopStatus,
   getShopStatus,

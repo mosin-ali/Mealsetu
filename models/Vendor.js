@@ -72,7 +72,7 @@ rejectionReason: { type: String, default: null },
     }
   },
   pricing: [{
-    type: { type: String, enum: ['daily', 'weekly', 'monthly'], required: true },
+    planType: { type: String, enum: ['daily', 'weekly', 'monthly'], required: true },
     price: { type: Number, required: true, min: 1, max: 99999 },
     active: { type: Boolean, default: false }
   }],

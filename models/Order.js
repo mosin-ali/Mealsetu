@@ -2,7 +2,11 @@
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+userId: { 
+  type: mongoose.Schema.Types.ObjectId, 
+  ref: 'User', 
+  required: [function() { return this.source !== 'manual'; }, 'userId is required for app orders']
+},
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor', required: true },
   
   // Order Details 
@@ -51,7 +55,15 @@ const orderSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'active', 'on-hold', 'expired', 'cancelled', 'completed', 'trial'],
     default: 'active'
-  }
+  },
+
+  // Manual/Offline Customer fields
+  source: { type: String, enum: ['app', 'manual'], default: 'app' },
+  manualCustomerName: { type: String, default: null },
+  manualCustomerPhone: { type: String, default: null },
+  manualCustomerAddress: { type: String, default: null },
+  manualCustomerPincode: { type: String, default: null },
+  isManualOrder: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('Order', orderSchema);

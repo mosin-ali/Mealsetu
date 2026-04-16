@@ -265,47 +265,29 @@ const getVendorSubscribers = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    // Get unique userIds who ordered from this vendor
-    const userIds = await Order.distinct('userId', { vendorId: new mongoose.Types.ObjectId(vendorId) });
+    // ✅ FIXED BUG 5: Get BOTH app users AND manual customers
+    // 1. Real app users via Order.userId
+    const userIds = await Order.distinct('userId', { 
+      vendorId: new mongoose.Types.ObjectId(vendorId), 
+      userId: { $ne: null } // Only real users (not manual orders)
+    });
     
-    console.log(`Found ${userIds.length} unique userIds for vendor ${vendorId}`);
+    // 2. Manual customers via normalized phone
+    const manualCustomers = await Order.distinct('manualCustomerPhone', { 
+      vendorId: new mongoose.Types.ObjectId(vendorId), 
+      isManualOrder: true,
+      manualCustomerPhone: { $exists: true, $ne: null, $regex: '^[0-9]{10,}$' }
+    });
     
-    if (userIds.length === 0) {
-      return res.status(200).json({ 
-        users: [],
-        vendorName: vendor.kitchenName,
-        message: 'No subscribers found for this vendor'
-      });
-    }
+    console.log(`Found ${userIds.length} app users + ${manualCustomers.length} manual customers`);
     
-    // Fetch users
-    const users = await User.find({ _id: { $in: userIds } })
-      .select('-password')
-      .lean();
-
-    const now = new Date();
-    const dayMs = 24 * 60 * 60 * 1000;
-
-    const usersWithActivity = await Promise.all(
-      users.map(async (user) => {
-        // Find most recent order for this user (any vendor)
-        const latestOrder = await Order.findOne({ userId: user._id })
-          .sort({ createdAt: -1 })
-          .select('createdAt')
-          .lean();
-        
-        const lastActive = latestOrder?.createdAt || user.joinDate || now;
-        const daysSinceActive = Math.floor((now - lastActive) / dayMs);
-
-        // Auto-update inactive if >50 days
-        if (daysSinceActive > 50) {
-          await User.findByIdAndUpdate(user._id, {
-            isActive: false,
-            lastActiveDate: lastActive
-          });
-        }
-
-        return {
+    const allUsers = [];
+    
+    // Process real app users
+    if (userIds.length > 0) {
+      const appUsers = await User.find({ _id: { $in: userIds } }).select('-password').lean();
+      appUsers.forEach(user => {
+        allUsers.push({
           _id: user._id,
           name: user.name,
           email: user.email,
@@ -313,24 +295,50 @@ const getVendorSubscribers = async (req, res) => {
           address: user.address,
           pincode: user.pincode,
           joinDate: user.joinDate,
-          isActive: daysSinceActive <= 50, // Real-time status
-          lastActiveDate: lastActive,
-          daysSinceActive
-        };
-      })
-    );
+          isManual: false,
+          isActive: true // App users considered active
+        });
+      });
+    }
+    
+    // Process manual customers (deduplicated by phone)
+    manualCustomers.forEach(phone => {
+      allUsers.push({
+        _id: `manual_${phone}`,
+        name: 'Offline Customer',
+        email: '—',
+        phone: phone,
+        address: 'N/A',
+        pincode: 'N/A',
+        joinDate: null,
+        isManual: true,
+        isActive: true
+      });
+    });
+    
+    if (allUsers.length === 0) {
+      return res.status(200).json({ 
+        users: [],
+        vendorName: vendor.kitchenName,
+        message: 'No subscribers found for this vendor'
+      });
+    }
+    
+    // Sort: app users first, then manual (both active)
+    const sortedUsers = allUsers.sort((a, b) => {
+      if (a.isManual !== b.isManual) return a.isManual ? 1 : -1;
+      return (b.name || '').localeCompare(a.name || '');
+    });
 
     res.status(200).json({ 
-      users: usersWithActivity.sort((a, b) => b.daysSinceActive - a.daysSinceActive),
-      vendorName: vendor.kitchenName
+      users: sortedUsers,
+      vendorName: vendor.kitchenName,
+      totalAppUsers: userIds.length,
+      totalManualCustomers: manualCustomers.length
     });
   } catch (error) {
     console.error('getVendorSubscribers FULL ERROR:', error);
-    console.error('VendorId:', req.params.vendorId, 'Type:', typeof req.params.vendorId);
-    res.status(200).json({ 
-      users: [],
-      message: 'No subscribers found for this vendor or temporary error'
-    });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
