@@ -1,18 +1,18 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
-import { useToast } from '../components/common/Toast';
-
-
+import AddManualCustomer from '../components/dashboard/vendor/AddManualCustomer';
 import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './VendorDashboard.css';
-import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing } from '../utils/api';
+import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount } from '../utils/api';
 import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
 import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
 import VendorOffers from '../components/dashboard/vendor/VendorOffers';
 import TrialSettings from '../components/dashboard/vendor/TrialSettings';
+import { useToast } from '../components/common/Toast';
 
 const VendorDashboard = () => {
+  const { addToast } = useToast();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [kitchenOpen, setKitchenOpen] = useState(true);
@@ -135,7 +135,7 @@ const VendorDashboard = () => {
       };
 
 
-  const fetchPricing = async () => {
+const fetchPricing = async () => {
     if (activeTab !== 'pricing') return;
 
     try {
@@ -143,17 +143,11 @@ const VendorDashboard = () => {
 
       const pricingArray = ['daily', 'weekly', 'monthly'].map(planType => ({
         type: planType,
-        price: data.pricing?.[planType]?.price ?? '',
-        active: data.pricing?.[planType]?.is_active === true ? true : false
+        price: data.pricing?.find(p => p.planType === planType)?.price ?? '',
+        active: data.pricing?.find(p => p.planType === planType)?.active === true || 
+                data.pricing?.find(p => p.planType === planType)?.is_active === true
       }));
       setPricing(pricingArray);
-      if (!data.pricing) {
-        setPricing([
-          { type: 'daily', price: '', active: false },
-          { type: 'weekly', price: '', active: false },
-          { type: 'monthly', price: '', active: false }
-        ]);
-      }
 
     } catch (error) {
       console.warn('Failed to load pricing:', error);
@@ -184,7 +178,6 @@ const VendorDashboard = () => {
         }
       }
     } catch (error) {
-      const { addToast } = useToast();
       console.error('Error toggling shop status:', error);
       addToast('Failed to update shop status: ' + error.message, 'error');
     }
@@ -346,34 +339,7 @@ const VendorDashboard = () => {
 
 
 
-// const handleSavePricing = async () => {
-//   try {
-//     setSavingPricing(true);
-//     setPricingMessage({ type: '', text: '' });
 
-//     const activePlans = pricing.filter(p => p.active);
-
-//     if (activePlans.length === 0) {
-//       setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
-//       return;
-//     }
-
-//     const formattedPricing = pricing.map(p => ({
-//         type: p.type,
-//         price: Number(p.price), // ✅ ensure number
-//         active: p.active === true
-//       }));
-
-//       await savePricing(formattedPricing);
-
-//     setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
-
-//   } catch (error) {
-//     setPricingMessage({ type: 'error', text: error.message });
-//   } finally {
-//     setSavingPricing(false);
-//   }
-// };
 
 
 
@@ -381,35 +347,57 @@ const handleSavePricing = async () => {
   try {
     setSavingPricing(true);
     setPricingMessage({ type: '', text: '' });
+    setPricingErrors({});
 
+    // Client-side validation mirroring backend
     const activePlans = pricing.filter(p => p.active);
-
     if (activePlans.length === 0) {
       setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
       return;
     }
 
+    const invalidPlans = activePlans.filter(p => !p.price || p.price <= 0);
+    if (invalidPlans.length > 0) {
+      setPricingMessage({ type: 'error', text: 'Active plans must have price > ₹0' });
+      return;
+    }
+
+    // Check duplicates
+    const types = pricing.map(p => p.type);
+    const duplicateTypes = types.filter((type, index) => types.indexOf(type) !== index);
+    if (duplicateTypes.length > 0) {
+      setPricingMessage({ type: 'error', text: `Duplicate plan types: ${duplicateTypes.join(', ')}` });
+      return;
+    }
+
     const formattedPricing = pricing.map(p => ({
-      type: p.type,
-      price: Number(p.price), // ✅ FIX
+      planType: p.type,  // ✅ FIXED: Schema expects planType
+      price: Number(p.price),
       active: p.active === true
     }));
 
-    console.log("Sending pricing:", formattedPricing); // debug
+    console.log("Sending pricing:", formattedPricing);
 
-    await savePricing(formattedPricing);
+    await savePricing({ pricing: formattedPricing });
 
     setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
 
   } catch (error) {
-    setPricingMessage({ type: 'error', text: error.message });
+    console.error('Pricing save error:', error);
+    // Handle backend validation errors
+    if (error.message.includes('Active plans must have price')) {
+      setPricingMessage({ type: 'error', text: 'Active plans must have price > ₹0' });
+    } else if (error.message.includes('duplicate') || error.message.includes('plan types')) {
+      setPricingMessage({ type: 'error', text: 'Duplicate plan types detected' });
+    } else {
+      setPricingMessage({ type: 'error', text: error.message || 'Failed to save pricing' });
+    }
   } finally {
     setSavingPricing(false);
   }
 };
   // Enhanced handleSaveProfile with proper persistence and state update - now includes image and kitchen poster upload
   const handleSaveProfile = async () => {
-    const { addToast } = useToast();
     try {
       setLoading(true);
       
@@ -729,6 +717,9 @@ const handleSavePricing = async () => {
             </table>
           </div>
         );
+
+      case 'manual-customers':
+        return <AddManualCustomer vendorProfile={profile} />;
 
       case 'reports':
         return (
@@ -1073,27 +1064,7 @@ const handleSavePricing = async () => {
                 {documents.gst && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.gst.name}</p>}
               </div>
             </div>
-            {/* // COMPLIANCE SUBMISSION HANDLER - NEW FOR BUG FIX
-            const handleSubmitCompliance = async () => {
-              if (!documents.fssai && !documents.gst) {
-                alert('Please select at least one document (FSSAI or GST)');
-                return;
-              }
-              
-              const formData = new FormData();
-              if (documents.fssai) formData.append('fssaiDoc', documents.fssai);
-              if (documents.gst) formData.append('gstDoc', documents.gst);
-              
-              try {
-                await submitVendorCompliance(formData);
-                alert('✅ Documents submitted for admin review!\\nStatus reset to Pending. Await approval.');
-                setDocuments({ fssai: null, gst: null }); // Reset form
-                fetchVendorData(); // Refresh profile/status
-              } catch (error) {
-                console.error('Compliance submit error:', error);
-                alert('❌ Submit failed: ' + error.message);
-              }
-            }; */}
+           
 
             <button 
               className="v-nav-btn" 
@@ -1281,10 +1252,16 @@ const handleSavePricing = async () => {
           <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Overview</button>
           <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}> Menu Planner</button>
           <button className={`v-nav-btn ${activeTab === 'pricing' ? 'active' : ''}`} onClick={() => setActiveTab('pricing')}>
-            <span style={{ marginRight: '8px' }}>₹</span>Meal Pricing
+            <span style={{ marginRight: '8px' }}></span>Meal Pricing
           </button>
           <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}> Order Tracking</button>
           <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}> My Customers</button>
+          <button 
+            className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} 
+            onClick={() => setActiveTab('manual-customers')}
+          >
+            Add Customer
+          </button>
           <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}> Reports & PDF</button>
           <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => setActiveTab('commission')}>
              Commission
@@ -1522,28 +1499,7 @@ await saveJainMenu({
     }
   };
 
-//   const handleSavePricing = async () => {
-//   try {
-//     setSavingPricing(true);
-//     setPricingMessage({ type: '', text: '' });
 
-//     const activePlans = pricing.filter(p => p.active);
-
-//     if (activePlans.length === 0) {
-//       setPricingMessage({ type: 'error', text: 'At least 1 plan must be active' });
-//       return;
-//     }
-
-//     await savePricing(pricing);
-
-//     setPricingMessage({ type: 'success', text: 'Pricing saved successfully!' });
-
-//   } catch (error) {
-//     setPricingMessage({ type: 'error', text: error.message });
-//   } finally {
-//     setSavingPricing(false);
-//   }
-// };
 
   if (loading) {
     return (
@@ -1904,3 +1860,4 @@ await saveJainMenu({
     </div>
   );
 };
+

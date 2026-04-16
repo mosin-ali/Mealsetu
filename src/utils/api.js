@@ -497,3 +497,21 @@ export const getVendorPendingPayout = () => {
     pendingAmount: data.pendingPayout || 0,
   }));
 };
+
+// Manual Customer API functions
+export const addManualCustomer = (data) => {
+  return apiCall('/vendor/manual-customer', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+};
+
+export const getManualCustomers = () => {
+  return apiCall('/vendor/manual-customers');
+};
+
+export const calculateManualOrderAmount = (planType, startDate) => {
+  return apiCall(
+    `/vendor/manual-customer/calculate?planType=${planType}&startDate=${startDate}`
+  );
+};
