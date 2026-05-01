@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 
 dotenv.config();
 
@@ -122,8 +124,57 @@ const startServer = async () => {
     }
 
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, async () => {
+    
+    // Create HTTP server with Express app
+    const httpServer = createServer(app);
+    
+    // Initialize Socket.IO with CORS configuration
+    const io = new Server(httpServer, {
+      cors: {
+        origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+        methods: ['GET', 'POST'],
+        credentials: true
+      }
+    });
+    
+// Make io accessible in all controllers via app.set('io', io)
+    app.set('io', io);
+    
+    // FIX 7: Make io globally available to cron jobs
+    global.io = io;
+    
+    // Socket.IO connection handler
+    io.on('connection', (socket) => {
+      console.log('🔌 Client connected:', socket.id);
+      
+      // User joins their personal room by userId
+      socket.on('join', (userId) => {
+        socket.join(userId);
+        console.log(`👤 User ${userId} joined their room`);
+      });
+      
+      // Vendor joins vendor room
+      socket.on('joinVendor', (vendorId) => {
+        socket.join(`vendor_${vendorId}`);
+        console.log(`🍳 Vendor ${vendorId} joined vendor room`);
+      });
+      
+      // Admin joins admin room
+      socket.on('joinAdmin', () => {
+        socket.join('admin_room');
+        console.log('👨‍💼 Admin joined admin room');
+      });
+      
+      // Handle disconnect
+      socket.on('disconnect', () => {
+        console.log('🔌 Client disconnected:', socket.id);
+      });
+    });
+    
+    // Use httpServer instead of app.listen()
+    httpServer.listen(PORT, async () => {
       console.log(`🚀 Server running on port ${PORT}`);
+      console.log('📡 Socket.IO server initialized');
 
       // Verify email configuration
       await verifyEmailConnection();

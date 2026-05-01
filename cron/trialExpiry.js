@@ -23,10 +23,16 @@ const processExpiredTrials = async () => {
     console.log(`📋 Found ${expiredTrials.length} expired trials to process`);
 
     for (const order of expiredTrials) {
-      try {
+try {
         // Update order status to indicate trial has ended
         order.orderStatus = 'Trial Expired';
         await order.save();
+
+        // FIX 6: Also update Subscription status to 'expired'
+        await Subscription.findOneAndUpdate(
+          { userId: order.userId._id, status: 'active', planType: 'Trial' },
+          { status: 'expired' }
+        );
 
         // Send reminder email to user
         const emailSubject = `⏰ Your Free Trial Has Ended - ${order.vendorId.kitchenName} - MealSetu`;

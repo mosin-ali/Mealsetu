@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Vendor = require('../models/Vendor');
+const PendingUser = require('../models/PendingUser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -49,9 +50,6 @@ const registerUser = async (req, res) => {
       adminKey                        // Admin specific
     } = req.body;
     
-    // Fix3,5: Ensure pincode is saved for vendors too
-
-
     // Check for blocked temporary email domains (two-layer check)
     const emailLower = email.toLowerCase();
     const emailDomain = emailLower.split('@')[1];
@@ -68,25 +66,22 @@ const registerUser = async (req, res) => {
       });
     }
 
-    // 1. Check if user exists
+    // 1. Check if email already exists in MAIN users collection (verified users)
+    // If user exists here, they are already verified - show "User already exists"
     const userExists = await User.findOne({ email });
     if (userExists) {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // 2. Hash Password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
+    // 2. Check if email exists in pendingUsers collection (unverified)
+    // If exists here, we'll UPDATE and resend OTP (don't create duplicate)
+    const pendingUserExists = await PendingUser.findOne({ email, role });
+    
     // 3. Handle File Uploads (from Multer)
-    // Normalize path: convert Windows backslashes to forward slashes and ensure proper format
     const normalizePath = (filePath) => {
       if (!filePath) return null;
-      // Replace backslashes with forward slashes (Windows path fix)
       let normalized = filePath.replace(/\\/g, '/');
-      // Check if the result contains uploads/ anywhere
       if (normalized.includes('uploads/')) {
-        // Extract everything from uploads/ onward and prepend a single /uploads/
         const parts = normalized.split('uploads/');
         normalized = '/uploads/' + parts[parts.length - 1];
       }
@@ -95,143 +90,89 @@ const registerUser = async (req, res) => {
 
     const profilePicPath = req.files['profilePic'] ? normalizePath(req.files['profilePic'][0].path) : null;
     const kitchenPosterPath = req.files['kitchenPoster'] ? normalizePath(req.files['kitchenPoster'][0].path) : null;
+    const fssaiPath = req.files['fssaiDoc'] ? normalizePath(req.files['fssaiDoc'][0].path) : null;
+    const gstPath = req.files['gstDoc'] ? normalizePath(req.files['gstDoc'][0].path) : null;
 
-    // 4. Create Base User
-    const user = await User.create({
+    // 4. Hash Password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // 5. Generate OTP
+    const otp = generateOTP();
+    const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Prepare pending user data
+    const pendingUserData = {
       name,
       email,
       password: hashedPassword,
       phone,
+      role,
+      profilePic: profilePicPath,
       address: role === 'user' ? address : undefined,
       pincode: role === 'user' ? pincode : undefined,
-      profilePic: profilePicPath,
-      role
-    });
-
-    // 5. If Role is Vendor, create Vendor Document
-    if (role === 'vendor') {
-        // Also normalize vendor document paths
-        const fssaiPath = req.files['fssaiDoc'] ? normalizePath(req.files['fssaiDoc'][0].path) : null;
-        const gstPath = req.files['gstDoc'] ? normalizePath(req.files['gstDoc'][0].path) : null;
-
-        const newVendor = await Vendor.create({
-            ownerId: user._id,
-            kitchenName,
-            address: kitchenAddress,
-            pincode,  // Fix3: Save pincode
-            fssaiLicense: fssaiPath,
-            gstDocument: gstPath,
-            profileImage: profilePicPath,
-            kitchenPoster: kitchenPosterPath
-        });
-        
-        // Fix5: Auto-geocode new vendor location (same as updateVendorProfile)
-        if (kitchenAddress && pincode) {
-          try {
-            const fullAddress = `${kitchenAddress}, ${pincode}, India`;
-            const geoRes = await fetch(
-              `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
-              {
-                headers: { 
-                  'User-Agent': 'MealSetu/1.0'
-                }
-              }
-            );
-            const geoData = await geoRes.json();
-            if (geoData && geoData[0]) {
-              newVendor.latitude = parseFloat(geoData[0].lat);
-              newVendor.longitude = parseFloat(geoData[0].lon);
-              await newVendor.save();
-            }
-          } catch (geoError) {
-            console.log('Geocoding failed during vendor registration:', geoError.message);
-            // Registration succeeds without coords
-          }
-        }
-
-    }
-
-    // 6. If Role is Admin, verify key
-    if (role === 'admin' && adminKey !== 'admin123') {
-        await User.findByIdAndDelete(user._id);
-        return res.status(401).json({ message: 'Invalid Admin Key' });
-    }
-
-    // Transform profilePic to full URL - fix double-slash issue
-    const transformPathToUrl = (path) => {
-      if (!path) return null;
-      // Remove any double slashes
-      let cleanPath = path.replace(/\/+/g, '/');
-      // Ensure proper format: /uploads/filename
-      if (!cleanPath.startsWith('/')) {
-        cleanPath = '/' + cleanPath;
-      }
-      return `${req.protocol}://${req.get('host')}${cleanPath}`;
+      kitchenName: role === 'vendor' ? kitchenName : undefined,
+      kitchenAddress: role === 'vendor' ? kitchenAddress : undefined,
+      fssaiLicense: role === 'vendor' ? fssaiPath : undefined,
+      gstDocument: role === 'vendor' ? gstPath : undefined,
+      kitchenPoster: role === 'vendor' ? kitchenPosterPath : undefined,
+      otp: hashedOTP,
+      otpExpiresAt,
+      otpAttempts: 0,
+      isVerified: false,
+      createdAt: new Date()
     };
 
-    const profilePicUrl = user.profilePic 
-      ? transformPathToUrl(user.profilePic) 
-      : null;
-
-    // For user and vendor roles, require OTP verification before activating account
-    if (role === 'user' || role === 'vendor') {
-      // Generate 6-digit OTP
-      const otp = generateOTP();
-      
-      // Hash OTP before storing (for security)
-      const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
-
-      // Set OTP expiry (10 minutes) and reset attempts
-      user.resetOTP = hashedOTP;
-      user.resetOTPExpire = Date.now() + 10 * 60 * 1000;
-      user.otpAttempts = 0;
-      user.isOTPVerified = false;
-      await user.save();
-
-      // Send OTP email
-      const emailSubject = role === 'vendor' 
-        ? 'MealSetu - Verify Your Vendor Email' 
-        : 'MealSetu - Verify Your Email Address';
-      
-      const emailMessage = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #333;">Verify Your Email Address</h1>
-          <p>Welcome to MealSetu${role === 'vendor' ? ' Vendor Portal' : ''}, ${name}!</p>
-          <p>Thank you for registering. Please verify your email address to activate your account.</p>
-          <div style="background-color: #f5f5f5; padding: 20px; text-align: center; font-size: 32px; letter-spacing: 8px; font-weight: bold; margin: 20px 0;">
-            ${otp}
-          </div>
-          <p style="color: #666; font-size: 14px;">This OTP will expire in 10 minutes.</p>
-          <hr/>
-          <p style="color: #999; font-size: 12px;">If you did not create this account, please ignore this email.</p>
-        </div>
-      `;
-
-      try {
-        await sendEmail(user.email, emailSubject, emailMessage);
-        console.log('Registration OTP sent successfully to:', user.email);
-      } catch (emailError) {
-        console.error('Failed to send registration OTP email:', emailError);
-        // Continue anyway - don't block registration
-      }
-
-      // Return response requiring OTP verification
-      return res.status(201).json({
-        message: 'Registration successful. A 6 digit OTP has been sent to your email.',
-        userId: user._id.toString(),
-        maskedEmail: maskEmail(user.email),
-        requiresOTPVerification: true
-      });
+    // 6. Create or Update in pendingUsers collection
+    let pendingUser;
+    if (pendingUserExists) {
+      // UPDATE existing pending user - overwrite with new data and new OTP
+      pendingUser = await PendingUser.findOneAndUpdate(
+        { email, role },
+        pendingUserData,
+        { new: true }
+      );
+      console.log('Updated existing pending user, resent OTP to:', email);
+    } else {
+      // CREATE new pending user
+      pendingUser = await PendingUser.create(pendingUserData);
+      console.log('Created new pending user:', email);
     }
 
-    // For admin role, return token directly (no OTP required)
-    res.status(201).json({
-      _id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      profilePic: profilePicUrl,
-      token: generateToken(user._id, user.role),
+    // 7. Send OTP email
+    const emailSubject = role === 'vendor' 
+      ? 'MealSetu - Verify Your Vendor Email' 
+      : 'MealSetu - Verify Your Email Address';
+    
+    const emailMessage = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #333;">Verify Your Email Address</h1>
+        <p>Welcome to MealSetu${role === 'vendor' ? ' Vendor Portal' : ''}, ${name}!</p>
+        <p>Thank you for registering. Please verify your email address to activate your account.</p>
+        <div style="background-color: #f5f5f5; padding: 20px; text-align: center; font-size: 32px; letter-spacing: 8px; font-weight: bold; margin: 20px 0;">
+          ${otp}
+        </div>
+        <p style="color: #666; font-size: 14px;">This OTP will expire in 10 minutes.</p>
+        <hr/>
+        <p style="color: #999; font-size: 12px;">If you did not create this account, please ignore this email.</p>
+      </div>
+    `;
+
+    try {
+      await sendEmail(email, emailSubject, emailMessage);
+      console.log('Registration OTP sent successfully to:', email);
+    } catch (emailError) {
+      console.error('Failed to send registration OTP email:', emailError);
+      // Continue anyway - don't block registration
+    }
+
+    // 8. Return response requiring OTP verification
+    return res.status(201).json({
+      message: 'Registration successful. A 6 digit OTP has been sent to your email.',
+      userId: pendingUser._id.toString(),
+      maskedEmail: maskEmail(email),
+      requiresOTPVerification: true
     });
 
   } catch (error) {
@@ -243,7 +184,7 @@ const registerUser = async (req, res) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 const loginUser = async (req, res) => {
-  const { email, password, role, adminKey } = req.body;
+  const { email, password, role } = req.body;
 
   try {
     if (!email || !password) {
@@ -260,11 +201,13 @@ const loginUser = async (req, res) => {
       return res.status(401).json({ message: `This account is registered as ${user.role}. Please login via the ${user.role} portal.` });
     }
 
-    if (role === 'admin' && adminKey !== 'admin123') {
-      return res.status(401).json({ message: 'Invalid admin key' });
+    // Check if user is verified (for user and vendor roles)
+    // Note: Admin users don't need verification (they're created via backend seeding)
+    if ((role === 'user' || role === 'vendor') && !user.isVerified) {
+      return res.status(401).json({ message: 'Please verify your email first before logging in.' });
     }
 
-    // Transform profilePic to full URL - fix double-slash issue
+    // Transform profilePic to full URL
     const transformPathToUrl = (path) => {
       if (!path) return null;
       // Remove any double slashes
@@ -486,52 +429,102 @@ const verifyRegisterOTP = async (req, res) => {
       return res.status(400).json({ message: 'User ID and OTP are required' });
     }
 
-    const user = await User.findById(userId);
+    // 1. Find the pending user in pendingUsers collection
+    const pendingUser = await PendingUser.findById(userId);
 
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid request. User not found.' });
+    if (!pendingUser) {
+      return res.status(400).json({ message: 'Invalid request. Registration not found or expired. Please register again.' });
     }
 
-    // Check if already verified
-    if (user.isOTPVerified) {
-      return res.status(400).json({ message: 'Email already verified. Please login.' });
-    }
-
-    // Check if OTP is valid
-    if (!user.resetOTP || !user.resetOTPExpire) {
+    // 2. Check if OTP is valid
+    if (!pendingUser.otp || !pendingUser.otpExpiresAt) {
       return res.status(400).json({ message: 'OTP expired or not requested. Please request a new OTP.' });
     }
 
-    // Check if OTP is expired
-    if (Date.now() > user.resetOTPExpire) {
-      user.resetOTP = undefined;
-      user.resetOTPExpire = undefined;
-      user.otpAttempts = 0;
-      await user.save();
-      return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
+    // 3. Check if OTP is expired
+    if (Date.now() > pendingUser.otpExpiresAt.getTime()) {
+      // Clear OTP and save
+      pendingUser.otp = undefined;
+      pendingUser.otpExpiresAt = undefined;
+      pendingUser.otpAttempts = 0;
+      await pendingUser.save();
+      return res.status(400).json({ message: 'OTP has expired. Please register again to get a new OTP.' });
     }
 
-    // Check attempts
-    if (user.otpAttempts >= 5) {
-      return res.status(400).json({ message: 'Too many failed attempts. Please request a new OTP.' });
+    // 4. Check attempts (max 5)
+    if (pendingUser.otpAttempts >= 5) {
+      return res.status(400).json({ message: 'Too many failed attempts. Please register again to get a new OTP.' });
     }
 
-    // Hash the provided OTP and compare
+    // 5. Hash the provided OTP and compare
     const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
 
-    if (user.resetOTP !== hashedOTP) {
+    if (pendingUser.otp !== hashedOTP) {
       // Increment attempts
-      user.otpAttempts = (user.otpAttempts || 0) + 1;
-      await user.save();
+      pendingUser.otpAttempts = (pendingUser.otpAttempts || 0) + 1;
+      await pendingUser.save();
       return res.status(400).json({ message: 'Invalid OTP. Please try again.' });
     }
 
-    // Mark as verified and clear OTP fields
-    user.isOTPVerified = true;
-    user.resetOTP = undefined;
-    user.resetOTPExpire = undefined;
-    user.otpAttempts = 0;
-    await user.save();
+    // 6. OTP is valid! Now move data from pendingUsers to main users collection
+    const userData = {
+      name: pendingUser.name,
+      email: pendingUser.email,
+      password: pendingUser.password,
+      phone: pendingUser.phone,
+      profilePic: pendingUser.profilePic,
+      role: pendingUser.role,
+      address: pendingUser.address,
+      pincode: pendingUser.pincode,
+      isVerified: true
+    };
+
+    const newUser = await User.create(userData);
+    console.log('Created verified user from pendingUsers:', newUser.email);
+
+    // 7. If role is vendor, create Vendor document
+    if (pendingUser.role === 'vendor') {
+      const vendorData = {
+        ownerId: newUser._id,
+        kitchenName: pendingUser.kitchenName,
+        address: pendingUser.kitchenAddress,
+        pincode: pendingUser.pincode,
+        fssaiLicense: pendingUser.fssaiLicense,
+        gstDocument: pendingUser.gstDocument,
+        profileImage: pendingUser.profilePic,
+        kitchenPoster: pendingUser.kitchenPoster
+      };
+
+      const newVendor = await Vendor.create(vendorData);
+      console.log('Created vendor document for:', newVendor.kitchenName);
+
+      // Auto-geocode vendor location
+      if (pendingUser.kitchenAddress && pendingUser.pincode) {
+        try {
+          const fullAddress = `${pendingUser.kitchenAddress}, ${pendingUser.pincode}, India`;
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
+            {
+              headers: { 
+                'User-Agent': 'MealSetu/1.0'
+              }
+            }
+          );
+          const geoData = await geoRes.json();
+          if (geoData && geoData[0]) {
+            newVendor.latitude = parseFloat(geoData[0].lat);
+            newVendor.longitude = parseFloat(geoData[0].lon);
+            await newVendor.save();
+          }
+        } catch (geoError) {
+          console.log('Geocoding failed during vendor verification:', geoError.message);
+        }
+      }
+    }
+
+    // 8. Delete from pendingUsers collection
+    await PendingUser.deleteOne({ _id: userId });
+    console.log('Deleted pending user:', pendingUser.email);
 
     // Transform profilePic to full URL
     const transformPathToUrl = (path) => {
@@ -543,21 +536,21 @@ const verifyRegisterOTP = async (req, res) => {
       return `${req.protocol}://${req.get('host')}${cleanPath}`;
     };
 
-    const profilePicUrl = user.profilePic ? transformPathToUrl(user.profilePic) : null;
+    const profilePicUrl = newUser.profilePic ? transformPathToUrl(newUser.profilePic) : null;
 
     // Generate JWT token
-    const token = generateToken(user._id, user.role);
+    const token = generateToken(newUser._id, newUser.role);
 
-    console.log('Registration OTP verified successfully for:', user.email);
+    console.log('Registration OTP verified successfully for:', newUser.email);
 
     res.status(200).json({
       message: 'Email verified successfully!',
       token,
       user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
+        _id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
         profilePic: profilePicUrl
       }
     });
@@ -580,15 +573,11 @@ const resendRegisterOTP = async (req, res) => {
       return res.status(400).json({ message: 'User ID is required' });
     }
 
-    const user = await User.findById(userId);
+    // Find in pendingUsers collection (not main users!)
+    const pendingUser = await PendingUser.findById(userId);
 
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid request. User not found.' });
-    }
-
-    // Check if already verified
-    if (user.isOTPVerified) {
-      return res.status(400).json({ message: 'Email already verified. Please login.' });
+    if (!pendingUser) {
+      return res.status(400).json({ message: 'Invalid request. Registration not found or expired. Please register again.' });
     }
 
     // Generate new OTP
@@ -596,20 +585,20 @@ const resendRegisterOTP = async (req, res) => {
     const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
 
     // Set new OTP expiry (10 minutes) and reset attempts
-    user.resetOTP = hashedOTP;
-    user.resetOTPExpire = Date.now() + 10 * 60 * 1000;
-    user.otpAttempts = 0;
-    await user.save();
+    pendingUser.otp = hashedOTP;
+    pendingUser.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    pendingUser.otpAttempts = 0;
+    await pendingUser.save();
 
     // Send OTP email
-    const emailSubject = user.role === 'vendor' 
+    const emailSubject = pendingUser.role === 'vendor' 
       ? 'MealSetu - Verify Your Vendor Email' 
       : 'MealSetu - Verify Your Email Address';
     
     const emailMessage = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h1 style="color: #333;">Verify Your Email Address</h1>
-        <p>Welcome to MealSetu${user.role === 'vendor' ? ' Vendor Portal' : ''}, ${user.name}!</p>
+        <p>Welcome to MealSetu${pendingUser.role === 'vendor' ? ' Vendor Portal' : ''}, ${pendingUser.name}!</p>
         <p>Please verify your email address to activate your account.</p>
         <div style="background-color: #f5f5f5; padding: 20px; text-align: center; font-size: 32px; letter-spacing: 8px; font-weight: bold; margin: 20px 0;">
           ${otp}
@@ -621,8 +610,8 @@ const resendRegisterOTP = async (req, res) => {
     `;
 
     try {
-      await sendEmail(user.email, emailSubject, emailMessage);
-      console.log('Registration OTP resent successfully to:', user.email);
+      await sendEmail(pendingUser.email, emailSubject, emailMessage);
+      console.log('Registration OTP resent successfully to:', pendingUser.email);
     } catch (emailError) {
       console.error('Failed to resend registration OTP email:', emailError);
       return res.status(500).json({ message: 'Failed to send OTP. Please try again.' });
@@ -630,7 +619,7 @@ const resendRegisterOTP = async (req, res) => {
 
     res.status(200).json({ 
       message: 'OTP resent successfully',
-      maskedEmail: maskEmail(user.email)
+      maskedEmail: maskEmail(pendingUser.email)
     });
 
   } catch (error) {

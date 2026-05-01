@@ -29,19 +29,21 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken: { type: String },
   resetPasswordExpire: { type: Date },
 
-  // --- OTP Verification Fields ---
+  // --- OTP Verification Fields (for password reset) ---
   resetOTP: { type: String },
   resetOTPExpire: { type: Date },
   otpAttempts: { type: Number, default: 0 },
   isOTPVerified: { type: Boolean, default: false },
 
-  // --- Trial History (tracks which vendors user has taken trials from) ---
+  // --- Email Verification for Registration ---
+  isVerified: { type: Boolean, default: false },
+
+  // --- Trial History ---
   trialHistory: [{
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
     trialTakenAt: { type: Date, default: Date.now }
   }],
-  lastActiveDate: { type: Date, default: null },
-  isActive: { type: Boolean, default: true }
+  lastActiveDate: { type: Date, default: null }
 });
 
 module.exports = mongoose.model('User', userSchema);

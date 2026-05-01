@@ -198,26 +198,54 @@ const processPendingSubscriptionOrders = async () => {
           endDate.setDate(endDate.getDate() + durationDays);
         }
 
-        // Update order status to active
+// Update order status to active
         order.status = 'active';
         order.startDate = startDate;
         order.endDate = endDate;
         await order.save();
 
-        // Also update the subscription if exists
-        await Subscription.findOneAndUpdate(
-          { userId: order.userId._id, status: 'pending' },
-          { 
-            status: 'active',
+        // FIX 3: Also update the subscription if exists - match by BOTH userId AND vendorId
+        const existingSub = await Subscription.findOne({
+          userId: order.userId._id,
+          vendorId: order.vendorId._id,
+          status: 'pending'
+        });
+
+        if (existingSub) {
+          existingSub.status = 'active';
+          existingSub.startDate = startDate;
+          existingSub.expiryDate = endDate;
+          existingSub.planType = order.planType;
+          await existingSub.save();
+        } else {
+          // Create new subscription if not exists
+          await Subscription.create({
+            userId: order.userId._id,
+            vendorId: order.vendorId._id,
+            planType: order.planType,
             startDate: startDate,
-            expiryDate: endDate
-          }
-        );
+            expiryDate: endDate,
+            status: 'active',
+            customerName: order.userId.name,
+            contact: order.userId.phone
+          });
+        }
 
         // Update user expiry date
         await User.findByIdAndUpdate(order.userId._id, {
           expiryDate: endDate
         });
+
+        // FIX 5: Send Socket.IO notification
+        if (global.io) {
+          global.io.to(order.userId._id.toString()).emit('subscriptionUpdate', {
+            message: 'Your upcoming plan is now active!',
+            planType: order.planType
+          });
+          global.io.to('admin_room').emit('orderUpdate', {
+            message: 'Order auto-activated'
+          });
+        }
 
         // Send activation email to user
         const emailSubject = '🎉 Your Upcoming Plan is Now Active! - MealSetu';
@@ -356,84 +384,124 @@ const sendExpiryReminders = async () => {
   }
 };
 
-// New function for Bug 2: Process expired active subscriptions and activate next pending
+// FIX 2: Process expired active subscriptions and activate next pending (including Order sync + Socket.IO)
+// FIX: Query Order collection using endDate (not Subscription.expiryDate) - THIS WAS THE ROOT CAUSE BUG
 const processExpiredSubscriptions = async () => {
   console.log('🔄 Running cron job: Processing expired subscriptions...');
   try {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    const expiredSubs = await Subscription.find({
+    // FIX: Query ORDERS (not Subscriptions) by endDate - THIS IS THE CORRECT LOGIC
+    const expiredOrders = await Order.find({
       status: 'active',
-      expiryDate: { $lte: now }
-    }).populate('userId');
+      endDate: { $lte: now }
+    }).populate('userId').populate('vendorId');
 
-    console.log(`📋 Found ${expiredSubs.length} expired subscriptions to process`);
+    console.log(`📋 Found ${expiredOrders.length} expired orders to process`);
 
-    for (const sub of expiredSubs) {
-      const userId = sub.userId._id;
+    for (const order of expiredOrders) {
+      const userId = order.userId._id;
       try {
-        // Mark all expired active subs for this user
-        const result = await Subscription.updateMany(
-          { userId, status: 'active', expiryDate: { $lte: now } },
+        // Mark order as completed
+        order.status = 'completed';
+        await order.save();
+        console.log(`⏰ Expired order ${order._id} for user ${order.userId.name}`);
+
+        // Mark subscription as expired
+        await Subscription.findOneAndUpdate(
+          { userId: userId, status: 'active' },
           { status: 'expired' }
         );
-        if (result.modifiedCount > 0) {
-          console.log(`⏰ Marked ${result.modifiedCount} expired subs for user ${sub.userId.name}`);
-        }
 
-        // Find next pending sub (earliest startDate)
-        const nextPending = await Subscription.findOne(
-          { userId, status: 'pending' }
-        ).sort({ startDate: 1 }).populate('vendorId');
+        // Find next pending order (earliest scheduledStartDate)
+        const nextPending = await Order.findOne({
+          userId: userId,
+          status: 'pending'
+        }).sort({ scheduledStartDate: 1 }).populate('userId').populate('vendorId');
 
         if (nextPending) {
-          // Activate it
-          const startDate = new Date(now);
-          let durationDays = 7; // default
-          if (nextPending.planType === 'Weekly') durationDays = 7;
-          else if (nextPending.planType === 'Monthly') durationDays = 30;
+          // Calculate duration based on planType
+          let durationDays = 7;
+          if (nextPending.planType === 'Monthly') durationDays = 30;
           else if (nextPending.planType === 'Trial') durationDays = 2;
 
-          const expiryDate = new Date(startDate);
-          expiryDate.setDate(expiryDate.getDate() + durationDays);
+          // FIX: Activate with TODAY's dates (ignore scheduledStartDate - activate immediately)
+          const startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          const endDate = new Date(startDate);
+          endDate.setDate(endDate.getDate() + durationDays);
 
+          // Activate the pending order
           nextPending.status = 'active';
           nextPending.startDate = startDate;
-          nextPending.expiryDate = expiryDate;
+          nextPending.endDate = endDate;
           await nextPending.save();
+          console.log(`✅ Activated order ${nextPending._id}`);
 
-          // Update user expiry
-          await User.findByIdAndUpdate(userId, { expiryDate });
+          // Update or create Subscription
+          const existingSub = await Subscription.findOne({ userId: userId });
+          if (existingSub) {
+            existingSub.status = 'active';
+            existingSub.planType = nextPending.planType;
+            existingSub.startDate = startDate;
+            existingSub.expiryDate = endDate;
+            existingSub.vendorId = nextPending.vendorId._id;
+            await existingSub.save();
+          } else {
+            await Subscription.create({
+              userId: userId,
+              vendorId: nextPending.vendorId._id,
+              planType: nextPending.planType,
+              startDate: startDate,
+              expiryDate: endDate,
+              status: 'active',
+              customerName: nextPending.userId.name,
+              contact: nextPending.userId.phone
+            });
+          }
 
-          // Send notification email
-          const emailSubject = '🎉 Your New Subscription Plan is Now Active! - MealSetu';
-          const emailHtml = `
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-  <div style="background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0;">🎉 New Plan Activated!</h1>
-  </div>
-  <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-    <p>Dear <strong>${sub.userId.name}</strong>,</p>
-    <p>Your previous plan has expired and your next queued plan from <strong>${nextPending.vendorId?.kitchenName || 'MealSetu'}</strong> is now <strong>active</strong>!</p>
-    <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #16a34a;">
-      <h3 style="color: #16a34a;">📋 Active Plan Details</h3>
-      <p><strong>🏪 Kitchen:</strong> ${nextPending.vendorId?.kitchenName || 'MealSetu'}</p>
-      <p><strong>📦 Plan:</strong> ${nextPending.planType}</p>
-      <p><strong>📅 Start:</strong> ${startDate.toLocaleDateString('en-IN')}</p>
-      <p><strong>📅 End:</strong> ${expiryDate.toLocaleDateString('en-IN')}</p>
-    </div>
-    <p>Enjoy your meals! Your remaining plans stay queued.</p>
-  </div>
-  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
-    <p>MealSetu - Quality Food, Delivered with Care</p>
-  </div>
-</div>`;
-          await sendEmail(sub.userId.email, emailSubject, emailHtml);
+          // Update user expiryDate
+          await User.findByIdAndUpdate(userId, { expiryDate: endDate });
 
-          console.log(`✅ Activated next pending sub ${nextPending._id} for user ${sub.userId.name}`);
+          // Socket notification
+          if (global.io) {
+            global.io.to(userId.toString()).emit('subscriptionUpdate', {
+              message: 'Your next plan is now active!',
+              planType: nextPending.planType
+            });
+            global.io.to('admin_room').emit('orderUpdate', {
+              message: 'Subscription auto-activated'
+            });
+          }
+
+          // Send email
+          try {
+            await sendEmail(
+              nextPending.userId.email,
+              'MealSetu - Your Next Plan is Now Active!',
+              `<div style="font-family: Arial, sans-serif;">
+                <h2 style="color: #16a34a;">Your ${nextPending.planType} Plan is Now Active!</h2>
+                <p>Dear ${nextPending.userId.name},</p>
+                <p>Your previous plan expired and your next plan is now active.</p>
+                <div style="background: #f5f5f5; padding: 15px; border-radius: 8px;">
+                  <p><strong>Plan:</strong> ${nextPending.planType}</p>
+                  <p><strong>Kitchen:</strong> ${nextPending.vendorId.kitchenName}</p>
+                  <p><strong>Start Date:</strong> ${startDate.toLocaleDateString('en-IN')}</p>
+                  <p><strong>End Date:</strong> ${endDate.toLocaleDateString('en-IN')}</p>
+                  <p><strong>Amount:</strong> Rs.${nextPending.amount}</p>
+                </div>
+                <p>Enjoy your meals!</p>
+              </div>`
+            );
+            console.log(`📧 Email sent to ${nextPending.userId.email}`);
+          } catch (emailError) {
+            console.error('❌ Email failed:', emailError.message);
+          }
+
+          console.log(`✅ Activated next pending order ${nextPending._id} for user ${order.userId.name}`);
         } else {
-          console.log(`ℹ️ No pending subscription found for user ${sub.userId.name}`);
+          console.log(`ℹ️ No pending order found for user ${order.userId.name}`);
         }
       } catch (userError) {
         console.error(`❌ Error processing user ${userId}:`, userError);
@@ -458,16 +526,16 @@ const processAllSubscriptions = async () => {
 };
 
 
-// Schedule cron job to run every day at midnight
-// The cron expression: '0 0 * * *' means at 00:00 (midnight) every day
+// Schedule cron job to run every hour
+// The cron expression: '0 * * * *' means at minute 0 of every hour
 const startOfferActivationCron = () => {
-console.log('📅 Subscription cron job (incl. auto-activation on expiry) scheduled daily at midnight');
+  console.log('📅 Subscription cron job (incl. auto-activation on expiry) scheduled every hour');
   
-  // Run immediately on startup (for testing)
-  // processAllSubscriptions();
+  // Run IMMEDIATELY on startup to catch any missed activations
+  processAllSubscriptions();
   
-  // Schedule for midnight every day
-  cron.schedule('0 0 * * *', () => {
+  // Schedule for every hour (at minute 0)
+  cron.schedule('0 * * * *', () => {
     processAllSubscriptions();
   });
 };

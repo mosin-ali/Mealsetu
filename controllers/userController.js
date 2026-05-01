@@ -622,6 +622,8 @@ const getMenus = async (req, res) => {
 // @desc    Place an Order or Create Subscription
 // @route   POST /api/users/order
 const placeOrder = async (req, res) => {
+  // Get Socket.IO instance
+  const io = req.app.get('io');
   try {
     console.log('=== PLACE ORDER API CALLED ===');
     console.log('userId:', req.user?._id);
@@ -823,8 +825,23 @@ const placeOrder = async (req, res) => {
       dietaryPref: altMainSubji || mealPref
     });
 
-    user.expiryDate = subscriptionExpiryDate;
+user.expiryDate = subscriptionExpiryDate;
     await user.save();
+
+    // ===== REAL-TIME: Emit socket events for new order =====
+    if (io) {
+      // Notify vendor about new order
+      io.to(`vendor_${vendorId}`).emit('newOrder', { 
+        order: order,
+        message: 'New order received!'
+      });
+      // Notify admin about new order
+      io.to('admin_room').emit('orderUpdate', { 
+        order: order,
+        message: 'New order placed'
+      });
+      console.log('📡 Socket events emitted for new order');
+    }
 
     try {
       const emailSubject = `MealSetu - ${planType} Subscription Confirmed`;

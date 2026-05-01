@@ -392,12 +392,48 @@ const updateOrderStatus = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
+    const previousStatus = order.orderStatus;
     order.orderStatus = req.body.status;
     await order.save();
+    
+    // Emit Socket.IO events for real-time updates
+    const io = req.app.get('io');
+    if (io) {
+      // Notify customer about order status change
+      if (order.userId) {
+        const customerId = order.userId.toString();
+        io.to(customerId).emit('orderStatusUpdate', {
+          orderId: order._id,
+          status: order.orderStatus,
+          previousStatus: previousStatus,
+          message: getStatusUpdateMessage(order.orderStatus)
+        });
+      }
+      
+      // Notify admin about order update
+      io.to('admin_room').emit('orderUpdate', {
+        order: order,
+        action: 'status_change',
+        previousStatus: previousStatus
+      });
+    }
+    
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
+};
+
+// Helper function to get status update message
+const getStatusUpdateMessage = (status) => {
+  const messages = {
+    'Preparing': 'Your order is being prepared!',
+    'Ready': 'Your order is ready for pickup!',
+    'Out for Delivery': 'Your order is out for delivery!',
+    'Delivered': 'Your order has been delivered! Enjoy your meal!',
+    'Cancelled': 'Your order has been cancelled.'
+  };
+  return messages[status] || `Order status updated to ${status}`;
 };
 
 // @desc    Get Dashboard Stats
