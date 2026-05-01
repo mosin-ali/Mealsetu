@@ -1,17 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { sendOTP, verifyOTP, resetPasswordWithOTP } from '../utils/api';
+import socket from '../utils/socket';
 import './Login.css';
 
 export default function Login() {
   const [role, setRole] = useState('user');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [adminKey, setAdminKey] = useState('');
   const [showForgot, setShowForgot] = useState(false);
   
   // Forgot password states
-  const [forgotStep, setForgotStep] = useState(1); // 1: email, 2: OTP, 3: new password
+  const [forgotStep, setForgotStep] = useState(1);
   const [forgotEmail, setForgotEmail] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [newPassword, setNewPassword] = useState('');
@@ -24,7 +24,6 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
 
-  // Refs for OTP inputs
   const otpRefs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()];
 
   const handleLogin = async (e) => {
@@ -34,9 +33,6 @@ export default function Login() {
 
     try {
       const body = { email, password, role };
-      if (role === 'admin') {
-        body.adminKey = adminKey;
-      }
 
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -60,6 +56,23 @@ export default function Login() {
         };
         localStorage.setItem('user', JSON.stringify(userData));
 
+        // Connect to socket for real-time updates
+        try {
+          socket.connect();
+          
+          // Join appropriate room based on role
+          if (role === 'admin') {
+            socket.emit('joinAdmin');
+          } else if (role === 'vendor') {
+            socket.emit('joinVendor', data._id);
+          } else {
+            socket.emit('join', data._id);
+          }
+          console.log('Socket connected for role:', role);
+        } catch (socketError) {
+          console.error('Socket connection error:', socketError);
+        }
+
         // Check for trial intent and navigate accordingly
         const trialIntent = localStorage.getItem('trialIntent');
         
@@ -69,7 +82,6 @@ export default function Login() {
           navigate('/vendor-dashboard');
         } else {
           if (trialIntent === 'true') {
-            // Clear trial intent and navigate to subscription tab
             localStorage.removeItem('trialIntent');
             navigate('/user-dashboard', { state: { activeTab: 'subscription' } });
           } else {
@@ -87,7 +99,6 @@ export default function Login() {
     }
   };
 
-  // Handle OTP input change
   const handleOtpChange = (e, index) => {
     const value = e.target.value;
     
@@ -96,7 +107,6 @@ export default function Login() {
       newOtp[index] = value;
       setOtp(newOtp);
       
-      // Auto-focus next input
       if (value && index < 5) {
         otpRefs[index + 1].current.focus();
       }
@@ -104,13 +114,11 @@ export default function Login() {
   };
 
   const handleOtpKeyDown = (e, index) => {
-    // Handle backspace
     if (e.key === 'Backspace' && !otp[index] && index > 0) {
       otpRefs[index - 1].current.focus();
     }
   };
 
-  // Step 1: Send OTP
   const handleSendOTP = async (e) => {
     e.preventDefault();
     setForgotLoading(true);
@@ -128,7 +136,6 @@ export default function Login() {
     }
   };
 
-  // Step 2: Verify OTP
   const handleVerifyOTP = async (e) => {
     e.preventDefault();
     setForgotLoading(true);
@@ -154,7 +161,6 @@ export default function Login() {
     }
   };
 
-  // Step 3: Reset Password
   const handleResetPassword = async (e) => {
     e.preventDefault();
     setForgotLoading(true);
@@ -177,7 +183,6 @@ export default function Login() {
       const data = await resetPasswordWithOTP(forgotEmail, newPassword);
       setForgotMessage(data.message);
       
-      // Close modal and reset after success
       setTimeout(() => {
         setShowForgot(false);
         resetForgotFlow();
@@ -269,21 +274,6 @@ export default function Login() {
             )}
           </div>
 
-          {role === 'admin' && (
-            <div className="input-group">
-              <label className="input-label">Admin Key</label>
-              <input 
-                type="password" 
-                className="form-input" 
-                placeholder="Enter admin key" 
-                required 
-                value={adminKey}
-                onChange={(e) => setAdminKey(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-          )}
-
           <button type="submit" className="btn-primary" disabled={loading}>
             {loading ? 'Logging in...' : (role === 'admin' ? 'Authorize Login' : 'Sign In')}
           </button>
@@ -294,14 +284,12 @@ export default function Login() {
         </p>
       </div>
 
-      {/* --- FORGOT PASSWORD MODAL WITH OTP --- */}
       {showForgot && (
         <div className="modal-overlay">
           <div className="forgot-modal">
             <button className="close-modal" onClick={closeForgotModal}>&times;</button>
             <h2 className="modal-title">Reset Password</h2>
             
-            {/* Step 1: Enter Email */}
             {forgotStep === 1 && (
               <>
                 <p className="modal-desc">
@@ -351,7 +339,6 @@ export default function Login() {
               </>
             )}
 
-            {/* Step 2: Enter OTP */}
             {forgotStep === 2 && (
               <>
                 <p className="modal-desc">
@@ -419,7 +406,6 @@ export default function Login() {
               </>
             )}
 
-            {/* Step 3: New Password */}
             {forgotStep === 3 && (
               <>
                 <p className="modal-desc">

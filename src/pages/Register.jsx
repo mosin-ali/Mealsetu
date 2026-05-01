@@ -16,7 +16,7 @@ export default function Register() {
   const [docs, setDocs] = useState({ fssai: '', gst: '' });
   const [docFiles, setDocFiles] = useState({ fssai: null, gst: null });
   
-  // Form data state
+// Form data state
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -26,8 +26,7 @@ export default function Register() {
     pincode: '',
     address: '',
     kitchenName: '',
-    kitchenAddress: '',
-    adminKey: ''
+    kitchenAddress: ''
   });
 
   // Errors state for form validation
@@ -89,7 +88,7 @@ export default function Register() {
     }
   };
 
-  // Verify OTP
+// Verify OTP
   const handleVerifyOTP = async (otpValue) => {
     if (!otpValue || otpValue.length !== 6) return;
     
@@ -99,28 +98,12 @@ export default function Register() {
     try {
       const data = await verifyRegisterOTP(otpUserId, otpValue);
       
-      // Store token and user data
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-
-      alert('Email verified successfully!');
-      
-      // Check for trial intent and navigate accordingly
-      const trialIntent = localStorage.getItem('trialIntent');
-      
-      // Close modal and navigate
+      // Close modal
       setShowOTPModal(false);
       
-      if (data.user.role === 'admin') navigate('/admin-dashboard');
-      else if (data.user.role === 'vendor') navigate('/vendor-dashboard');
-      else {
-        if (trialIntent === 'true') {
-          localStorage.removeItem('trialIntent');
-          navigate('/user-dashboard', { state: { activeTab: 'subscription' } });
-        } else {
-          navigate('/user-dashboard');
-        }
-      }
+      // Show success message and redirect to login page
+      alert('Email verified successfully! Please login with your credentials.');
+      navigate('/login');
     } catch (err) {
       setOtpError(err.message || 'Invalid OTP. Please try again.');
       // Shake animation
@@ -299,7 +282,7 @@ export default function Register() {
         data.append('address', formData.address);
       }
 
-      // Vendor specific fields
+// Vendor specific fields
       if (role === 'vendor') {
         data.append('kitchenName', formData.kitchenName);
         data.append('kitchenAddress', formData.kitchenAddress);
@@ -308,11 +291,6 @@ export default function Register() {
         if (docFiles.fssai) data.append('fssaiDoc', docFiles.fssai);
         if (docFiles.gst) data.append('gstDoc', docFiles.gst);
 
-      }
-
-      // Admin specific fields
-      if (role === 'admin') {
-        data.append('adminKey', formData.adminKey);
       }
 
       const response = await fetch('/api/auth/register', {
@@ -362,9 +340,8 @@ export default function Register() {
         // Check for trial intent and navigate accordingly
         const trialIntent = localStorage.getItem('trialIntent');
         
-        // Navigate to appropriate dashboard
-        if (role === 'admin') navigate('/admin-dashboard');
-        else if (role === 'vendor') navigate('/vendor-dashboard');
+// Navigate to appropriate dashboard
+        if (role === 'vendor') navigate('/vendor-dashboard');
         else {
           if (trialIntent === 'true') {
             // Clear trial intent and navigate to subscription tab
@@ -428,9 +405,8 @@ export default function Register() {
         {/* Right Side: Scroll-enabled Form Content */}
         <div className="auth-form-content">
           <div className="role-selector">
-            <button className={role === 'user' ? 'active' : ''} onClick={() => setRole('user')}>Customer</button>
+<button className={role === 'user' ? 'active' : ''} onClick={() => setRole('user')}>Customer</button>
             <button className={role === 'vendor' ? 'active' : ''} onClick={() => setRole('vendor')}>Vendor</button>
-            <button className={role === 'admin' ? 'active' : ''} onClick={() => setRole('admin')}>Admin</button>
           </div>
 
           {error && <div className="error-message" style={{color: 'red', marginBottom: '10px'}}>{error}</div>}
@@ -609,23 +585,7 @@ export default function Register() {
               </>
             )}
 
-            {/* --- ADMIN FIELDS --- */}
-            {role === 'admin' && (
-              <div className="input-field full-width">
-                <label>Security Access Key</label>
-                <input 
-                  type="password" 
-                  placeholder="System Admin Key" 
-                  required 
-                  name="adminKey"
-                  value={formData.adminKey}
-                  onChange={handleInputChange}
-                  className={formData.adminKey ? 'input-valid' : ''}
-                />
-              </div>
-            )}
-
-            {/* Passwords */}
+{/* Passwords */}
             <div className="input-field">
               <label>Password</label>
               <input 
