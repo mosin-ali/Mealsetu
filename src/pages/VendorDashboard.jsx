@@ -15,6 +15,7 @@ const VendorDashboard = () => {
   const { addToast } = useToast();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [kitchenOpen, setKitchenOpen] = useState(true);
   const [menuCycle, setMenuCycle] = useState('Daily');
   const [reportFilter, setReportFilter] = useState('Daily Overview');
@@ -672,26 +673,28 @@ const handleSavePricing = async () => {
       case 'menu':
         return <WeeklyMenuPlanner />;
 
-      case 'orders':
+case 'orders':
         return (
           <div className="v-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Orders & Upcoming Deliveries</h3>
               <div style={{ display: 'flex', gap: '10px' }}><input type="date" className="v-input" style={{ width: 'auto', margin: 0 }} /><button style={{ background: '#1e293b', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer' }}>Filter</button></div>
             </div>
-            <table className="v-table v-table-orders">
-              <thead><tr><th>Order ID</th><th>Customer Name</th><th>Meal Preference</th><th>Delivery Slot</th></tr></thead>
-              <tbody>
-                {vendorOrders.map(o => (
-                  <tr key={o._id}>
-                    <td>#{o._id.slice(-6)}</td>
-                    <td>{o.userId?.name || 'Customer'}</td>
-                    <td>{o.mealPreference}</td>
-                    <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="w-full overflow-x-auto">
+              <table className="v-table v-table-orders">
+                <thead><tr><th>Order ID</th><th>Customer Name</th><th>Meal Preference</th><th>Delivery Slot</th></tr></thead>
+                <tbody>
+                  {vendorOrders.map(o => (
+                    <tr key={o._id}>
+                      <td>#{o._id.slice(-6)}</td>
+                      <td>{o.userId?.name || 'Customer'}</td>
+                      <td>{o.mealPreference}</td>
+                      <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
 

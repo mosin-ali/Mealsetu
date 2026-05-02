@@ -1,21 +1,78 @@
 .auth-container {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #fef2e2 0%, #ffffff 100%);
   padding: 20px;
-  overflow: hidden; /* Prevents the whole page from scrolling */
+  overflow-x: hidden;
 }
 
 .modern-register-card {
-  width: 950px;
-  height: 600px; /* Maintains fixed height */
+  width: 100%;
+  max-width: 950px;
+  min-height: 600px;
   background: white;
   border-radius: 30px;
   display: flex;
   box-shadow: 0 25px 50px -12px rgba(242, 101, 34, 0.15);
-  overflow: hidden; /* Contains internal elements */
+  overflow: hidden;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .auth-container {
+    padding: 10px;
+    align-items: flex-start;
+    padding-top: 20px;
+  }
+  
+  .modern-register-card {
+    flex-direction: column;
+    border-radius: 20px;
+    min-height: auto;
+  }
+  
+  /* Sidebar and form stack vertically */
+  .auth-sidebar {
+    width: 100%;
+    padding: 30px 20px;
+    border-radius: 20px 20px 0 0;
+  }
+  
+  .auth-form-content {
+    width: 100%;
+    padding: 25px 20px;
+  }
+  
+  .grid-form {
+    grid-template-columns: 1fr;
+  }
+  
+  .full-width {
+    grid-column: span 1;
+  }
+  
+  .submit-btn {
+    grid-column: span 1;
+  }
+  
+  /* OTP Modal responsive */
+  .otp-modal {
+    width: 90%;
+    max-width: 350px;
+    padding: 25px 20px;
+  }
+  
+  .otp-inputs-container {
+    gap: 6px;
+  }
+  
+  .otp-input-box {
+    width: 38px;
+    height: 48px;
+    font-size: 18px;
+  }
 }
 
 /* --- Left Section (Fixed) --- */

@@ -144,6 +144,36 @@
   background: #1e293b;
   box-shadow: 0 4px 12px rgba(51, 65, 85, 0.3);
 }
+
+/* Mobile responsive - convert sidebar to drawer */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: -280px;
+    z-index: 1000;
+    transition: left 0.3s ease;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+  }
+  
+  .sidebar.open {
+    left: 0;
+  }
+  
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+  
+  .sidebar-overlay.open {
+    display: block;
+  }
+}
 /* src/components/dashboard/shared/Sidebar.css */
 .sidebar-container {
   width: 280px;

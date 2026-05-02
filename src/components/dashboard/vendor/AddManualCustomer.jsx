@@ -189,7 +189,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
       {showForm && (
         <div style={{ background: '#f8fafc', padding: '25px', borderRadius: '12px', marginBottom: '25px', border: '1px solid #e2e8f0' }}>
           <h4 style={{ color: '#2b3674', marginBottom: '20px' }}>Add Manual Customer</h4>
-          <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
+<form onSubmit={handleSubmit} className="flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-3">
             <div>
               <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Customer Name *</label>
               <input
@@ -348,7 +348,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
             <p>Click "➕ Add New" above to add your first offline customer</p>
           </div>
         ) : (
-          <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+<div className="w-full overflow-x-auto" style={{ maxHeight: '500px', overflowY: 'auto' }}>
             <table className="v-table">
               <thead>
                 <tr>

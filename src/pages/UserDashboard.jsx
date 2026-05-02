@@ -34,10 +34,10 @@ import { OrderProvider } from '../context/OrderContext';
 
 
 export default function UserDashboard() {
-
   const navigate = useNavigate();
 
-
+  // Sidebar state for mobile drawer
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // 1. INITIALIZE STATE
   const [user, setUser] = useState({
@@ -101,11 +101,8 @@ export default function UserDashboard() {
 
 
 
-  // FEATURE STATE: ACTIVE TAB
-
+// FEATURE STATE: ACTIVE TAB
   const [activeTab, setActiveTab] = useState('services');
-
-
 
   // REVIEW ELIGIBILITY STATE
   const [reviewEligibility, setReviewEligibility] = useState(null);
@@ -1155,23 +1152,36 @@ Transaction: ${transactionId}`,
 
 
 
-  return (
-
+return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'sans-serif' }}>
 
-      <Sidebar
+      {/* Mobile Hamburger Button - only visible on mobile */}
+      <button 
+        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-lg"
+        onClick={() => setSidebarOpen(true)}
+        style={{ background: '#f26522', color: 'white', border: 'none', cursor: 'pointer' }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
 
+<Sidebar
+        className={sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64' : 'hidden md:block'}
         menuItems={menuItems}
-
         activeTab={activeTab}
-
-        onTabChange={setActiveTab}
-
+        onTabChange={(tab) => { setActiveTab(tab); setSidebarOpen(false); }}
         onLogout={handleLogout}
-
         userInfo={userInfo}
-
       />
+
+      {/* Mobile Backdrop Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
 
 

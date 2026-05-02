@@ -1,7 +1,7 @@
 import React from 'react';
 import './AdminSidebar.css';
 
-const AdminSidebar = ({ activeTab, onTabChange, onLogout }) => {
+const AdminSidebar = ({ activeTab, onTabChange, onLogout, className = '' }) => {
   const menuItems = [
     { key: 'requests', label: 'Vendor Requests' },
     { key: 'users', label: 'User Management' },
@@ -9,8 +9,8 @@ const AdminSidebar = ({ activeTab, onTabChange, onLogout }) => {
     { key: 'profile', label: 'Admin Profile' },
   ];
 
-  return (
-    <aside className="admin-sidebar">
+return (
+    <aside className={`admin-sidebar ${className}`}>
       <div className="admin-sidebar-logo">MealSetu Admin</div>
       <nav className="admin-nav">
         {menuItems.map((item) => (

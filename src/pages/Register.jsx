@@ -372,12 +372,12 @@ export default function Register() {
     }
   };
 
-  return (
+return (
     <div className="auth-container">
-      <div className="modern-register-card">
+      <div className="modern-register-card flex flex-col md:flex-row">
         
         {/* Left Side: Brand & Image */}
-        <div className="auth-sidebar">
+        <div className="auth-sidebar w-full md:w-[35%] h-auto md:h-full">
           <div className="brand-header">
             <h1>MealSetu</h1>
             <p>Your daily meal partner</p>
@@ -403,7 +403,7 @@ export default function Register() {
         </div>
 
         {/* Right Side: Scroll-enabled Form Content */}
-        <div className="auth-form-content">
+        <div className="auth-form-content w-full md:w-[65%]">
           <div className="role-selector">
 <button className={role === 'user' ? 'active' : ''} onClick={() => setRole('user')}>Customer</button>
             <button className={role === 'vendor' ? 'active' : ''} onClick={() => setRole('vendor')}>Vendor</button>
