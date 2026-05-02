@@ -80,7 +80,7 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
     }
   };
 
-  // ✅ FIXED UPI flow: fetch vendor FIRST, validate upiId, then create order
+// ✅ FIXED UPI flow: fetch vendor FIRST, validate upiId, then create order
   const createOrder = async (paymentMethod) => {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -93,7 +93,46 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
         throw new Error('No vendor available. Please try again later or contact support.');
       }
 
-      if (paymentMethod === 'UPI') {
+      // FIX 7: Check if user has NO active plan - call placeOrder instead of extendSubscriptionOrder
+      if (!currentSubscription) {
+        // User has NO active plan - create new active order immediately
+        const today = new Date().toISOString().split('T')[0];
+        
+        const response = await apiCall('/users/order', {
+          method: 'POST',
+          body: JSON.stringify({
+            vendorId: selectedVendorId,
+            amount: selectedPlan === 'WEEKLY' ? 560 : 2000,
+            plan: selectedPlan,
+            paymentMethod: paymentMethod,
+            startDate: today,  // Always today when no active plan
+            deliverySlot: 'Lunch',
+            mealPreference: 'Regular'
+          })
+        });
+        
+        console.log('Direct order response:', response);
+        setCurrentOrderId(response.order?._id);
+        
+        // Cash payment success
+        setShowPaymentModal(false);
+        setShowSuccessModal(true);
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
+        await fetchSubscriptionData();
+        closeAllModals();
+
+        if (onSubscriptionActivated) {
+          onSubscriptionActivated(response);
+        }
+        
+        isSubmittingRef.current = false;
+        setIsProcessing(false);
+        setIsExtending(false);
+        return;
+      }
+
+if (paymentMethod === 'UPI') {
         // Step 1: Fetch vendors FIRST
         const vendorRes = await apiCall(`/users/vendors`);
         console.log("Vendor API FULL:", vendorRes);
@@ -140,12 +179,30 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
         setShowPaymentModal(false);   
         setShowQRCode(true);
         return;
-      } else {
-        // Cash flow unchanged
-        const response = await extendSubscriptionOrder(selectedPlan, selectedVendorId, paymentMethod);
-        const orderId = response.order?._id;
-        setCurrentOrderId(orderId);
       }
+
+      // Cash flow - FIX 7: Check if user has active plan
+      let response;
+      if (currentSubscription) {
+        // User has active plan — extend/queue the subscription
+        response = await extendSubscriptionOrder(selectedPlan, selectedVendorId, paymentMethod);
+      } else {
+        // User has NO active plan — create new active order immediately
+        response = await apiCall('/users/order', {
+          method: 'POST',
+          body: JSON.stringify({
+            vendorId: selectedVendorId,
+            amount: selectedPlan === 'WEEKLY' ? 560 : 2000,
+            plan: selectedPlan,
+            paymentMethod: paymentMethod,
+            startDate: new Date().toISOString().split('T')[0],
+            deliverySlot: 'Lunch',
+            mealPreference: 'Regular'
+          })
+        });
+      }
+      const orderId = response.order?._id;
+      setCurrentOrderId(orderId);
 
       // Cash payment success
       setShowPaymentModal(false);

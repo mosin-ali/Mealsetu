@@ -179,14 +179,15 @@ const autoDetectDone = useRef(false);
     return DAYS_OF_WEEK[date.getDay()];
   };
 
-  const startOrder = async (tiffin) => {
+const startOrder = async (tiffin) => {
     console.log('selectedTiffin upiId:', tiffin.upiId);
     setSelectedTiffin(tiffin);
     setOrderStep(1);
+    // FIX 6: Always set startDate to today by default
     const today = new Date().toISOString().split('T')[0];
     setOrderData({ plan: '', selectedPlan: '', menuType: 'regular', payment: 'Cash', startDate: today, altMainSubji: '' });
     await fetchWeeklyMenu(tiffin);
-    setSelectedMenuDay(getDayFromDate(new Date().toISOString().split('T')[0]));
+    setSelectedMenuDay(getDayFromDate(today));
   };
 
   const fetchWeeklyMenu = async (tiffin) => {
@@ -573,8 +574,25 @@ const autoDetectDone = useRef(false);
               });
             })()}
           </div>
-          <label className="input-label">START DATE</label>
-          <input type="date" className="date-input" value={orderData.startDate} onChange={(e) => setOrderData({ ...orderData, startDate: e.target.value })} min={new Date().toISOString().split('T')[0]} />
+<label className="input-label">START DATE</label>
+          {/* FIX 6: Lock startDate to today when user has NO active plan */}
+          <input 
+            type="date"
+            value={orderData.startDate}
+            onChange={(e) => {
+              // Only allow future dates if user has an active plan
+              if (!hasActivePlan) {
+                // Force today when no active plan
+                const today = new Date().toISOString().split('T')[0];
+                setOrderData({ ...orderData, startDate: today });
+              } else {
+                setOrderData({ ...orderData, startDate: e.target.value });
+              }
+            }} 
+            min={new Date().toISOString().split('T')[0]}
+            disabled={!hasActivePlan}
+            className="date-input"
+          />
           <button className="primary-order-btn" onClick={() => setOrderStep(2)} disabled={!orderData.startDate || !orderData.plan}>
             Next: View Menu
           </button>
