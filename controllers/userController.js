@@ -789,8 +789,10 @@ const placeOrder = async (req, res) => {
       });
     }
 
-    // No active order - create active order and subscription immediately
-    subscriptionStartDate = startDate ? new Date(startDate) : new Date();
+// FIX 1: No active order - create active order and subscription immediately
+    // ALWAYS set startDate to TODAY regardless of what frontend sends
+    subscriptionStartDate = new Date();
+    subscriptionStartDate.setHours(0, 0, 0, 0);
     subscriptionExpiryDate = new Date(subscriptionStartDate);
     subscriptionExpiryDate.setDate(subscriptionExpiryDate.getDate() + durationDays);
 
@@ -1426,32 +1428,30 @@ const createTrialOrder = async (req, res) => {
 
 // @desc    Get current user's active subscription order
 // @route   GET /api/orders/my-subscription
+// FIX 2: Fixed to properly return active orders where startDate has already started
 const getMySubscription = async (req, res) => {
   try {
     const userId = req.user._id;
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
+    // FIX 2: Query properly returns active orders where startDate has already started
     const activeOrder = await Order.findOne({
       userId: userId,
-      $or: [
-        { endDate: { $gt: now } },
-        { status: 'active' }
-      ],
-      status: { $ne: 'cancelled' }
+      status: 'active',
+      startDate: { $lte: now },  // must have started
+      endDate: { $gte: now }     // must not have ended
     })
       .populate('vendorId', 'kitchenName')
       .sort({ createdAt: -1 });
 
     if (!activeOrder) return res.json(null);
 
-    const isActive = activeOrder.endDate && new Date(activeOrder.endDate) > now;
-
     res.json({
       planType: activeOrder.planType,
       startDate: activeOrder.startDate,
       endDate: activeOrder.endDate,
-      status: isActive ? 'active' : 'expired',
+      status: 'active',
       vendorId: activeOrder.vendorId?._id,
       vendorName: activeOrder.vendorId?.kitchenName || 'Partner Kitchen',
       amount: activeOrder.amount,
@@ -1466,16 +1466,18 @@ const getMySubscription = async (req, res) => {
 
 // @desc    Get upcoming (pending) orders
 // @route   GET /api/orders/upcoming
+// FIX 3: Add date filter so only truly future pending orders show as upcoming
 const getUpcomingOrders = async (req, res) => {
   try {
     const userId = req.user._id;
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
 
+    // FIX 3: Only return orders where startDate is in the future
     const upcomingOrders = await Order.find({
       userId: userId,
-      $or: [
-        { status: 'pending' },
-        { offerStatus: 'pending' }
-      ]
+      status: 'pending',
+      startDate: { $gt: now }   // only future orders
     })
       .populate('vendorId', 'kitchenName')
       .sort({ scheduledStartDate: 1 });
@@ -1496,6 +1498,70 @@ const getUpcomingOrders = async (req, res) => {
   } catch (error) {
     console.error('Get upcoming orders error:', error);
     res.status(500).json({ message: 'Error getting upcoming orders', error: error.message });
+  }
+};
+
+// FIX 4: One-time fix for already broken orders in database
+// This function finds orders stuck as pending where startDate <= today
+// and activates them if user has no other active order
+const fixStuckOrders = async () => {
+  try {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    console.log('🔧 Running fixStuckOrders...');
+
+    // Find orders stuck as pending where startDate <= today
+    const stuckOrders = await Order.find({
+      status: 'pending',
+      startDate: { $lte: now }
+    });
+
+    console.log(`📋 Found ${stuckOrders.length} stuck orders to check`);
+
+    for (const order of stuckOrders) {
+      try {
+        // Check if user already has an active order
+        const hasActive = await Order.findOne({
+          userId: order.userId,
+          status: 'active',
+          endDate: { $gte: now },
+          _id: { $ne: order._id }
+        });
+
+        if (!hasActive) {
+          // Activate this stuck order
+          const startDate = new Date(now);
+          const durationDays = order.planType === 'Weekly' ? 7 : order.planType === 'Monthly' ? 30 : 7;
+          const endDate = new Date(startDate);
+          endDate.setDate(endDate.getDate() + durationDays);
+
+          order.status = 'active';
+          order.startDate = startDate;
+          order.endDate = endDate;
+          await order.save();
+
+          console.log('✅ Fixed stuck order:', order._id);
+        }
+      } catch (orderError) {
+        console.error(`❌ Error fixing stuck order ${order._id}:`, orderError);
+      }
+    }
+
+    console.log('✅ fixStuckOrders completed');
+  } catch (error) {
+    console.error('❌ fixStuckOrders error:', error);
+  }
+};
+
+// API endpoint to manually trigger fixStuckOrders
+const runFixStuckOrders = async (req, res) => {
+  try {
+    await fixStuckOrders();
+    res.json({ message: 'Stuck orders fixed successfully' });
+  } catch (error) {
+    console.error('Error running fixStuckOrders:', error);
+    res.status(500).json({ message: 'Error fixing stuck orders', error: error.message });
   }
 };
 
@@ -1751,8 +1817,10 @@ module.exports = {
   checkReviewEligibility,
   getTrialEligibility,
   createTrialOrder,
-  getMySubscription,
+getMySubscription,
   getUpcomingOrders,
   extendSubscriptionOrder,
-  checkSubscriptionPaymentStatus
+  checkSubscriptionPaymentStatus,
+  fixStuckOrders,
+  runFixStuckOrders
 };

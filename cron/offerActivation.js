@@ -160,10 +160,13 @@ const processPendingSubscriptionOrders = async () => {
     now.setHours(0, 0, 0, 0);
     const today = new Date(now);
 
-    // Find all pending orders where scheduledStartDate has arrived
+    // FIX 5: Also find pending orders where startDate <= today (missed by previous runs)
     const pendingOrders = await Order.find({
       status: 'pending',
-      scheduledStartDate: { $lte: now }
+      $or: [
+        { scheduledStartDate: { $lte: now } },
+        { startDate: { $lte: now } }
+      ]
     }).populate('vendorId').populate('userId');
 
     console.log(`📋 Found ${pendingOrders.length} pending subscription orders to process`);

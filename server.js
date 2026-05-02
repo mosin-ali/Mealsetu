@@ -179,10 +179,15 @@ const startServer = async () => {
       // Verify email configuration
       await verifyEmailConnection();
 
-      // Start cron jobs
+// Start cron jobs
       startOfferActivationCron();
       startTrialExpiryCron();
       startUserActivityCron();
+
+      // FIX 4: Run one-time fix for stuck orders on startup
+      // This activates orders that are stuck as pending where startDate <= today
+      const { fixStuckOrders } = require('./controllers/userController');
+      fixStuckOrders().catch(err => console.error('Error running fixStuckOrders on startup:', err));
 
       // Start weekly commission cron
       startWeeklyCommissionCron();
