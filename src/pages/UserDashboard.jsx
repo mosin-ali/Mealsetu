@@ -31,7 +31,7 @@ import PasswordModal from '../components/dashboard/user/PasswordModal';
 import { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, applyLeave, getUserSubscription, getActiveSubscriptionStatus, extendSubscription, getVendorWeeklyPlan, checkReviewEligibility, getApprovedVendors, getActiveOffers, redeemOffer, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, getClaimedOffers } from '../utils/api';
 import { OrderProvider } from '../context/OrderContext';
 
-
+import './UserDashbord.css';
 
 export default function UserDashboard() {
   const navigate = useNavigate();
@@ -1151,307 +1151,193 @@ Transaction: ${transactionId}`,
   }
 
 
-
 return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'sans-serif' }}>
+  <div className="user-container">
 
-      {/* Mobile Hamburger Button - only visible on mobile */}
-      <button 
-        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-lg"
+    {/* Mobile Topbar - shows on mobile only */}
+    <div className="user-topbar">
+      <span className="user-topbar-brand">MealSetu</span>
+      <button
+        className="user-hamburger"
         onClick={() => setSidebarOpen(true)}
-        style={{ background: '#f26522', color: 'white', border: 'none', cursor: 'pointer' }}
+        aria-label="Open menu"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
+        <span></span>
+        <span></span>
+        <span></span>
       </button>
-
-<Sidebar
-        className={sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64' : 'hidden md:block'}
-        menuItems={menuItems}
-        activeTab={activeTab}
-        onTabChange={(tab) => { setActiveTab(tab); setSidebarOpen(false); }}
-        onLogout={handleLogout}
-        userInfo={userInfo}
-      />
-
-      {/* Mobile Backdrop Overlay */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-
-
-      {/* --- MAIN CONTENT --- */}
-
-      <main style={{ flex: 1, padding: '30px', overflowY: 'auto' }}>
-
-
-
-        <WelcomeCard
-
-          user={user}
-
-          onDetectLocation={handleAutoLocation}
-
-          onSecuritySettings={() => setShowPasswordModal(true)}
-
-        />
-
-
-
-        {activeTab === 'services' && (
-          <OrderProvider>
-            <OrderMeals
-              tiffins={tiffins}
-              user={user}
-              hasActivePlan={hasActivePlan}
-              onOrder={(vendor, orderData) => handleOrder(vendor, orderData)}
-              onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
-              onWriteReview={(vendor) => handleWriteReview(vendor)}
-            />
-          </OrderProvider>
-        )}
-
-
-
-        {activeTab === 'subscription' && (
-
-          <Subscription
-
-            user={user}
-
-            subscription={subscription}
-
-            leaveStart={leaveStart}
-
-            leaveEnd={leaveEnd}
-
-            mealType={mealType}
-
-            onLeaveStartChange={setLeaveStart}
-
-            onLeaveEndChange={setLeaveEnd}
-
-            onMealTypeChange={setMealType}
-
-            onApplyLeave={handleApplyLeave}
-
-            onExtendSubscription={handleExtendSubscription}
-
-            vendorId={subscription?.vendorId || tiffins[0]?.vendorId}
-
-            onSubscriptionActivated={(response) => {
-              // Update hasActivePlan state to hide trial button immediately
-              setHasActivePlan(true);
-              
-              // Update subscription state with the new data
-              if (response.subscription) {
-                setSubscription({
-                  subscription: response.subscription,
-                  isActive: true,
-                  isExpired: false,
-                  daysRemaining: response.subscription.days || 30
-                });
-              }
-              
-              // Update user state with new expiry date
-              if (response.subscription && response.subscription.expiryDate) {
-                const newExpiryDate = new Date(response.subscription.expiryDate).toISOString().split('T')[0];
-                setUser(prev => ({ ...prev, expiryDate: newExpiryDate }));
-              }
-              
-              // Refresh orders
-              getUserOrders().then(orders => setOrders(orders || []));
-            }}
-
-          />
-
-        )}
-
-
-
-        {activeTab === 'history' && (
-          <History
-            paymentHistory={(orders || []).map(o => ({
-              id: o._id ? o._id.slice(-8).toUpperCase() : 'N/A',
-              date: o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN'),
-              plan: o.planType || o.mealPreference || 'Tiffin',
-              amount: Number(o.amount) || 0,
-              status: o.paymentStatus || 'Pending',
-              // Additional order details for PDF
-              vendorId: o.vendorId?._id || o.vendorId || null,
-              vendorName: o.vendorId?.kitchenName || 'Partner Kitchen',
-              vendorAddress: o.vendorId?.address || '',
-              mealPreference: o.mealPreference || 'Regular',
-              deliverySlot: o.deliverySlot || 'Lunch',
-              paymentMethod: o.paymentMethod || 'Cash',
-              transactionId: o.transactionId || 'N/A',
-              orderId: o._id || '',
-              orderDate: o.orderDate || new Date().toISOString(),
-              customerName: user.name || '',
-              customerPhone: user.phone || '',
-              customerEmail: user.email || '',
-              customerAddress: user.address || ''
-            }))}
-            onDownloadInvoice={handleDownloadInvoice}
-          />
-        )}
-
-
-
-        {activeTab === 'offers' && (
-
-          <Offers
-
-            activeOffers={activeOffers}
-
-            offersLoading={offersLoading}
-
-            offersError={offersError}
-
-            onRedeemOffer={handleRedeemOffer}
-
-            claimedOfferIds={claimedOfferIds}
-
-          />
-
-        )}
-
-
-
-        {activeTab === 'safety' && (
-
-          <Safety />
-
-        )}
-
-
-
-      </main>
-
-
-
-      {/* --- MODALS --- */}
-
-      {showProfileModal && (
-
-        <ProfileModal
-
-          user={user}
-
-          onSave={handleSaveProfile}
-
-          onClose={() => {
-
-            setShowProfileModal(false);
-
-            setSelectedPhotoFile(null);
-
-          }}
-
-          onPhotoChange={handlePhotoChange}
-
-        />
-
-      )}
-
-
-
-      {showAllReviewsModal && (
-
-        <AllReviewsModal
-
-          vendor={selectedVendor}
-
-          onClose={() => setShowAllReviewsModal(false)}
-
-        />
-
-      )}
-
-
-
-      {showReviewModal && (
-
-        <ReviewModal
-
-          vendor={selectedVendor}
-
-          onSubmit={submitReview}
-
-          onClose={() => setShowReviewModal(false)}
-
-        />
-
-      )}
-
-
-
-      {showPasswordModal && (
-
-        <PasswordModal
-
-          user={user}
-
-          onClose={() => setShowPasswordModal(false)}
-
-          onForgotPassword={() => {}}
-
-        />
-
-      )}
-
-      {/* Review Eligibility Popup */}
-      {showReviewEligibilityPopup && (
-        <div className="modal-overlay" onClick={() => setShowReviewEligibilityPopup(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px', textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', marginBottom: '10px' }}>📋</div>
-            <h3 className="modal-title" style={{ marginBottom: '15px' }}>Review Status</h3>
-            <p style={{ color: '#555', marginBottom: '20px', lineHeight: '1.5' }}>
-              {reviewEligibility?.message || 'Unable to submit review at this time.'}
-            </p>
-            {reviewEligibility?.hasOrdered && (
-              <div style={{ 
-                background: '#fef3c7', 
-                padding: '10px', 
-                borderRadius: '8px', 
-                marginBottom: '20px',
-                fontSize: '14px'
-              }}>
-                <strong>Current Order Status:</strong> {reviewEligibility?.orderStatus || 'N/A'}
-              </div>
-            )}
-            {!reviewEligibility?.hasOrdered && (
-              <div style={{ 
-                background: '#fee2e2', 
-                padding: '10px', 
-                borderRadius: '8px', 
-                marginBottom: '20px',
-                fontSize: '14px'
-              }}>
-                Please place an order first to be able to leave a review.
-              </div>
-            )}
-            <div className="modal-actions">
-              <button 
-                className="btn-primary" 
-                onClick={() => setShowReviewEligibilityPopup(false)}
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-
     </div>
 
-  );
+    {/* Backdrop */}
+    <div
+      className={`user-sidebar-backdrop ${sidebarOpen ? 'show' : ''}`}
+      onClick={() => setSidebarOpen(false)}
+    />
+
+    {/* Sidebar */}
+    <Sidebar
+      isOpen={sidebarOpen}
+      onClose={() => setSidebarOpen(false)}
+      menuItems={menuItems}
+      activeTab={activeTab}
+      onTabChange={(tab) => { setActiveTab(tab); setSidebarOpen(false); }}
+      onLogout={handleLogout}
+      userInfo={userInfo}
+    />
+
+    {/* Main Content */}
+    <main className="user-main">
+      <WelcomeCard
+        user={user}
+        onDetectLocation={handleAutoLocation}
+        onSecuritySettings={() => setShowPasswordModal(true)}
+      />
+
+      {activeTab === 'services' && (
+        <OrderProvider>
+          <OrderMeals
+            tiffins={tiffins}
+            user={user}
+            hasActivePlan={hasActivePlan}
+            onOrder={(vendor, orderData) => handleOrder(vendor, orderData)}
+            onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
+            onWriteReview={(vendor) => handleWriteReview(vendor)}
+          />
+        </OrderProvider>
+      )}
+
+      {activeTab === 'subscription' && (
+        <Subscription
+          user={user}
+          subscription={subscription}
+          leaveStart={leaveStart}
+          leaveEnd={leaveEnd}
+          mealType={mealType}
+          onLeaveStartChange={setLeaveStart}
+          onLeaveEndChange={setLeaveEnd}
+          onMealTypeChange={setMealType}
+          onApplyLeave={handleApplyLeave}
+          onExtendSubscription={handleExtendSubscription}
+          vendorId={subscription?.vendorId || tiffins[0]?.vendorId}
+          onSubscriptionActivated={(response) => {
+            setHasActivePlan(true);
+            if (response.subscription) {
+              setSubscription({
+                subscription: response.subscription,
+                isActive: true,
+                isExpired: false,
+                daysRemaining: response.subscription.days || 30
+              });
+            }
+            if (response.subscription && response.subscription.expiryDate) {
+              const newExpiryDate = new Date(response.subscription.expiryDate).toISOString().split('T')[0];
+              setUser(prev => ({ ...prev, expiryDate: newExpiryDate }));
+            }
+            getUserOrders().then(orders => setOrders(orders || []));
+          }}
+        />
+      )}
+
+      {activeTab === 'history' && (
+        <History
+          paymentHistory={(orders || []).map(o => ({
+            id: o._id ? o._id.slice(-8).toUpperCase() : 'N/A',
+            date: o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN'),
+            plan: o.planType || o.mealPreference || 'Tiffin',
+            amount: Number(o.amount) || 0,
+            status: o.paymentStatus || 'Pending',
+            vendorId: o.vendorId?._id || o.vendorId || null,
+            vendorName: o.vendorId?.kitchenName || 'Partner Kitchen',
+            vendorAddress: o.vendorId?.address || '',
+            mealPreference: o.mealPreference || 'Regular',
+            deliverySlot: o.deliverySlot || 'Lunch',
+            paymentMethod: o.paymentMethod || 'Cash',
+            transactionId: o.transactionId || 'N/A',
+            orderId: o._id || '',
+            orderDate: o.orderDate || new Date().toISOString(),
+            customerName: user.name || '',
+            customerPhone: user.phone || '',
+            customerEmail: user.email || '',
+            customerAddress: user.address || ''
+          }))}
+          onDownloadInvoice={handleDownloadInvoice}
+        />
+      )}
+
+      {activeTab === 'offers' && (
+        <Offers
+          activeOffers={activeOffers}
+          offersLoading={offersLoading}
+          offersError={offersError}
+          onRedeemOffer={handleRedeemOffer}
+          claimedOfferIds={claimedOfferIds}
+        />
+      )}
+
+      {activeTab === 'safety' && <Safety />}
+    </main>
+
+    {/* Modals */}
+    {showProfileModal && (
+      <ProfileModal
+        user={user}
+        onSave={handleSaveProfile}
+        onClose={() => { setShowProfileModal(false); setSelectedPhotoFile(null); }}
+        onPhotoChange={handlePhotoChange}
+      />
+    )}
+
+    {showAllReviewsModal && (
+      <AllReviewsModal
+        vendor={selectedVendor}
+        onClose={() => setShowAllReviewsModal(false)}
+      />
+    )}
+
+    {showReviewModal && (
+      <ReviewModal
+        vendor={selectedVendor}
+        onSubmit={submitReview}
+        onClose={() => setShowReviewModal(false)}
+      />
+    )}
+
+    {showPasswordModal && (
+      <PasswordModal
+        user={user}
+        onClose={() => setShowPasswordModal(false)}
+        onForgotPassword={() => {}}
+      />
+    )}
+
+    {showReviewEligibilityPopup && (
+      <div className="modal-overlay" onClick={() => setShowReviewEligibilityPopup(false)}>
+        <div className="modal-content" onClick={(e) => e.stopPropagation()}
+          style={{ maxWidth: '400px', textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '10px' }}>📋</div>
+          <h3 className="modal-title" style={{ marginBottom: '15px' }}>Review Status</h3>
+          <p style={{ color: '#555', marginBottom: '20px', lineHeight: '1.5' }}>
+            {reviewEligibility?.message || 'Unable to submit review at this time.'}
+          </p>
+          {reviewEligibility?.hasOrdered && (
+            <div style={{ background: '#fef3c7', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px' }}>
+              <strong>Current Order Status:</strong> {reviewEligibility?.orderStatus || 'N/A'}
+            </div>
+          )}
+          {!reviewEligibility?.hasOrdered && (
+            <div style={{ background: '#fee2e2', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px' }}>
+              Please place an order first to be able to leave a review.
+            </div>
+          )}
+          <div className="modal-actions">
+            <button className="btn-primary"
+              onClick={() => setShowReviewEligibilityPopup(false)}>OK</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+  </div>
+);
 
 }

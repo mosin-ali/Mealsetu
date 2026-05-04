@@ -698,28 +698,29 @@ case 'orders':
           </div>
         );
 
-      case 'customers':
-        return (
-          <div className="v-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3>Active Subscriptions</h3>
-              {/* <div style={{ background: '#fff3ed', color: '#f26522', padding: '5px 15px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>Total: {activeSubscriptions.filter(s => s.status !== "Expired").length}</div> */}
-            </div>
-            <table className="v-table">
-              <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Total Orders</th></tr></thead>
-              <tbody>
-                {customers.map((c) => (
-                  <tr key={c._id}>
-                    <td style={{ fontWeight: 'bold' }}>{c.name}</td>
-                    <td>{c.phone}</td>
-                    <td>{c.email}</td>
-                    <td style={{ fontWeight: '600', color: '#f26522' }}>{c.totalOrders || 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
+     case 'customers':
+  return (
+    <div className="v-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h3>Active Subscriptions</h3>
+      </div>
+      <div className="table-scroll">
+        <table className="v-table">
+          <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Total Orders</th></tr></thead>
+          <tbody>
+            {customers.map((c) => (
+              <tr key={c._id}>
+                <td style={{ fontWeight: 'bold' }}>{c.name}</td>
+                <td>{c.phone}</td>
+                <td>{c.email}</td>
+                <td style={{ fontWeight: '600', color: '#f26522' }}>{c.totalOrders || 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
       case 'manual-customers':
         return <AddManualCustomer vendorProfile={profile} />;
@@ -835,7 +836,7 @@ case 'orders':
 
       case 'profile':
         return (
-          <div className="v-card">
+         <div className="profile-settings-grid">
             <h3 style={{ color: '#2b3674' }}>Kitchen Profile Settings</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginTop: '20px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1055,18 +1056,18 @@ case 'orders':
               </div>
             )}
             
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '30px' }}>
-              <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
-                <p><strong>FSSAI License</strong></p>
-                <input type="file" onChange={(e) => setDocuments({...documents, fssai: e.target.files[0]})} />
-                {documents.fssai && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.fssai.name}</p>}
-              </div>
-              <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
-                <p><strong>GST/Tax Document</strong></p>
-                <input type="file" onChange={(e) => setDocuments({...documents, gst: e.target.files[0]})} />
-                {documents.gst && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.gst.name}</p>}
-              </div>
-            </div>
+          <div className="compliance-grid">
+  <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
+    <p><strong>FSSAI License</strong></p>
+    <input type="file" onChange={(e) => setDocuments({...documents, fssai: e.target.files[0]})} />
+    {documents.fssai && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.fssai.name}</p>}
+  </div>
+  <div style={{ border: '2px dashed #ddd', padding: '20px', borderRadius: '15px', textAlign: 'center' }}>
+    <p><strong>GST/Tax Document</strong></p>
+    <input type="file" onChange={(e) => setDocuments({...documents, gst: e.target.files[0]})} />
+    {documents.gst && <p style={{ color: '#16a34a', fontSize: '12px' }}>Selected: {documents.gst.name}</p>}
+  </div>
+</div>
            
 
             <button 
@@ -1247,47 +1248,54 @@ case 'orders':
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', color: 'red' }}>Error: {error}</div>;
   }
 
-  return (
+return (
     <div className="vendor-container">
-      <aside className="v-sidebar">
+
+      {/* Hamburger Button - only shows on mobile */}
+      <button
+        className="hamburger-btn"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      {/* Backdrop - only on mobile when sidebar open */}
+      <div
+        className={`sidebar-backdrop ${sidebarOpen ? 'show' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <aside className={`v-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <h2 style={{ color: '#f26522', fontWeight: '800', marginBottom: '30px' }}>MealSetu</h2>
         <nav style={{ flex: 1 }}>
-          <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Overview</button>
-          <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => setActiveTab('menu')}> Menu Planner</button>
-          <button className={`v-nav-btn ${activeTab === 'pricing' ? 'active' : ''}`} onClick={() => setActiveTab('pricing')}>
-            <span style={{ marginRight: '8px' }}></span>Meal Pricing
-          </button>
-          <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => setActiveTab('orders')}> Order Tracking</button>
-          <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}> My Customers</button>
-          <button 
-            className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} 
-            onClick={() => setActiveTab('manual-customers')}
-          >
-            Add Customer
-          </button>
-          <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}> Reports & PDF</button>
-          <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => setActiveTab('commission')}>
-             Commission
-          </button>
-          {/* NEW BUTTONS ADDED TO SIDEBAR */}
-          <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}> Reviews</button>
-          <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}> Compliance</button>
-          <button className={`v-nav-btn ${activeTab === 'offers' ? 'active' : ''}`} onClick={() => setActiveTab('offers')}> Offers</button>
-          <button className={`v-nav-btn ${activeTab === 'trials' ? 'active' : ''}`} onClick={() => setActiveTab('trials')}> Trial Settings</button>
-          <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}> Edit Profile</button>
+          <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('dashboard'); setSidebarOpen(false); }}>Overview</button>
+          <button className={`v-nav-btn ${activeTab === 'menu' ? 'active' : ''}`} onClick={() => { setActiveTab('menu'); setSidebarOpen(false); }}>Menu Planner</button>
+          <button className={`v-nav-btn ${activeTab === 'pricing' ? 'active' : ''}`} onClick={() => { setActiveTab('pricing'); setSidebarOpen(false); }}>Meal Pricing</button>
+          <button className={`v-nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => { setActiveTab('orders'); setSidebarOpen(false); }}>Order Tracking</button>
+          <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => { setActiveTab('customers'); setSidebarOpen(false); }}>My Customers</button>
+          <button className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} onClick={() => { setActiveTab('manual-customers'); setSidebarOpen(false); }}>Add Customer</button>
+          <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setSidebarOpen(false); }}>Reports & PDF</button>
+          <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => { setActiveTab('commission'); setSidebarOpen(false); }}>Commission</button>
+          <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => { setActiveTab('reviews'); setSidebarOpen(false); }}>Reviews</button>
+          <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => { setActiveTab('compliance'); setSidebarOpen(false); }}>Compliance</button>
+          <button className={`v-nav-btn ${activeTab === 'offers' ? 'active' : ''}`} onClick={() => { setActiveTab('offers'); setSidebarOpen(false); }}>Offers</button>
+          <button className={`v-nav-btn ${activeTab === 'trials' ? 'active' : ''}`} onClick={() => { setActiveTab('trials'); setSidebarOpen(false); }}>Trial Settings</button>
+          <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => { setActiveTab('profile'); setSidebarOpen(false); }}>Edit Profile</button>
         </nav>
-        <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>  Logout</button>
+        <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>Logout</button>
       </aside>
 
       <main className="vendor-main">
-        {/* NEW NOTIFICATION UI ADDED AT TOP OF MAIN */}
         {notifications.length > 0 && (
-          <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="notification-container">
             {notifications.map(n => (
-              <div key={n.id} style={{ background: '#2b3674', color: 'white', padding: '15px 25px', borderRadius: '12px', boxShadow: '0 10px 15px rgba(0,0,0,0.1)', display: 'flex', gap: '15px', alignItems: 'center' }}>
+              <div key={n.id} className="notification-item">
                 <span>{n.type === 'order' ? '🔔' : '📝'}</span>
                 <span>{n.text}</span>
-                <button onClick={() => setNotifications(notifications.filter(notif => notif.id !== n.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+                <button className="notification-close-btn" onClick={() => setNotifications(notifications.filter(notif => notif.id !== n.id))}>✕</button>
               </div>
             ))}
           </div>
@@ -1309,7 +1317,7 @@ case 'orders':
         </header>
 
         {renderContent()}
-  </main>
+      </main>
     </div>
   );
 };
@@ -1863,4 +1871,3 @@ await saveJainMenu({
     </div>
   );
 };
-

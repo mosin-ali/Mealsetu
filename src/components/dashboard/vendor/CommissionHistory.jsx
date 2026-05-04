@@ -65,7 +65,7 @@ const CommissionHistory = () => {
   return (
 <div className={styles.commissionContainer}>
       {/* SUMMARY CARDS */}
-<div className={styles.summaryGrid}>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
 <div className={`${styles.card} ${styles.cardGreen}`}>
           <h3>Total Earnings</h3>
           <div className="amount">₹{summary?.total_earning?.toLocaleString() || 0}</div>
@@ -107,7 +107,8 @@ const CommissionHistory = () => {
     <h2>Commission History</h2>
     <button className={styles.refreshBtn} onClick={fetchData}>⟳ Refresh</button>
   </div>
-  <table className={styles.historyTable}>
+  <div className="w-full overflow-x-auto">
+  <table className={styles.historyTable} style={{minWidth: '600px'}}>
     <thead>
       <tr>
         <th>Month</th>
@@ -154,6 +155,7 @@ const CommissionHistory = () => {
       )}
     </tbody>
   </table>
+  </div>
 </div>
 
 
@@ -231,3 +233,4 @@ const CommissionHistory = () => {
   );
 } 
 export default CommissionHistory;
+

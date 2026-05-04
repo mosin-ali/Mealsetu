@@ -1,4 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* --- Professional Theme Variables --- */
+
 :root {
   --primary: #f26522; /* MealSetu Orange */
   --primary-hover: #d4541a;

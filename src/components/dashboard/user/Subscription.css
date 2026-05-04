@@ -9,13 +9,17 @@
   padding: 25px;
   border-radius: 20px;
   border: 1px solid #eef2f6;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
 }
 
 .subscription-card h3 {
-  margin-bottom: 15px;
+  margin: 0 0 15px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
 }
 
+/* ===== STATUS DISPLAY ===== */
 .status-display {
   background: #fff3ed;
   padding: 20px;
@@ -25,20 +29,24 @@
 
 .status-label {
   color: #64748b;
-  margin-bottom: 5px;
+  margin: 0 0 5px 0;
+  font-size: 14px;
 }
 
 .status-date {
   margin: 0;
   color: #f26522;
+  font-size: 20px;
+  font-weight: 700;
 }
 
+/* ===== EXTEND BUTTON ===== */
 .extend-btn {
   margin-top: 15px;
   width: 100%;
   background: #f26522;
   color: white;
-  font-weight: bold;
+  font-weight: 700;
   padding: 14px 20px;
   font-size: 16px;
   border: none;
@@ -51,14 +59,24 @@
   background: #e55a1a;
 }
 
+.extend-btn.disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+/* ===== LEAVE FORM ===== */
 .leave-form {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   margin-top: 15px;
 }
 
-.date-input {
+.leave-form>div {
   flex: 1;
+}
+
+.date-input {
+  width: 100%;
 }
 
 .input-label {
@@ -66,25 +84,43 @@
   font-weight: 600;
   color: #475569;
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .input-field {
   width: 100%;
   padding: 12px;
-  margin: 8px 0 15px 0;
+  margin: 0 0 15px 0;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-sizing: border-box;
+  font-size: 14px;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #f26522;
+  box-shadow: 0 0 0 3px rgba(242, 101, 34, 0.1);
 }
 
 .apply-leave-btn {
   width: 100%;
   background: #334155;
   color: white;
+  border: none;
+  padding: 13px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-/* Upcoming Plans Section */
+.apply-leave-btn:hover {
+  background: #1e293b;
+}
+
+/* ===== UPCOMING PLANS ===== */
 .upcoming-plans-list {
   display: flex;
   flex-direction: column;
@@ -103,10 +139,12 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .upcoming-plan-type {
-  font-weight: bold;
+  font-weight: 700;
   font-size: 16px;
   color: #f59e0b;
 }
@@ -123,4 +161,57 @@
   margin: 5px 0;
   font-size: 14px;
   color: #475569;
+}
+
+/* ===== SUCCESS TOAST ===== */
+.success-toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #22c55e;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  z-index: 2000;
+  white-space: nowrap;
+}
+
+/* ===== MOBILE ===== */
+@media (max-width: 768px) {
+  .subscription-card {
+    padding: 16px;
+    border-radius: 14px;
+  }
+
+  .subscription-card h3 {
+    font-size: 16px;
+  }
+
+  /* leave form stacks vertically on mobile */
+  .leave-form {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .extend-btn {
+    font-size: 15px;
+    padding: 12px;
+  }
+
+  .status-date {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .subscription-card {
+    padding: 14px;
+  }
+
+  .upcoming-plan-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

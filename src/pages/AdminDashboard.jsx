@@ -57,37 +57,41 @@ export default function AdminDashboard() {
   };
 
 return (
-    <div className="admin-dashboard">
-      {/* Mobile Hamburger Button - only visible on mobile */}
-      <button 
-        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg shadow-lg"
+  <div className="admin-dashboard">
+
+    {/* Mobile Topbar */}
+    <div className="admin-topbar">
+      <span className="admin-topbar-brand">MealSetu Admin</span>
+      <button
+        className="admin-hamburger"
         onClick={() => setSidebarOpen(true)}
-        style={{ background: '#1e293b', color: 'white', border: 'none', cursor: 'pointer' }}
+        aria-label="Open menu"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
+        <span></span>
+        <span></span>
+        <span></span>
       </button>
-
-      {/* Sidebar - hidden on mobile, fixed when open */}
-      <AdminSidebar
-        className={`hidden md:block ${sidebarOpen ? 'fixed inset-y-0 left-0 z-50' : ''}`}
-        activeTab={activeTab}
-        onTabChange={(tab) => { handleTabChange(tab); setSidebarOpen(false); }}
-        onLogout={handleLogout}
-      />
-
-      {/* Mobile Backdrop Overlay */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      <div className="admin-content">
-        {renderContent()}
-      </div>
     </div>
-  );
+
+    {/* Backdrop */}
+    <div
+      className={`admin-backdrop ${sidebarOpen ? 'show' : ''}`}
+      onClick={() => setSidebarOpen(false)}
+    />
+
+    {/* Sidebar */}
+    <AdminSidebar
+      activeTab={activeTab}
+      onTabChange={(tab) => { handleTabChange(tab); setSidebarOpen(false); }}
+      onLogout={handleLogout}
+      isOpen={sidebarOpen}
+      onClose={() => setSidebarOpen(false)}
+    />
+
+    <div className="admin-content">
+      {renderContent()}
+    </div>
+
+  </div>
+);
 }

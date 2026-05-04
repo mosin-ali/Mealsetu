@@ -1,5 +1,6 @@
 .admin-sidebar {
   width: 220px;
+  min-width: 220px;
   min-height: 100vh;
   background: #0f172a;
   display: flex;
@@ -7,7 +8,8 @@
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 100;
+  z-index: 1000;
+  transition: left 0.3s ease;
 }
 
 .admin-sidebar-logo {
@@ -16,6 +18,7 @@
   font-weight: 800;
   color: #60a5fa;
   border-bottom: 1px solid #1e293b;
+  letter-spacing: -0.3px;
 }
 
 .admin-nav {
@@ -57,8 +60,25 @@
   color: #ef4444;
   font-size: 14px;
   font-weight: 500;
+  transition: background 0.2s;
 }
 
 .admin-sidebar-logout:hover {
   background: #1e293b;
+}
+
+/* ===== MOBILE DRAWER ===== */
+@media (max-width: 768px) {
+  .admin-sidebar {
+    left: -230px;
+    top: 0;
+    height: 100vh;
+    box-shadow: none;
+    z-index: 1000;
+  }
+
+  .admin-sidebar.open {
+    left: 0;
+    box-shadow: 4px 0 30px rgba(0, 0, 0, 0.4);
+  }
 }

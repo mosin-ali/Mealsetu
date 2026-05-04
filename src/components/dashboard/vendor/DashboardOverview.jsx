@@ -74,8 +74,9 @@ const DashboardOverview = ({
         </div>
       </div>
 
-      <div className="stats-grid">
+      <div className="stats-grid grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
         <div className="stat-card">
+
           <p>Total Revenue</p>
           <h2>₹{revenue}</h2>
         </div>
@@ -97,8 +98,9 @@ const DashboardOverview = ({
         </div>
       </div>
 
-      <div className="main-grid">
+      <div className="main-grid flex flex-col gap-4 md:flex-row">
         <div className="preparation-card">
+
           <h3>Today's Preparation List</h3>
           <p>Total lunch boxes to pack: {preparationList.total}</p>
           <hr />

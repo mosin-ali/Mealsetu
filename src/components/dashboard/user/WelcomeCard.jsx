@@ -8,7 +8,8 @@ const WelcomeCard = ({ user, onDetectLocation, onSecuritySettings }) => {
   
   return (
     <div className="welcome-card">
-      <div className="welcome-content">
+      <div className="welcome-content flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
+
         <img 
           src={profilePic || defaultPic} 
           className="welcome-avatar" 
