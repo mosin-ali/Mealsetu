@@ -136,30 +136,36 @@
 }
 
 /* ==================== HAMBURGER BUTTON ==================== */
-
 .hamburger-btn {
   display: none;
   position: fixed;
-  top: 16px;
-  left: 16px;
-  z-index: 997;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 10px;
+  top: 14px;
+  left: 14px;
+  z-index: 1000;
+  background: var(--navy);
+  border: none;
+  border-radius: 10px;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 4px 14px rgba(30, 45, 90, 0.35);
   flex-direction: column;
   gap: 5px;
   align-items: center;
   justify-content: center;
+  transition: var(--transition);
+}
+
+.hamburger-btn:hover {
+  background: var(--primary);
+  transform: scale(1.05);
 }
 
 .hamburger-btn span {
   display: block;
-  width: 22px;
+  width: 20px;
   height: 2px;
-  background: var(--navy);
+  background: white;
   border-radius: 2px;
   transition: var(--transition);
 }
@@ -225,7 +231,7 @@
 
 @media (max-width: 768px) {
   .vendor-main {
-    padding: 70px 16px 16px 16px;
+    padding: 72px 16px 16px 16px;
   }
 }
 
@@ -240,30 +246,21 @@
   flex-wrap: wrap;
 }
 
-.vendor-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.vendor-title {
-  color: var(--text-primary);
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-  line-height: 1.2;
-}
-
 @media (max-width: 768px) {
-  .vendor-title {
-    font-size: 20px;
+  .vendor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
   }
-}
 
-.vendor-subtitle {
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 400;
+  .vendor-title {
+    font-size: 18px !important;
+  }
+
+  .vendor-subtitle {
+    font-size: 12px;
+  }
 }
 
 /* ==================== KITCHEN STATUS BAR ==================== */
@@ -497,16 +494,16 @@
 @media (max-width: 1024px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) {
   .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, 1fr) !important;
     gap: 10px;
   }
 }
-
 .stat-card {
   background: var(--bg-card);
   padding: 20px 22px;
@@ -1066,5 +1063,57 @@
   .filter-row select,
   .filter-row button {
     width: 100%;
+  }
+}
+
+/* ========== VENDOR MOBILE TOPBAR ========== */
+.vendor-topbar {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: var(--navy);
+  z-index: 1001;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.vendor-topbar-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -0.5px;
+}
+
+/* Override hamburger - now lives inside topbar */
+.hamburger-btn {
+  position: static !important;
+  /* remove fixed positioning */
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.1);
+  width: 40px;
+  height: 40px;
+}
+
+.hamburger-btn:hover {
+  background: var(--primary);
+}
+
+@media (max-width: 768px) {
+  .vendor-topbar {
+    display: flex;
+  }
+
+  /* hide the old floating hamburger — it's now in topbar */
+  .hamburger-btn {
+    display: flex;
+  }
+
+  .vendor-main {
+    padding: 72px 16px 16px 16px;
   }
 }

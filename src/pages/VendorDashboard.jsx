@@ -1249,9 +1249,12 @@ case 'orders':
   }
 
 return (
-    <div className="vendor-container">
 
-      {/* Hamburger Button - only shows on mobile */}
+  <div className="vendor-container">
+
+    {/* Mobile Topbar - brand left, hamburger right */}
+    <div className="vendor-topbar">
+      <span className="vendor-topbar-brand">MealSetu</span>
       <button
         className="hamburger-btn"
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1261,14 +1264,16 @@ return (
         <span></span>
         <span></span>
       </button>
+    </div>
 
-      {/* Backdrop - only on mobile when sidebar open */}
-      <div
-        className={`sidebar-backdrop ${sidebarOpen ? 'show' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      />
+    {/* Backdrop */}
+    <div
+      className={`sidebar-backdrop ${sidebarOpen ? 'show' : ''}`}
+      onClick={() => setSidebarOpen(false)}
+    />
 
-      <aside className={`v-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+    <aside className={`v-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      {/* rest of sidebar stays exactly the same */}
         <h2 style={{ color: '#f26522', fontWeight: '800', marginBottom: '30px' }}>MealSetu</h2>
         <nav style={{ flex: 1 }}>
           <button className={`v-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('dashboard'); setSidebarOpen(false); }}>Overview</button>

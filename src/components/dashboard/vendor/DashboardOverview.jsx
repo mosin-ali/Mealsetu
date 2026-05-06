@@ -30,53 +30,33 @@ const DashboardOverview = ({
 
   return (
     <div className="dashboard-overview">
+
+      {/* Overdue Warning Banner */}
       {pendingPayoutData.overdueAmount > 0 && (
-        <div 
-          style={{
-            backgroundColor: '#ef4444',
-            color: 'white',
-            padding: '16px 24px',
-            borderRadius: '12px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px'
-          }}
-        >
-          <span>WARNING</span>
-          <span>You have an overdue commission payment of ₹{pendingPayoutData.overdueAmount}. Please pay now to avoid account suspension.</span>
-          <button 
-            onClick={() => onTabChange('commission')}
-            style={{
-              backgroundColor: 'white',
-              color: '#ef4444',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px 20px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
+        <div className="overdue-banner">
+          <span>⚠️ <strong>WARNING:</strong> You have an overdue commission payment of ₹{pendingPayoutData.overdueAmount}. Please pay now to avoid account suspension.</span>
+          <button className="overdue-pay-btn" onClick={() => onTabChange('commission')}>
             Pay Now
           </button>
         </div>
       )}
-      <div className="profile-card">
 
+      {/* Profile Card */}
+      <div className="profile-card">
         <div className="profile-image">
-          {profile?.profileImage ? <img src={profile.profileImage} alt="Kitchen" /> : '🍳'}
+          {profile?.profileImage
+            ? <img src={profile.profileImage} alt="Kitchen" />
+            : '🍳'}
         </div>
         <div>
-          <h2>{profile?.kitchenName || 'Kitchen'}</h2>
+          <h2>{profile?.kitchenName || 'Your Kitchen'}</h2>
           <p>{profile?.address || 'Address not set'}</p>
         </div>
       </div>
 
-      <div className="stats-grid grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+      {/* Stats Grid */}
+      <div className="stats-grid">
         <div className="stat-card">
-
           <p>Total Revenue</p>
           <h2>₹{revenue}</h2>
         </div>
@@ -88,19 +68,21 @@ const DashboardOverview = ({
           <p>Active Users</p>
           <h2>{activeUsers}</h2>
         </div>
-        <div 
+        <div
           className="stat-card"
           style={{ cursor: 'pointer' }}
           onClick={() => onTabChange('commission')}
         >
           <p>Pending Payout</p>
-          <h2 style={{ color: '#f26522' }}>₹{pendingPayoutData.pendingAmount.toLocaleString()}</h2>
+          <h2 style={{ color: '#f26522' }}>
+            ₹{pendingPayoutData.pendingAmount.toLocaleString()}
+          </h2>
         </div>
       </div>
 
-      <div className="main-grid flex flex-col gap-4 md:flex-row">
+      {/* Main Grid - Preparation + Kitchen Status */}
+      <div className="main-grid">
         <div className="preparation-card">
-
           <h3>Today's Preparation List</h3>
           <p>Total lunch boxes to pack: {preparationList.total}</p>
           <hr />
@@ -117,15 +99,25 @@ const DashboardOverview = ({
             <span>{preparationList.veg}</span>
           </div>
         </div>
+
         <div className="kitchen-status-card">
           <h3>Kitchen Status</h3>
           <div className="status-display">
-            <div className="status-emoji">{kitchenStatus.isOpen ? '👨‍🍳' : '💤'}</div>
-            <p className="status-text">{kitchenStatus.isOpen ? 'Kitchen is Live' : 'Kitchen is Resting'}</p>
-            <p className="status-subtext">{kitchenStatus.isOpen ? 'Accepting new trial orders.' : 'Not accepting new orders.'}</p>
+            <span className="status-emoji">
+              {kitchenStatus.isOpen ? '👨‍🍳' : '💤'}
+            </span>
+            <p className="status-text">
+              {kitchenStatus.isOpen ? 'Kitchen is Live' : 'Kitchen is Resting'}
+            </p>
+            <p className="status-subtext">
+              {kitchenStatus.isOpen
+                ? 'Accepting new trial orders.'
+                : 'Not accepting new orders.'}
+            </p>
           </div>
         </div>
       </div>
+
     </div>
   );
 };
