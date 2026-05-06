@@ -45,10 +45,54 @@ const Subscription = ({ user, subscription, leaveStart, leaveEnd, mealType, onLe
   const [vendorDetails, setVendorDetails] = useState(null);
   const [currentOrderId, setCurrentOrderId] = useState(null);
 
-  const plans = [
+  // const plans = [
+  //   { id: 'WEEKLY', name: 'Weekly', price: 560, days: 7 },
+  //   { id: 'MONTHLY', name: 'Monthly', price: 2000, days: 30 },
+  // ];
+
+
+const [plans, setPlans] = useState([
     { id: 'WEEKLY', name: 'Weekly', price: 560, days: 7 },
     { id: 'MONTHLY', name: 'Monthly', price: 2000, days: 30 },
-  ];
+  ]);
+
+  // Fetch vendor pricing dynamically
+  useEffect(() => {
+    const fetchVendorPricing = async () => {
+      try {
+        if (!vendorId) return;
+        const vendorRes = await apiCall(`/users/vendors`);
+        const vendorsList = Array.isArray(vendorRes) ? vendorRes : vendorRes.vendors || [];
+        const matchedVendor = vendorsList.find(
+          v => String(v._id) === String(vendorId) || String(v.vendorId) === String(vendorId)
+        );
+        if (!matchedVendor || !matchedVendor.pricing) return;
+
+        const activePricing = matchedVendor.pricing.filter(p => p.active && p.price > 0);
+
+        const updatedPlans = [];
+
+        const weeklyPlan = activePricing.find(p => p.type === 'weekly');
+        const monthlyPlan = activePricing.find(p => p.type === 'monthly');
+
+        if (weeklyPlan) {
+          updatedPlans.push({ id: 'WEEKLY', name: 'Weekly', price: weeklyPlan.price, days: 7 });
+        }
+        if (monthlyPlan) {
+          updatedPlans.push({ id: 'MONTHLY', name: 'Monthly', price: monthlyPlan.price, days: 30 });
+        }
+
+        if (updatedPlans.length > 0) {
+          setPlans(updatedPlans);
+          setSelectedPlan(updatedPlans[updatedPlans.length > 1 ? 1 : 0].id);
+        }
+      } catch (err) {
+        console.warn('Could not fetch vendor pricing, using defaults:', err.message);
+      }
+    };
+
+    fetchVendorPricing();
+  }, [vendorId]);
 
   const selectedPlanDetails = plans.find(p => p.id === selectedPlan);
 
@@ -192,7 +236,7 @@ if (paymentMethod === 'UPI') {
           method: 'POST',
           body: JSON.stringify({
             vendorId: selectedVendorId,
-            amount: selectedPlan === 'WEEKLY' ? 560 : 2000,
+            amount: selectedPlanDetails?.price || (selectedPlan === 'WEEKLY' ? 560 : 2000),
             plan: selectedPlan,
             paymentMethod: paymentMethod,
             startDate: new Date().toISOString().split('T')[0],
