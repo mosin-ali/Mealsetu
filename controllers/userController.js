@@ -161,12 +161,12 @@ const extendSubscription = async (req, res) => {
       case 'WEEKLY':
         durationDays = 7;
         planType = 'Weekly';
-        amount = 560;
+        
         break;
       case 'MONTHLY':
         durationDays = 30;
         planType = 'Monthly';
-        amount = 2000;
+        
         break;
       case 'ONEDAY':
       default:
@@ -175,6 +175,25 @@ const extendSubscription = async (req, res) => {
         amount = 80;
         break;
     }
+
+    // Dynamic pricing from VendorPricing collection
+      const vendorPricingRecord = await VendorPricing.findOne({
+        vendor_id: vendorId,
+        plan_type: planType.toLowerCase(),
+        is_active: true
+      });
+
+      if (vendorPricingRecord && vendorPricingRecord.price > 0) {
+        amount = vendorPricingRecord.price;
+      } else {
+        // Fallback to vendor.pricing array
+        const vendorForPricing = await Vendor.findById(vendorId);
+        const pricingArray = Array.isArray(vendorForPricing?.pricing) ? vendorForPricing.pricing : [];
+        const matchedPlan = pricingArray.find(
+          p => (p.planType === planType.toLowerCase() || p.type === planType.toLowerCase()) && p.active
+        );
+        amount = matchedPlan?.price || (planType === 'Weekly' ? 560 : 2000);
+      }
 
     const startDate = new Date();
     const endDate = new Date(startDate);
