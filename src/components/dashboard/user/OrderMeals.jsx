@@ -5,7 +5,15 @@ import { getVendorWeeklyPlan, getVendorStatus, getUserVendorRating, createTrialO
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const OrderMeals = ({ tiffins, user, hasActivePlan, onOrder, onViewReviews, onWriteReview }) => {
+const OrderMeals = ({
+  tiffins,
+  user,
+  hasActivePlan,
+  activeSubscription,
+  onOrder,
+  onViewReviews,
+  onWriteReview
+}) =>  {
   const userTrialHistory = user?.trialHistory || [];
 
   const hasUsedTrial = (vendorId) => {
@@ -52,6 +60,8 @@ const autoDetectDone = useRef(false);
   const [isPincodeSearch, setIsPincodeSearch] = useState(false);
   const [selectedMenuDay, setSelectedMenuDay] = useState('');
 
+  const [showSubscriptionWarning, setShowSubscriptionWarning] = useState(false);
+const [selectedNewVendor, setSelectedNewVendor] = useState(null);
   // ALL useEffect hooks moved to TOP before any early returns - FIXES React Hooks violation
   useEffect(() => {
     if (user?.pincode) {
@@ -179,16 +189,73 @@ const autoDetectDone = useRef(false);
     return DAYS_OF_WEEK[date.getDay()];
   };
 
+
 const startOrder = async (tiffin) => {
-    console.log('selectedTiffin upiId:', tiffin.upiId);
-    setSelectedTiffin(tiffin);
-    setOrderStep(1);
-    // FIX 6: Always set startDate to today by default
-    const today = new Date().toISOString().split('T')[0];
-    setOrderData({ plan: '', selectedPlan: '', menuType: 'regular', payment: 'Cash', startDate: today, altMainSubji: '' });
-    await fetchWeeklyMenu(tiffin);
-    setSelectedMenuDay(getDayFromDate(today));
-  };
+  const selectedVendorId = tiffin.vendorId || tiffin._id || tiffin.id;
+
+  // ACTIVE PLAN CHECK
+  if (
+    activeSubscription &&
+    activeSubscription.status === 'active'
+  ) {
+    const activeVendorId =
+      activeSubscription.vendorId?._id ||
+      activeSubscription.vendorId;
+
+    // DIFFERENT VENDOR CHECK
+    if (String(activeVendorId) !== String(selectedVendorId)) {
+      setSelectedNewVendor(tiffin);
+      setShowSubscriptionWarning(true);
+      return;
+    }
+  }
+
+  console.log('selectedTiffin upiId:', tiffin.upiId);
+
+  setSelectedTiffin(tiffin);
+  setOrderStep(1);
+
+  const today = new Date().toISOString().split('T')[0];
+
+  setOrderData({
+    plan: '',
+    selectedPlan: '',
+    menuType: 'regular',
+    payment: 'Cash',
+    startDate: today,
+    altMainSubji: ''
+  });
+
+  await fetchWeeklyMenu(tiffin);
+
+  setSelectedMenuDay(getDayFromDate(today));
+};
+
+const continueWithUpcomingPlan = async () => {
+  if (!selectedNewVendor) return;
+
+  setShowSubscriptionWarning(false);
+
+  setSelectedTiffin(selectedNewVendor);
+  setOrderStep(1);
+
+  const today = new Date().toISOString().split('T')[0];
+
+  setOrderData({
+    plan: '',
+    selectedPlan: '',
+    menuType: 'regular',
+    payment: 'Cash',
+    startDate: today,
+    altMainSubji: ''
+  });
+
+  await fetchWeeklyMenu(selectedNewVendor);
+
+  setSelectedMenuDay(getDayFromDate(today));
+};
+
+
 
   const fetchWeeklyMenu = async (tiffin) => {
     const vendorId = tiffin.vendorId || tiffin._id || tiffin.id;
@@ -927,7 +994,95 @@ const startOrder = async (tiffin) => {
             <button className="btn-primary" onClick={() => setShowClosedPopup(false)}>OK</button>
           </div>
         </div>
+
+        
       )}
+      {showSubscriptionWarning && (
+  <div
+    className="modal-overlay"
+    onClick={() => setShowSubscriptionWarning(false)}
+  >
+    <div
+      className="qr-modal"
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        maxWidth: '450px',
+        padding: '24px'
+      }}
+    >
+      <h2 style={{ color: '#f97316', marginBottom: '14px' }}>
+        Active Subscription Found
+      </h2>
+
+      <p style={{ lineHeight: '1.7', color: '#374151' }}>
+        You already have an active subscription with
+        <strong>
+          {' '}
+          {activeSubscription?.vendorName || 'Current Vendor'}
+        </strong>
+        .
+      </p>
+
+      <div
+        style={{
+          background: '#fff7ed',
+          padding: '14px',
+          borderRadius: '10px',
+          marginTop: '15px'
+        }}
+      >
+        <p>
+          • Current plan will end on:
+          <strong>
+            {' '}
+            {new Date(activeSubscription?.endDate).toLocaleDateString('en-IN')}
+          </strong>
+        </p>
+
+        <p style={{ marginTop: '8px' }}>
+          • New vendor plan will start after current plan ends.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: '10px',
+          justifyContent: 'flex-end',
+          marginTop: '20px'
+        }}
+      >
+        <button
+          onClick={() => setShowSubscriptionWarning(false)}
+          style={{
+            padding: '10px 18px',
+            borderRadius: '8px',
+            border: '1px solid #d1d5db',
+            background: 'white',
+            cursor: 'pointer'
+          }}
+        >
+          Cancel
+        </button>
+
+        <button
+          onClick={continueWithUpcomingPlan}
+          style={{
+            padding: '10px 18px',
+            borderRadius: '8px',
+            border: 'none',
+            background: '#f97316',
+            color: 'white',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 };

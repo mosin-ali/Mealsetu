@@ -7,8 +7,6 @@
   font-family: 'Inter', sans-serif;
 }
 
-/* ==================== WARNING BANNER ==================== */
-
 .overdue-banner {
   background: linear-gradient(135deg, #ef4444, #dc2626);
   color: white;
@@ -39,14 +37,7 @@
   font-size: 13px;
   white-space: nowrap;
   font-family: 'Inter', sans-serif;
-  transition: all 0.2s;
 }
-
-.overdue-pay-btn:hover {
-  background: #fef2f2;
-}
-
-/* ==================== PROFILE CARD ==================== */
 
 .profile-card {
   display: flex;
@@ -58,12 +49,7 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
   border: 1px solid #f1f5f9;
   border-left: 4px solid #f26522;
-  transition: all 0.2s;
   flex-wrap: wrap;
-}
-
-.profile-card:hover {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 .profile-image {
@@ -99,12 +85,12 @@
   font-size: 13px;
 }
 
-/* ==================== STATS GRID ==================== */
-
+/* STATS GRID - matches VendorDashboard.css exactly */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
+  margin-bottom: 0;
 }
 
 .stat-card {
@@ -117,7 +103,6 @@
   transition: all 0.2s;
   position: relative;
   overflow: hidden;
-  cursor: default;
 }
 
 .stat-card::before {
@@ -158,15 +143,12 @@
   letter-spacing: -0.5px;
 }
 
-/* ==================== MAIN GRID ==================== */
-
+/* MAIN GRID */
 .main-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 20px;
 }
-
-/* ==================== PREPARATION CARD ==================== */
 
 .preparation-card {
   background: white;
@@ -210,10 +192,6 @@
   border-bottom: none;
 }
 
-.preparation-item span:first-child {
-  font-weight: 500;
-}
-
 .preparation-item span:last-child {
   font-weight: 800;
   color: #2b3674;
@@ -222,8 +200,6 @@
   border-radius: 50px;
   font-size: 13px;
 }
-
-/* ==================== KITCHEN STATUS CARD ==================== */
 
 .kitchen-status-card {
   background: white;
@@ -279,26 +255,27 @@
 
 @media (max-width: 1024px) {
   .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px;
   }
 
   .main-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
   }
 }
 
 @media (max-width: 768px) {
   .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px;
   }
 
   .stat-card {
-    padding: 16px 12px;
+    padding: 14px 12px;
   }
 
   .stat-card h2 {
-    font-size: 22px;
+    font-size: 20px;
   }
 
   .stat-card p {
@@ -306,8 +283,9 @@
   }
 
   .profile-card {
-    padding: 16px;
-    gap: 14px;
+    padding: 14px;
+    gap: 12px;
+    border-radius: 14px;
   }
 
   .profile-card h2 {
@@ -317,28 +295,31 @@
   .preparation-card,
   .kitchen-status-card {
     padding: 16px;
+    border-radius: 14px;
   }
 
   .main-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
+    grid-template-columns: 1fr !important;
+    gap: 14px;
   }
 
   .overdue-banner {
     flex-direction: column;
     align-items: flex-start;
+    padding: 14px;
   }
 
   .overdue-pay-btn {
     width: 100%;
     text-align: center;
+    padding: 10px;
   }
 }
 
 @media (max-width: 480px) {
   .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
   }
 
   .stat-card h2 {

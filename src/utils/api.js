@@ -218,10 +218,18 @@ export const extendSubscriptionOrder = (plan, vendorId, paymentMethod = 'Cash') 
   });
 };
 
+// ✅ Dynamic vendor pricing for subscription UI
+export const getVendorPricingForUser = (vendorId) => {
+  return apiCall(`/users/vendor-pricing/${vendorId}`, {
+    method: 'GET'
+  });
+};
+
 // ✅ SINGLE checkSubscriptionPaymentStatus — duplicate removed
 export const checkSubscriptionPaymentStatus = (orderId) => {
   return apiCall(`/users/orders/${orderId}/payment-status`);
 };
+
 
 // ============ TRIAL ENDPOINTS ============
 export const createTrialOrder = (vendorId, paymentMethod = 'Cash', mealPreference = 'Regular') => {

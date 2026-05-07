@@ -122,6 +122,10 @@ export default function UserDashboard() {
   // Selected offer for redemption - when user clicks redeem, we navigate to order flow
   const [selectedOfferVendor, setSelectedOfferVendor] = useState(null);
   const [selectedOfferPlan, setSelectedOfferPlan] = useState(null);
+const handleViewReviews = (vendor) => {
+  setSelectedVendor(vendor);
+  setShowAllReviewsModal(true);
+};
 
   // Check if user can review a vendor
   const handleWriteReview = async (vendor) => {
@@ -1195,30 +1199,34 @@ return (
 
       {activeTab === 'services' && (
         <OrderProvider>
-          <OrderMeals
-            tiffins={tiffins}
-            user={user}
-            hasActivePlan={hasActivePlan}
-            onOrder={(vendor, orderData) => handleOrder(vendor, orderData)}
-            onViewReviews={(vendor) => { setSelectedVendor(vendor); setShowAllReviewsModal(true); }}
-            onWriteReview={(vendor) => handleWriteReview(vendor)}
-          />
+        <OrderMeals
+  tiffins={tiffins}
+  user={user}
+  hasActivePlan={hasActivePlan}
+  activeSubscription={subscription}
+  onOrder={handleOrder}
+  onViewReviews={handleViewReviews}
+  onWriteReview={handleWriteReview}
+/>
         </OrderProvider>
       )}
 
       {activeTab === 'subscription' && (
-        <Subscription
-          user={user}
-          subscription={subscription}
-          leaveStart={leaveStart}
-          leaveEnd={leaveEnd}
-          mealType={mealType}
-          onLeaveStartChange={setLeaveStart}
-          onLeaveEndChange={setLeaveEnd}
-          onMealTypeChange={setMealType}
-          onApplyLeave={handleApplyLeave}
-          onExtendSubscription={handleExtendSubscription}
-          vendorId={subscription?.vendorId || tiffins[0]?.vendorId}
+ <Subscription
+  user={user}
+  subscription={subscription}
+  leaveStart={leaveStart}
+  leaveEnd={leaveEnd}
+  mealType={mealType}
+  onLeaveStartChange={setLeaveStart}
+  onLeaveEndChange={setLeaveEnd}
+  onMealTypeChange={setMealType}
+  onApplyLeave={handleApplyLeave}
+  onExtendSubscription={handleExtendSubscription}
+  // onSubscriptionActivated={fetchUserData}
+  vendorId={subscription?.vendorId}
+  onNavigateToOrderMeals={() => setActiveTab('services')}
+
           onSubscriptionActivated={(response) => {
             setHasActivePlan(true);
             if (response.subscription) {
