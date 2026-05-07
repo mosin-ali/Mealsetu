@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, runFixStuckOrders } = require('../controllers/userController');
+const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders } = require('../controllers/userController');
 
 
 const { getActiveOffers, redeemOffer, getClaimedOffers } = require('../controllers/offerController');
@@ -62,6 +62,9 @@ router.get('/subscription-status', protect, authorize('user'), getActiveSubscrip
 router.get('/orders/my-subscription', protect, authorize('user'), getMySubscription);
 router.get('/orders/upcoming', protect, authorize('user'), getUpcomingOrders);
 router.post('/orders/extend', protect, authorize('user'), extendSubscriptionOrder);
+
+// Vendor pricing (dynamic plan pricing for subscription UI)
+router.get('/vendor-pricing/:vendorId', protect, authorize('user'), getVendorPricingForUser);
 
 // FIX 4: Route to fix stuck orders in database (admin only)
 router.post('/fix-stuck-orders', protect, authorize('admin'), runFixStuckOrders);

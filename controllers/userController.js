@@ -1454,17 +1454,26 @@ const getMySubscription = async (req, res) => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    // FIX 2: Query properly returns active orders where startDate has already started
     const activeOrder = await Order.findOne({
       userId: userId,
       status: 'active',
-      startDate: { $lte: now },  // must have started
-      endDate: { $gte: now }     // must not have ended
+      startDate: { $lte: now },
+      endDate: { $gte: now }
     })
       .populate('vendorId', 'kitchenName')
       .sort({ createdAt: -1 });
 
     if (!activeOrder) return res.json(null);
+
+    // ✅ Fetch vendor pricing for frontend dynamic plan rendering
+    const vendorPricingRecords = await VendorPricing.find({
+      vendor_id: activeOrder.vendorId._id,
+      is_active: true
+    });
+
+    const pricing = vendorPricingRecords
+      .filter(p => p.price > 0)
+      .map(p => ({ type: p.plan_type, price: p.price }));
 
     res.json({
       planType: activeOrder.planType,
@@ -1475,7 +1484,8 @@ const getMySubscription = async (req, res) => {
       vendorName: activeOrder.vendorId?.kitchenName || 'Partner Kitchen',
       amount: activeOrder.amount,
       paymentMethod: activeOrder.paymentMethod,
-      orderId: activeOrder._id
+      orderId: activeOrder._id,
+      pricing
     });
   } catch (error) {
     console.error('Get my subscription error:', error);
@@ -1612,18 +1622,16 @@ const extendSubscriptionOrder = async (req, res) => {
 
     let durationDays = 7;
     let planType = 'Weekly';
-    let amount = 560;
+    let amount = 0;
 
     switch (plan) {
       case 'WEEKLY':
         durationDays = 7;
         planType = 'Weekly';
-        amount = 560;
         break;
       case 'MONTHLY':
         durationDays = 30;
         planType = 'Monthly';
-        amount = 2000;
         break;
       case 'ONEDAY':
         durationDays = 1;
@@ -1633,6 +1641,26 @@ const extendSubscriptionOrder = async (req, res) => {
       default:
         return res.status(400).json({ message: 'Invalid plan type' });
     }
+
+    // ✅ Dynamic pricing from VendorPricing (WEEKLY/MONTHLY) to avoid hardcoded amounts
+    if (planType === 'Weekly' || planType === 'Monthly') {
+      const pricingRecord = await VendorPricing.findOne({
+        vendor_id: vendorId,
+        plan_type: planType.toLowerCase(),
+        is_active: true
+      });
+
+      if (!pricingRecord || pricingRecord.price <= 0) {
+        return res.status(400).json({
+          message: 'Pricing not configured for this vendor. Please contact support.'
+        });
+      }
+
+      amount = pricingRecord.price;
+    }
+
+    // NOTE: ONEDAY/TRIAL amount is kept as existing behavior (₹80)
+
 
     // Duplicate check - prevent duplicate orders within 30 seconds
     const thirtySecondsAgo = new Date(Date.now() - 30000);
@@ -1815,6 +1843,41 @@ const checkSubscriptionPaymentStatus = async (req, res) => {
   }
 };
 
+const getVendorPricingForUser = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const vendor = await Vendor.findById(vendorId)
+      .select('kitchenName upiId');
+
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    const pricingRecords = await VendorPricing.find({
+      vendor_id: vendorId,
+      is_active: true
+    });
+
+    const pricing = pricingRecords
+      .filter(p => p.price > 0)
+      .map(p => ({ type: p.plan_type, price: p.price }));
+
+    res.json({
+      vendorId: vendor._id,
+      vendorName: vendor.kitchenName,
+      upiId: vendor.upiId || null,
+      pricing
+    });
+  } catch (error) {
+    console.error('Get vendor pricing error:', error);
+    res.status(500).json({
+      message: 'Error fetching vendor pricing',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getUserSubscription,
   getActiveSubscriptionStatus,
@@ -1836,10 +1899,11 @@ module.exports = {
   checkReviewEligibility,
   getTrialEligibility,
   createTrialOrder,
-getMySubscription,
+  getMySubscription,
   getUpcomingOrders,
   extendSubscriptionOrder,
   checkSubscriptionPaymentStatus,
+  getVendorPricingForUser,
   fixStuckOrders,
   runFixStuckOrders
 };
