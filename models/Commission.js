@@ -14,7 +14,8 @@ const commissionSchema = new mongoose.Schema({
   // Now stores week key like "2026-W12" instead of "2026-03"
 week: {
   type: String,
-  required: true
+  required: false,
+  default: null
 },
 month: {
   type: String,
@@ -62,6 +63,7 @@ month: {
 
 // Compound index for efficient monthly queries
 commissionSchema.index({ vendorId: 1, month: 1 });
+commissionSchema.index({ vendorId: 1, week: 1 });
 commissionSchema.index({ status: 1, due_date: 1 });
 
 module.exports = mongoose.model('Commission', commissionSchema);

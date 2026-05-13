@@ -8,6 +8,8 @@ const Subscription = require('../models/Subscription');
 const Payout = require('../models/Payout');
 const Commission = require('../models/Commission');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
 
 const VendorPricing = require('../models/VendorPricing');
 const CommissionSetting = require('../models/CommissionSetting');
@@ -133,7 +135,7 @@ const getVendorCustomers = async (req, res) => {
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
 
     const customerAggregation = await Order.aggregate([
-      { $match: { vendorId: vendor._id } },
+      { $match: { vendorId: vendor._id, userId: { $exists: true, $ne: null } } },
       {
         $group: {
           _id: '$userId',
@@ -148,41 +150,51 @@ const getVendorCustomers = async (req, res) => {
     const users = await User.find({ _id: { $in: customerIds } })
       .select('name email phone');
 
-    const customers = customerAggregation.map(c => {
-      const user = users.find(u => u._id.toString() === c._id.toString());
-      return {
-        _id: c._id,
-        name: user?.name || c.customerName || 'Unknown',
-        email: user?.email || '',
-        phone: user?.phone || '',
-        totalOrders: c.totalOrders
-      };
-    });
+    const customers = customerAggregation
+      .map(c => {
+        const user = users.find(u => u._id.toString() === c._id?.toString());
+        if (!user) return null;
+        return {
+          _id: c._id,
+          name: user.name || c.customerName || 'Unknown',
+          email: user.email || '',
+          phone: user.phone || '',
+          totalOrders: c.totalOrders,
+          isManual: false
+        };
+      })
+      .filter(Boolean);
 
-    // Add manual customers
-    const manualOrders = await Order.find({
-      vendorId: vendor._id,
-      isManualOrder: true
-    });
-
-    // Add manual customers not already in list - improved duplicate check with normalized phone
-    manualOrders.forEach(order => {
-      const normalizedPhone = (order.manualCustomerPhone || '').replace(/[^0-9]/g, '');
-      const alreadyExists = customers.some(
-        c => {
-          const cPhone = (c.phone || '').replace(/[^0-9]/g, '');
-          return cPhone === normalizedPhone && cPhone.length >= 10;
+    // Manual customers: group by phone to deduplicate legacy fake-userId orders
+    const manualOrders = await Order.aggregate([
+      {
+        $match: {
+          vendorId: vendor._id,
+          isManualOrder: true,
+          manualCustomerPhone: { $exists: true, $ne: null }
         }
+      },
+      {
+        $group: {
+          _id: '$manualCustomerPhone',
+          name: { $first: '$manualCustomerName' },
+          phone: { $first: '$manualCustomerPhone' },
+          totalOrders: { $sum: 1 }
+        }
+      }
+    ]);
+
+    manualOrders.forEach(mo => {
+      const alreadyExists = customers.some(
+        c => c.phone?.replace(/\D/g, '') === mo.phone?.replace(/\D/g, '')
       );
-      if (!alreadyExists && normalizedPhone.length >= 10) {
+      if (!alreadyExists) {
         customers.push({
-          _id: order._id,
-          name: order.manualCustomerName || 'Offline Customer',
-          email: '—',                          // ✅ Show dash instead of null
-          phone: order.manualCustomerPhone,
-          totalOrders: manualOrders.filter(
-            o => o.manualCustomerPhone === order.manualCustomerPhone
-          ).length,
+          _id: `manual_${mo._id}`,
+          name: mo.name || 'Offline Customer',
+          email: '—',
+          phone: mo.phone,
+          totalOrders: mo.totalOrders,
           isManual: true
         });
       }
@@ -315,12 +327,15 @@ const getVendorOrders = async (req, res) => {
     
     const formattedOrders = orders.map(order => ({
       _id: order._id,
-      customerName: order.isManualOrder 
-        ? (order.manualCustomerName || 'Offline Customer')
-        : (order.userId?.name || 'Customer'),
-      phone: order.isManualOrder
-        ? (order.manualCustomerPhone || 'N/A')
-        : (order.userId?.phone || 'N/A'),
+      customerName:
+        order.manualCustomerName
+        || order.userId?.name
+        || order.customerName
+        || 'Unknown',
+      phone:
+        order.manualCustomerPhone
+        || order.userId?.phone
+        || 'N/A',
       mealPreference: order.mealPreference,
       orderDate: order.orderDate,
       planType: order.planType,
@@ -365,11 +380,17 @@ const getFilteredOrders = async (req, res) => {
       orderDate: { $gte: startDate }
     }).populate('userId', 'name').sort({ orderDate: -1 });
 
-    const formattedOrders = orders.map(order => ({
+    const formattedOrders = orders.map(order => {
+      const resolvedName =
+        order.manualCustomerName ||
+        order.userId?.name ||
+        order.customerName ||
+        'Unknown';
+      return {
       _id: order._id,
       orderId: order._id,
-      username: order.userId?.name || order.customerName || 'Unknown',
-      customerName: order.customerName || order.userId?.name || 'Unknown',
+      username: resolvedName,
+      customerName: resolvedName,
       amount: Number(order.amount) || 0,
       paymentMethod: order.paymentMethod || 'Cash',
       planType: order.planType || 'Trial',
@@ -378,7 +399,8 @@ const getFilteredOrders = async (req, res) => {
       orderDate: order.orderDate,
       paymentStatus: order.paymentStatus || 'Pending',
       transactionId: order.transactionId || 'N/A'
-    }));
+      };
+    });
 
     res.json(formattedOrders);
   } catch (error) {
@@ -572,24 +594,66 @@ const addManualCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    const { name, phone, planType, startDate, paymentMethod, amount, deliveryPincode, mealPreference } = req.body;
+    const { name, phone, planType, startDate, paymentMethod, amount, deliveryPincode, mealPreference, deliverySlot } = req.body;
 
     const planTypeMapped = planType === 'trial' ? 'Trial' : planType === 'weekly' ? 'Weekly' : planType === 'monthly' ? 'Monthly' : 'Tiffin';
 
+    const requestedStart = new Date(startDate);
+    requestedStart.setUTCHours(0, 0, 0, 0);
+
+    const todayMidnight = new Date();
+    todayMidnight.setUTCHours(0, 0, 0, 0);
+
+    let startDateObj, endDateObj;
+    if (requestedStart.getTime() === todayMidnight.getTime()) {
+      // Starting today — apply smart meal timing
+      const computed = computeSubscriptionDates(getPlanDurationDays(planTypeMapped));
+      startDateObj = computed.startDate;
+      endDateObj   = computed.endDate;
+    } else {
+      // Future date — use exactly as requested, normal duration
+      startDateObj = requestedStart;
+      endDateObj = new Date(startDateObj);
+      endDateObj.setUTCDate(endDateObj.getUTCDate() + getPlanDurationDays(planTypeMapped));
+    }
+
+    // STEP 1 — Find or create a real User for this manual customer
+    let customerId;
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      customerId = existingUser._id;
+    } else {
+      const newUser = await User.create({
+        name,
+        phone,
+        email: `offline_${phone}@mealsetu.internal`,
+        password: await bcrypt.hash(Math.random().toString(36).slice(2), 10),
+        role: 'user',
+        address: deliveryPincode ? `Pincode: ${deliveryPincode}` : 'Offline Customer',
+        pincode: deliveryPincode || '',
+        isManualCustomer: true
+      });
+      customerId = newUser._id;
+    }
+
+    // STEP 2 — Create Order using the real userId
     const newOrder = new Order({
-      userId: new mongoose.Types.ObjectId(),
+      userId: customerId,
       vendorId: vendor._id,
       customerName: name,
       manualCustomerName: name,
       manualCustomerPhone: phone,
       manualCustomerPincode: deliveryPincode,
       planType: planTypeMapped,
-      startDate: new Date(startDate),
+      startDate: startDateObj,
+      endDate: endDateObj,
+      status: 'active',
       amount: parseFloat(amount),
       paymentStatus: 'Paid',
       paymentMethod: paymentMethod || 'Cash',
       orderStatus: 'Delivered',
       mealPreference: mealPreference || 'Regular',
+      deliverySlot: 'Lunch', // stored for schema compliance only; full-day plan
       source: 'manual',
       isManualOrder: true
     });
@@ -1254,7 +1318,10 @@ const getCommissionSummary = async (req, res) => {
     // STEP 6: Check existing commission record for this week
     const existingCommission = await Commission.findOne({
       vendorId: vendorId,
-      month: currentMonth
+      $or: [
+        { week:  currentMonth },
+        { month: currentMonth }
+      ]
     });
 
     const status = existingCommission
@@ -1421,6 +1488,100 @@ const payCommission = async (req, res) => {
   }
 };
 
+// @desc    Get all cash payment orders for this vendor
+// @route   GET /api/vendor/cash-payments
+const getCashPayments = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const [orders, pendingCount] = await Promise.all([
+      Order.find({ vendorId: vendor._id, paymentMethod: 'Cash' })
+        .populate('userId', 'name phone email')
+        .sort({ orderDate: -1 }),
+      Order.countDocuments({
+        vendorId: vendor._id,
+        paymentMethod: 'Cash',
+        paymentStatus: 'Pending'
+      })
+    ]);
+
+    const mapped = orders.map(order => ({
+      orderId: order._id,
+      customerName: order.manualCustomerName || order.userId?.name || order.customerName || 'Unknown',
+      customerPhone: order.manualCustomerPhone || order.userId?.phone || 'N/A',
+      planType: order.planType,
+      amount: order.amount,
+      orderDate: order.orderDate,
+      paymentStatus: order.paymentStatus,
+      cashPaymentConfirmedAt: order.cashPaymentConfirmedAt || null,
+      startDate: order.startDate,
+      endDate: order.endDate,
+      isManualOrder: order.isManualOrder || false
+    }));
+
+    res.json({ orders: mapped, pendingCount });
+  } catch (error) {
+    console.error('getCashPayments error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// @desc    Mark a cash payment order as paid
+// @route   PATCH /api/vendor/cash-payments/:orderId/mark-paid
+const markCashPaymentPaid = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const order = await Order.findOne({
+      _id: req.params.orderId,
+      vendorId: vendor._id,
+      paymentMethod: 'Cash',
+      paymentStatus: 'Pending'
+    }).populate('userId', 'name email');
+
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found or already marked as paid' });
+    }
+
+    order.paymentStatus = 'Paid';
+    order.cashPaymentConfirmedAt = new Date();
+    order.cashPaymentConfirmedBy = vendor._id;
+    await order.save();
+
+    try {
+      if (order.userId?.email) {
+        const confirmedAt = new Date(order.cashPaymentConfirmedAt).toLocaleString('en-IN');
+        await sendEmail(
+          order.userId.email,
+          'MealSetu - Cash Payment Confirmed',
+          `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #16a34a;">✅ Cash Payment Confirmed</h1>
+            <p>Dear ${order.userId.name || 'Customer'},</p>
+            <p>Your cash payment has been confirmed by the vendor.</p>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <p><strong>Plan:</strong> ${order.planType}</p>
+              <p><strong>Amount:</strong> ₹${order.amount}</p>
+              <p><strong>Confirmed at:</strong> ${confirmedAt}</p>
+            </div>
+            <p>Your subscription is active. Enjoy your meals!</p>
+            <hr/>
+            <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+          </div>`
+        );
+      }
+    } catch (emailError) {
+      console.error('Failed to send cash payment confirmation email:', emailError);
+    }
+
+    res.json({ message: 'Payment marked as paid', order });
+  } catch (error) {
+    console.error('markCashPaymentPaid error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -1455,5 +1616,7 @@ module.exports = {
   getPendingPayout,
   getMyCommissions,
   payCommission,
+  getCashPayments,
+  markCashPaymentPaid,
 };
 

@@ -1,8 +1,9 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments, markCashPaymentPaid } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
+const { getPreparationList } = require('../controllers/preparationController');
 
 const router = express.Router();
 
@@ -60,9 +61,15 @@ router.get('/commission/summary', getCommissionSummary);
 router.get('/commission/history', getMyCommissions); // paginated later
 router.post('/commission/pay', upload.single('proof'), payCommission);
 
+router.get('/preparation-list', getPreparationList);
+
 // Manual Customer routes
 router.post('/manual-customer', addManualCustomer);
 router.get('/manual-customers', getManualCustomers);
 router.get('/manual-customer/calculate', calculateManualOrderAmount);
+
+// Cash payment management routes
+router.get('/cash-payments', getCashPayments);
+router.patch('/cash-payments/:orderId/mark-paid', markCashPaymentPaid);
 
 module.exports = router;

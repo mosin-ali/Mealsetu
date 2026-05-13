@@ -7,6 +7,7 @@ const Subscription = require('../models/Subscription');
 const Transaction = require('../models/Transaction');
 const bcrypt = require('bcryptjs');
 const { sendEmail } = require('../utils/emailUtils');
+const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
 const VendorPricing = require('../models/VendorPricing');
 const JainMenu = require('../models/JainMenu');
 
@@ -98,6 +99,26 @@ const applyLeave = async (req, res) => {
     subscription.leaveDate = startDate;
     subscription.expiryDate = currentExpiry;
     await subscription.save();
+
+    const pendingOrders = await Order.find({
+      userId,
+      status: 'pending'
+    }).sort({ scheduledStartDate: 1 });
+
+    const DURATION_MAP = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
+    let chainEnd = new Date(currentExpiry);
+
+    for (const po of pendingOrders) {
+      const dur = DURATION_MAP[po.planType] ?? 7;
+      const newStart = new Date(chainEnd.getTime() + 86400000);
+      const newEnd   = new Date(newStart.getTime() + dur * 86400000);
+      po.scheduledStartDate = newStart;
+      po.scheduledEndDate   = newEnd;
+      po.startDate          = newStart;
+      po.endDate            = newEnd;
+      await po.save();
+      chainEnd = newEnd;
+    }
 
     const user = await User.findById(userId);
     if (user) {
@@ -192,7 +213,13 @@ const extendSubscription = async (req, res) => {
         const matchedPlan = pricingArray.find(
           p => (p.planType === planType.toLowerCase() || p.type === planType.toLowerCase()) && p.active
         );
-        amount = matchedPlan?.price || (planType === 'Weekly' ? 560 : 2000);
+        amount = matchedPlan?.price;
+      }
+
+      if (!amount || amount <= 0) {
+        return res.status(400).json({
+          message: 'This vendor has not configured pricing yet. Please contact support.'
+        });
       }
 
     const startDate = new Date();
@@ -407,7 +434,7 @@ const getUserOrders = async (req, res) => {
   try {
     const orders = await Order.find({ userId: req.user._id })
       .populate('vendorId', 'kitchenName address')
-      .sort({ createdAt: -1 });
+      .sort({ orderDate: -1 });
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -808,12 +835,9 @@ const placeOrder = async (req, res) => {
       });
     }
 
-// FIX 1: No active order - create active order and subscription immediately
-    // ALWAYS set startDate to TODAY regardless of what frontend sends
-    subscriptionStartDate = new Date();
-    subscriptionStartDate.setHours(0, 0, 0, 0);
-    subscriptionExpiryDate = new Date(subscriptionStartDate);
-    subscriptionExpiryDate.setDate(subscriptionExpiryDate.getDate() + durationDays);
+    // No active order — create active order immediately with smart meal timing
+    ({ startDate: subscriptionStartDate, endDate: subscriptionExpiryDate } =
+      computeSubscriptionDates(durationDays));
 
     const order = await Order.create({
       userId: req.user._id,
@@ -1299,6 +1323,7 @@ const getActiveSubscriptionStatus = async (req, res) => {
 
     const activeOrder = await Order.findOne({
       userId: userId,
+      status: { $in: ['active', 'trial'] },
       endDate: { $gt: today }
     }).sort({ createdAt: -1 }).populate('vendorId', 'kitchenName');
 
@@ -1353,12 +1378,15 @@ const createTrialOrder = async (req, res) => {
       return res.status(403).json({ message: 'You have already used a trial for this vendor' });
     }
 
-    const startDate = new Date();
-    const endDate = new Date(Date.now() + 172800000);
     const trialFee = vendor.trialFee || 0;
+    const { startDate, endDate, mealSlotToday } = computeSubscriptionDates(
+      getPlanDurationDays('Trial')   // 2 days
+    );
 
     let paymentStatus = 'Pending';
-    if (trialFee > 0) {
+    if (trialFee === 0) {
+      paymentStatus = 'Paid';    // free trial — no payment needed, mark as settled
+    } else {
       paymentStatus = paymentMethod === 'UPI' ? 'Paid' : 'Pending';
     }
 
@@ -1445,6 +1473,36 @@ const createTrialOrder = async (req, res) => {
   }
 };
 
+// @desc    Get this user's cash payment orders
+// @route   GET /api/users/my-cash-payments
+const getMyCashPayments = async (req, res) => {
+  try {
+    const orders = await Order.find({
+      userId: req.user._id,
+      paymentMethod: 'Cash'
+    })
+      .populate('vendorId', 'kitchenName address')
+      .sort({ orderDate: -1 });
+
+    const mapped = orders.map(order => ({
+      orderId: order._id,
+      planType: order.planType,
+      amount: order.amount,
+      orderDate: order.orderDate,
+      paymentStatus: order.paymentStatus,
+      cashPaymentConfirmedAt: order.cashPaymentConfirmedAt || null,
+      vendorName: order.vendorId?.kitchenName || 'Partner Kitchen',
+      startDate: order.startDate,
+      endDate: order.endDate
+    }));
+
+    res.json(mapped);
+  } catch (error) {
+    console.error('getMyCashPayments error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // @desc    Get current user's active subscription order
 // @route   GET /api/orders/my-subscription
 // FIX 2: Fixed to properly return active orders where startDate has already started
@@ -1452,12 +1510,14 @@ const getMySubscription = async (req, res) => {
   try {
     const userId = req.user._id;
     const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    now.setUTCHours(0, 0, 0, 0);
+    const tomorrowMidnight = new Date(now);
+    tomorrowMidnight.setUTCDate(tomorrowMidnight.getUTCDate() + 1);
 
     const activeOrder = await Order.findOne({
       userId: userId,
-      status: 'active',
-      startDate: { $lte: now },
+      status: { $in: ['active', 'trial'] },
+      startDate: { $lt: tomorrowMidnight },
       endDate: { $gte: now }
     })
       .populate('vendorId', 'kitchenName')
@@ -1484,6 +1544,8 @@ const getMySubscription = async (req, res) => {
       vendorName: activeOrder.vendorId?.kitchenName || 'Partner Kitchen',
       amount: activeOrder.amount,
       paymentMethod: activeOrder.paymentMethod,
+      paymentStatus: activeOrder.paymentStatus,
+      cashPaymentConfirmedAt: activeOrder.cashPaymentConfirmedAt || null,
       orderId: activeOrder._id,
       pricing
     });
@@ -1561,7 +1623,8 @@ const fixStuckOrders = async () => {
         if (!hasActive) {
           // Activate this stuck order
           const startDate = new Date(now);
-          const durationDays = order.planType === 'Weekly' ? 7 : order.planType === 'Monthly' ? 30 : 7;
+          const DURATION_MAP = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
+          const durationDays = DURATION_MAP[order.planType] ?? 7;
           const endDate = new Date(startDate);
           endDate.setDate(endDate.getDate() + durationDays);
 
@@ -1804,37 +1867,16 @@ const checkSubscriptionPaymentStatus = async (req, res) => {
       });
     }
 
-    // Already verified - return success immediately
+    // Verified by webhook or admin action
     if (order.paymentStatus === 'Verified') {
-      return res.json({ paid: true, message: 'Payment already verified' });
+      return res.json({ paid: true, message: 'Payment verified' });
     }
 
-    // Between 15-300 seconds: Mark as paid (simulation)
-    if (orderAgeSeconds >= 15 && orderAgeSeconds <= 300) {
-      order.paymentStatus = 'Verified';
-      order.status = 'active';
-      await order.save();
-
-      // Create Transaction record
-      await Transaction.create({
-        userId: order.userId,
-        vendorId: order.vendorId._id,
-        orderId: order._id,
-        amount: order.amount,
-        paymentMethod: 'UPI',
-        status: 'Verified'
-      });
-
-      console.log(`🎉 PAYMENT VERIFIED for Order ${order._id} - Vendor: ${order.vendorId.kitchenName}, Amount: ₹${order.amount}`);
-
-      return res.json({ paid: true, message: 'Payment verified successfully!' });
-    }
-
-    // Less than 15 seconds - still waiting
-    return res.json({ 
-      paid: false, 
-      timeout: false, 
-      message: 'Waiting for payment...' 
+    // Still within the 5-minute window — awaiting real payment confirmation
+    return res.json({
+      paid: false,
+      timeout: false,
+      message: 'Awaiting payment...'
     });
 
   } catch (error) {
@@ -1899,6 +1941,7 @@ module.exports = {
   checkReviewEligibility,
   getTrialEligibility,
   createTrialOrder,
+  getMyCashPayments,
   getMySubscription,
   getUpcomingOrders,
   extendSubscriptionOrder,

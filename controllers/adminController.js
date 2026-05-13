@@ -3,6 +3,8 @@ const Vendor = require('../models/Vendor');
 const User = require('../models/User');
 const Order = require('../models/Order');
 const PlatformSetting = require('../models/PlatformSetting');
+const Commission = require('../models/Commission');
+const CommissionPayment = require('../models/CommissionPayment');
 const { sendEmail } = require('../utils/emailUtils');
 
 // @desc    Get platform settings (commission rate, etc)
@@ -206,18 +208,49 @@ const getAllVendorsForAdmin = async (req, res) => {
       vendors.map(async (vendor) => {
         const subscriberResult = await Order.aggregate([
           { $match: { vendorId: vendor._id } },
-          { $group: { _id: null, userIds: { $addToSet: '$userId' } } },
-          { $project: { count: { $size: '$userIds' } } }
+          {
+            $group: {
+              _id: null,
+              appUserIds: {
+                $addToSet: {
+                  $cond: [
+                    { $eq: ['$isManualOrder', true] },
+                    '$$REMOVE',
+                    '$userId'
+                  ]
+                }
+              },
+              manualPhones: {
+                $addToSet: {
+                  $cond: [
+                    { $eq: ['$isManualOrder', true] },
+                    '$manualCustomerPhone',
+                    '$$REMOVE'
+                  ]
+                }
+              }
+            }
+          },
+          {
+            $project: {
+              count: {
+                $add: [
+                  { $size: '$appUserIds' },
+                  { $size: '$manualPhones' }
+                ]
+              }
+            }
+          }
         ]);
         const subscriberCount = subscriberResult[0]?.count || 0;
 
-        // Prepend base URL to images if relative path
-        const baseUrl = 'http://localhost:5000';
-        const fixImageUrl = (imgPath) => {
-          if (!imgPath) return imgPath;
-          if (imgPath.startsWith('http')) return imgPath;
-          if (imgPath.startsWith('/')) return `${baseUrl}${imgPath}`;
-          return `${baseUrl}/${imgPath}`;
+        const fixImageUrl = (imgPath, req) => {
+          if (!imgPath) return null;
+          if (imgPath.startsWith('http://') || imgPath.startsWith('https://')) return imgPath;
+          const backendUrl = `${req.protocol}://${req.get('host')}`;
+          return imgPath.startsWith('/')
+            ? `${backendUrl}${imgPath}`
+            : `${backendUrl}/${imgPath}`;
         };
 
         return {
@@ -226,7 +259,7 @@ const getAllVendorsForAdmin = async (req, res) => {
           ownerName: vendor.ownerId?.name || vendor.ownerName,
           email: vendor.ownerId?.email || null,
           phone: vendor.ownerId?.phone || vendor.phone || 'N/A',
-          profileImage: fixImageUrl(vendor.profileImage),
+          profileImage: fixImageUrl(vendor.profileImage, req),
           status: vendor.status,
           isApproved: vendor.isApproved,
           subscriberCount,
@@ -265,76 +298,124 @@ const getVendorSubscribers = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    // ✅ FIXED BUG 5: Get BOTH app users AND manual customers
-    // 1. Real app users via Order.userId
-    const userIds = await Order.distinct('userId', { 
-      vendorId: new mongoose.Types.ObjectId(vendorId), 
-      userId: { $ne: null } // Only real users (not manual orders)
-    });
-    
-    // 2. Manual customers via normalized phone
-    const manualCustomers = await Order.distinct('manualCustomerPhone', { 
-      vendorId: new mongoose.Types.ObjectId(vendorId), 
-      isManualOrder: true,
-      manualCustomerPhone: { $exists: true, $ne: null, $regex: '^[0-9]{10,}$' }
-    });
-    
-    console.log(`Found ${userIds.length} app users + ${manualCustomers.length} manual customers`);
-    
-    const allUsers = [];
-    
-    // Process real app users
-    if (userIds.length > 0) {
-      const appUsers = await User.find({ _id: { $in: userIds } }).select('-password').lean();
-      appUsers.forEach(user => {
-        allUsers.push({
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          address: user.address,
-          pincode: user.pincode,
-          joinDate: user.joinDate,
-          isManual: false,
-          isActive: true // App users considered active
+    const now = new Date();
+    const todayStart = new Date(now); todayStart.setUTCHours(0, 0, 0, 0);
+
+    // Fetch all orders for this vendor, sorted newest first
+    const allOrders = await Order.find({
+      vendorId: new mongoose.Types.ObjectId(vendorId)
+    })
+      .sort({ createdAt: -1 })
+      .populate('userId', 'name email phone address pincode joinDate')
+      .lean();
+
+    const customerMap = new Map();
+
+    for (const order of allOrders) {
+      const isManual = order.isManualOrder === true;
+      const key = isManual
+        ? `manual_${order.manualCustomerPhone}`
+        : order.userId?._id?.toString();
+
+      if (!key) continue;
+
+      if (!customerMap.has(key)) {
+        let joinDate = null;
+        if (isManual) {
+          joinDate = order.orderDate;
+        } else {
+          joinDate = order.userId?.joinDate
+            || (order.userId?._id
+                ? new Date(parseInt(order.userId._id.toString().slice(0, 8), 16) * 1000)
+                : null)
+            || order.orderDate;
+        }
+
+        customerMap.set(key, {
+          _id: key,
+          name: isManual
+            ? (order.manualCustomerName || 'Offline Customer')
+            : (order.userId?.name || 'Unknown'),
+          email: isManual ? '—' : (order.userId?.email || '—'),
+          phone: isManual
+            ? (order.manualCustomerPhone || 'N/A')
+            : (order.userId?.phone || 'N/A'),
+          joinDate,
+          lastOrderDate: order.orderDate,
+          isManual,
+          hasActiveSubscription: false,
+          orderCount: 0
         });
-      });
+      } else if (isManual) {
+        // Sorted newest-first: update joinDate to earlier value as older orders arrive
+        const entry = customerMap.get(key);
+        if (order.orderDate < entry.joinDate) {
+          entry.joinDate = order.orderDate;
+        }
+      }
+
+      const entry = customerMap.get(key);
+      entry.orderCount += 1;
+
+      // Derive endDate from startDate + planDuration when endDate is missing
+      const PLAN_DAYS = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
+      const planDuration = PLAN_DAYS[order.planType] || 7;
+      const orderStart = order.startDate ? new Date(order.startDate) : null;
+      let orderEnd = order.endDate ? new Date(order.endDate) : null;
+      if (!orderEnd && orderStart) {
+        orderEnd = new Date(orderStart);
+        orderEnd.setDate(orderEnd.getDate() + planDuration);
+      }
+
+      const isCurrentlyActive =
+        (order.status === 'active' || order.status === 'trial') &&
+        orderStart !== null &&
+        orderStart <= todayStart &&
+        orderEnd !== null &&
+        orderEnd >= todayStart;
+
+      if (isCurrentlyActive) {
+        entry.hasActiveSubscription = true;
+      }
     }
-    
-    // Process manual customers (deduplicated by phone)
-    manualCustomers.forEach(phone => {
-      allUsers.push({
-        _id: `manual_${phone}`,
-        name: 'Offline Customer',
-        email: '—',
-        phone: phone,
-        address: 'N/A',
-        pincode: 'N/A',
-        joinDate: null,
-        isManual: true,
-        isActive: true
-      });
-    });
-    
-    if (allUsers.length === 0) {
-      return res.status(200).json({ 
-        users: [],
-        vendorName: vendor.kitchenName,
-        message: 'No subscribers found for this vendor'
-      });
-    }
-    
-    // Sort: app users first, then manual (both active)
-    const sortedUsers = allUsers.sort((a, b) => {
-      if (a.isManual !== b.isManual) return a.isManual ? 1 : -1;
-      return (b.name || '').localeCompare(a.name || '');
+
+    const users = Array.from(customerMap.values()).map(entry => {
+      const lastActive = entry.lastOrderDate ? new Date(entry.lastOrderDate) : null;
+      const daysSinceActive = lastActive
+        ? Math.floor((now - lastActive) / (1000 * 60 * 60 * 24))
+        : null;
+
+      // isActive = has a running subscription today, or ordered within last 50 days
+      // (50-day fallback covers legacy orders without proper endDate)
+      const isActive = entry.hasActiveSubscription
+        || (daysSinceActive !== null && daysSinceActive <= 50);
+
+      return {
+        _id: entry._id,
+        name: entry.name,
+        email: entry.email,
+        phone: entry.phone,
+        joinDate: entry.joinDate ? new Date(entry.joinDate).toISOString() : null,
+        lastActiveDate: lastActive ? lastActive.toISOString() : null,
+        daysSinceActive,
+        isActive,
+        isManual: entry.isManual,
+        totalOrders: entry.orderCount
+      };
     });
 
-    res.status(200).json({ 
-      users: sortedUsers,
+    users.sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+    const totalManualCustomers = users.filter(u => u.isManual).length;
+
+    return res.status(200).json({
+      users,
       vendorName: vendor.kitchenName,
-      totalAppUsers: userIds.length,
-      totalManualCustomers: manualCustomers.length
+      totalAppUsers: users.length - totalManualCustomers,
+      totalManualCustomers
     });
   } catch (error) {
     console.error('getVendorSubscribers FULL ERROR:', error);
@@ -547,8 +628,7 @@ const updateCommissionTiers = async (req, res) => {
 const getCommissionVendors = async (req, res) => {
   try {
     const CommissionSetting = require('../models/CommissionSetting');
-    const Commission = require('../models/Commission');
-    
+
     const { month, status, search } = req.query;
     
     let match = {};
@@ -615,9 +695,6 @@ const verifyCommissionPayment = async (req, res) => {
     const { paymentId } = req.params;
     const { action } = req.body; // 'confirm' or 'reject'
     
-    const CommissionPayment = require('../models/CommissionPayment');
-    const Commission = require('../models/Commission');
-    
     const payment = await CommissionPayment.findById(paymentId).populate('vendorEarningId');
     
     if (!payment) {
@@ -666,7 +743,6 @@ const verifyCommissionPayment = async (req, res) => {
 // @route   GET /api/admin/commission/report/csv
 const getCommissionReportCSV = async (req, res) => {
   try {
-    const { Commission } = require('../models/Commission');
     const commissions = await Commission.find({})
       .populate('vendorId', 'kitchenName')
       .lean();

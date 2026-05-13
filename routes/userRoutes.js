@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders } = require('../controllers/userController');
+const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMyCashPayments, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders } = require('../controllers/userController');
 
 
 const { getActiveOffers, redeemOffer, getClaimedOffers } = require('../controllers/offerController');
@@ -57,6 +57,9 @@ router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
 router.post('/trial', protect, authorize('user'), createTrialOrder);
 router.get('/trial-eligibility/:vendorId', protect, authorize('user'), getTrialEligibility);
 router.get('/subscription-status', protect, authorize('user'), getActiveSubscriptionStatus);
+
+// Cash payment status for user
+router.get('/my-cash-payments', protect, authorize('user'), getMyCashPayments);
 
 // Order routes for subscription management
 router.get('/orders/my-subscription', protect, authorize('user'), getMySubscription);

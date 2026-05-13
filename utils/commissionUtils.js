@@ -71,8 +71,16 @@ async function generateMonthlyCommissions() {
     const now = new Date();
     const prevMonth = new Date(now.getFullYear(), now.getMonth(), 0); // Last day of prev month
     const monthStr = prevMonth.toISOString().slice(0, 7); // YYYY-MM
-    
-    console.log(`🧾 Generating commissions for ${monthStr}...`);
+
+    const startOfYear = new Date(prevMonth.getFullYear(), 0, 1);
+    const weekNum = Math.ceil(
+      (((new Date(prevMonth.getFullYear(), prevMonth.getMonth(), 1) - startOfYear)
+        / 86400000) + 1) / 7
+    );
+    const weekKey = `${prevMonth.getFullYear()}-W${String(weekNum).padStart(2,'0')}`;
+
+    console.log(`🧾 Generating commissions for ${monthStr} (week: ${weekKey})...`);
+
     
     // Get all approved vendors
     const vendors = await Vendor.find({ isApproved: true }).select('_id');
@@ -99,6 +107,7 @@ async function generateMonthlyCommissions() {
       const commission = new Commission({
         vendorId: vendor._id,
         month: monthStr,
+        week: weekKey,
         totalOrders: earningData.totalOrders,
         total_earning: earningData.total_earning,
         commission_rate: tier.ratePercent,
@@ -106,6 +115,7 @@ async function generateMonthlyCommissions() {
         status: 'pending',
         due_date: new Date(prevMonth.getFullYear(), prevMonth.getMonth() + 1, 10) // 10th of next month
       });
+
       
       await commission.save();
       console.log(`✅ Created commission for ${vendor._id}: ₹${commission.commission_amount}`);

@@ -22,10 +22,12 @@ userId: {
   startDate: { type: Date },
   endDate: { type: Date },
 
-  // Payment & Status 
+  // Payment & Status
   amount: { type: Number, required: true },
   paymentStatus: { type: String, enum: ['Paid', 'Pending', 'Failed'], default: 'Pending' },
   paymentMethod: { type: String, enum: ['Cash', 'UPI', 'Free'], default: 'Cash' },
+  cashPaymentConfirmedAt: { type: Date, default: null },
+  cashPaymentConfirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor', default: null },
   orderStatus: {
     type: String, 
     enum: ['Preparing', 'Delivered', 'Cancelled', 'In Kitchen', 'Out for Delivery'], 
