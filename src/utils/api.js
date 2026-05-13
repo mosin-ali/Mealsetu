@@ -506,6 +506,16 @@ export const getVendorPendingPayout = () => {
   }));
 };
 
+// ============ CASH PAYMENT ENDPOINTS ============
+export const getCashPayments = () =>
+  apiCall('/vendor/cash-payments', { method: 'GET' });
+
+export const markCashPaymentPaid = (orderId) =>
+  apiCall(`/vendor/cash-payments/${orderId}/mark-paid`, { method: 'PATCH' });
+
+export const getMyCashPayments = () =>
+  apiCall('/users/my-cash-payments', { method: 'GET' });
+
 // Manual Customer API functions
 export const addManualCustomer = (data) => {
   return apiCall('/vendor/manual-customer', {

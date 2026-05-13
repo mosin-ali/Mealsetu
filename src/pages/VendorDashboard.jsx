@@ -4,9 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './VendorDashboard.css';
-import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount } from '../utils/api';
+import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments } from '../utils/api';
 import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
 import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
+import CashPayments from '../components/dashboard/vendor/CashPayments';
 import VendorOffers from '../components/dashboard/vendor/VendorOffers';
 import TrialSettings from '../components/dashboard/vendor/TrialSettings';
 import { useToast } from '../components/common/Toast';
@@ -77,6 +78,8 @@ const VendorDashboard = () => {
   const [savingPricing, setSavingPricing] = useState(false);
   const [pricingMessage, setPricingMessage] = useState({ type: '', text: '' });
   const [pricingErrors, setPricingErrors] = useState({});
+
+  const [cashPendingCount, setCashPendingCount] = useState(0);
 
   // --- DASHBOARD STATS STATE ---
   const [dashboardStats, setDashboardStats] = useState({
@@ -233,6 +236,13 @@ const fetchPricing = async () => {
         });
       } catch (e) {
         console.warn('Failed to load dashboard stats', e);
+      }
+
+      try {
+        const cashData = await getCashPayments();
+        setCashPendingCount(cashData.pendingCount || 0);
+      } catch (e) {
+        console.warn('Failed to load cash payments count', e);
       }
 
       // customers & complaints
@@ -654,18 +664,19 @@ const handleSavePricing = async () => {
     switch (activeTab) {
       case 'dashboard':
         return (
-          <DashboardOverview 
+          <DashboardOverview
             profile={profile}
             revenue={dashboardStats.totalRevenue}
             ordersToday={dashboardStats.todayOrders}
             activeUsers={dashboardStats.activeSubscribers}
-            pendingPayout={dashboardStats.pendingPayout}
             kitchenStatus={{ isOpen: kitchenOpen }}
             onToggleKitchen={handleShopToggle}
             onTabChange={setActiveTab}
-            preparationList={{ total: 0, regular: 0, jain: 0, veg: 0 }}
           />
         );
+
+      case 'cash-payments':
+        return <CashPayments />;
 
       case 'commission':
         return <CommissionHistory />;
@@ -687,7 +698,7 @@ case 'orders':
                   {vendorOrders.map(o => (
                     <tr key={o._id}>
                       <td>#{o._id.slice(-6)}</td>
-                      <td>{o.userId?.name || 'Customer'}</td>
+                      <td>{o.customerName || 'Unknown'}</td>
                       <td>{o.mealPreference}</td>
                       <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
                     </tr>
@@ -1283,6 +1294,24 @@ return (
           <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => { setActiveTab('customers'); setSidebarOpen(false); }}>My Customers</button>
           <button className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} onClick={() => { setActiveTab('manual-customers'); setSidebarOpen(false); }}>Add Customer</button>
           <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setSidebarOpen(false); }}>Reports & PDF</button>
+          <button
+            className={`v-nav-btn ${activeTab === 'cash-payments' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('cash-payments'); setSidebarOpen(false); }}
+            style={{ position: 'relative' }}
+          >
+            Cash Payments
+            {cashPendingCount > 0 && (
+              <span style={{
+                position: 'absolute', right: '12px', top: '50%',
+                transform: 'translateY(-50%)', background: '#ef4444',
+                color: 'white', borderRadius: '50%', width: '20px', height: '20px',
+                fontSize: '11px', fontWeight: '700', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', lineHeight: 1
+              }}>
+                {cashPendingCount > 9 ? '9+' : cashPendingCount}
+              </span>
+            )}
+          </button>
           <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => { setActiveTab('commission'); setSidebarOpen(false); }}>Commission</button>
           <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => { setActiveTab('reviews'); setSidebarOpen(false); }}>Reviews</button>
           <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => { setActiveTab('compliance'); setSidebarOpen(false); }}>Compliance</button>

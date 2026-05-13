@@ -658,200 +658,319 @@ const handleViewReviews = (vendor) => {
 
 
 const handleDownloadInvoice = async (historyItem) => {
-  const doc = new jsPDF();
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = 210;
+  const margin = 20;
 
-  // ===== COLORS =====
-  const primary = [242, 101, 34];
-  const dark = [33, 37, 41];
-  const gray = [120, 120, 120];
-  const lightGray = [240, 240, 240];
-  const green = [34, 197, 94]; // Success green
-  const orange = [249, 115, 22]; // Pending orange
+  // ── Date helpers ──
+  const fmtDate = (d) => {
+    if (!d) return '--';
+    return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  const fmtDateTime = (d) => {
+    if (!d) return '--';
+    return new Date(d).toLocaleString('en-IN', {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  };
 
-  // ===== SAFE DATA =====
-  const vendorName = historyItem.vendorName || 'Partner Kitchen';
-  const vendorAddress = historyItem.vendorAddress || '';
-  const customerName = historyItem.customerName || user.name || 'Customer';
-  const customerPhone = historyItem.customerPhone || user.phone || '';
-  const customerEmail = historyItem.customerEmail || user.email || '';
-  const customerAddress = historyItem.customerAddress || user.address || '';
+  // ── Safe field extraction ──
+  const vendorName     = historyItem.vendorName     || 'Partner Kitchen';
+  const vendorAddress  = historyItem.vendorAddress  || '';
+  const customerName   = historyItem.customerName   || user.name  || 'Customer';
+  const customerPhone  = historyItem.customerPhone  || user.phone || '';
+  const customerEmail  = historyItem.customerEmail  || user.email || '';
   const mealPreference = historyItem.mealPreference || 'Regular';
-  const paymentMethod = historyItem.paymentMethod || 'Cash';
-  const transactionId = historyItem.transactionId || 'N/A';
-  const orderStatus = historyItem.status || 'Pending';
-  const orderAmount = Number(historyItem.amount) || 0;
-  
-  // Get order date for meal description lookup
-  const orderDate = historyItem.orderDate ? new Date(historyItem.orderDate) : new Date();
-  const dayOfWeek = orderDate.toLocaleDateString('en-US', { weekday: 'long' });
-  
-  // Try to fetch vendor's weekly plan for meal description
-  let mealDescription = '';
+  const paymentMethod  = historyItem.paymentMethod  || 'Cash';
+  const orderAmount    = Number(historyItem.amount) || 0;
+  const orderDate      = historyItem.orderDate ? new Date(historyItem.orderDate) : new Date();
+  const dayOfWeek      = orderDate.toLocaleDateString('en-US', { weekday: 'long' });
+
+  // ── Status logic (uses pre-computed status from history mapping) ──
+  const isPaid = historyItem.status === 'Paid';
+  const isFree = historyItem.status === 'Free';
+  const isUPI  = paymentMethod === 'UPI';
+
+  const statusLabel    = isPaid ? 'PAID' : isFree ? 'FREE' : 'PAYMENT PENDING';
+  const statusColor    = (isPaid || isFree) ? [22, 163, 74]   : [234, 88, 12];
+  const statusBgColor  = (isPaid || isFree) ? [220, 252, 231] : [255, 247, 237];
+
+  const confirmationLine =
+    isPaid && historyItem.cashPaymentConfirmedAt
+      ? 'Cash collected on ' + fmtDateTime(historyItem.cashPaymentConfirmedAt)
+      : isPaid && isUPI
+      ? 'Paid via UPI'
+      : isFree
+      ? 'Free Trial - No payment required'
+      : 'Please pay Rs.' + orderAmount.toLocaleString('en-IN') + ' in cash when collecting your tiffin';
+
+  // ── Fetch weekly plan for today's menu ──
+  let mainCourse = '', sides = '', specialAddOns = '';
   try {
     if (historyItem.vendorId) {
       const vendorPlan = await getVendorWeeklyPlan(historyItem.vendorId);
       if (vendorPlan.weeklyPlan && vendorPlan.weeklyPlan[dayOfWeek]) {
-        const dayMenu = vendorPlan.weeklyPlan[dayOfWeek];
-        mealDescription = `Main Course: ${dayMenu.mainCourse || 'N/A'}\nSides: ${dayMenu.sides || 'N/A'}\nSpecial Add-ons: ${dayMenu.specialAddOns || 'N/A'}`;
+        const dayMenu  = vendorPlan.weeklyPlan[dayOfWeek];
+        mainCourse     = dayMenu.mainCourse    || '';
+        sides          = dayMenu.sides         || '';
+        specialAddOns  = dayMenu.specialAddOns || '';
       }
     }
   } catch (e) {
     console.warn('Could not fetch vendor weekly plan for invoice:', e);
-    // Fallback to basic meal description
-    mealDescription = `Meal Preference: ${mealPreference}`;
   }
-  
-  if (!mealDescription) {
-    mealDescription = `Meal Preference: ${mealPreference}`;
-  }
+  const hasTodayMenu = !!(mainCourse || sides);
+  const menuText = [mainCourse, sides, specialAddOns].filter(Boolean).join(' | ');
 
-  // ================= HEADER BAR =================
-  doc.setFillColor(...primary);
-  doc.rect(0, 0, 210, 30, "F");
+  // ══════════════════════════════════════════════════════
+  // SECTION 1 — Header bar
+  // ══════════════════════════════════════════════════════
+  doc.setFillColor(242, 101, 34);
+  doc.rect(0, 0, 210, 35, 'F');
 
-  doc.setTextColor(255);
+  doc.setTextColor(255, 255, 255);
   doc.setFontSize(22);
-  doc.setFont("helvetica", "bold");
-  doc.text("MealSetu", 20, 18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('MealSetu', pageW / 2, 15, { align: 'center' });
 
   doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.text("Quality Food, Delivered with Care", 20, 24);
+  doc.setFont('helvetica', 'normal');
+  doc.text('TAX INVOICE', pageW / 2, 25, { align: 'center' });
 
-  // Invoice title right
-  doc.setFontSize(16);
-  doc.text("TAX INVOICE", 150, 18);
+  // ══════════════════════════════════════════════════════
+  // SECTION 2 — Invoice meta + status badge
+  // ══════════════════════════════════════════════════════
+  let y = 45;
 
   doc.setFontSize(9);
-  doc.text(`Invoice #: ${historyItem.id}`, 150, 23);
-  doc.text(`Date: ${historyItem.date}`, 150, 27);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Invoice No:', margin, y);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(33, 37, 41);
+  doc.text(historyItem.id || '--', margin + 24, y);
 
-  // ================= VENDOR CARD =================
-  doc.setFillColor(...lightGray);
-  doc.roundedRect(20, 40, 80, 40, 3, 3, "F");
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Date:', margin, y + 7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(33, 37, 41);
+  doc.text(historyItem.date || fmtDate(historyItem.orderDate), margin + 13, y + 7);
 
-  doc.setTextColor(...primary);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("VENDOR", 24, 48);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Plan:', margin, y + 14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(33, 37, 41);
+  doc.text(historyItem.plan || '--', margin + 13, y + 14);
 
-  doc.setTextColor(...dark);
-  doc.setFont("helvetica", "normal");
+  // Status badge (right column)
+  const badgeW = 58, badgeH = 18;
+  const badgeX = pageW - margin - badgeW;
+  const badgeY = y - 2;
+  doc.setFillColor(...statusBgColor);
+  doc.setDrawColor(...statusColor);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 3, 3, 'FD');
+  doc.setTextColor(...statusColor);
   doc.setFontSize(10);
-  doc.text(vendorName, 24, 55);
+  doc.setFont('helvetica', 'bold');
+  doc.text(statusLabel, badgeX + badgeW / 2, badgeY + 11, { align: 'center' });
 
+  // ══════════════════════════════════════════════════════
+  // SECTION 3 — Divider
+  // ══════════════════════════════════════════════════════
+  y = 68;
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.4);
+  doc.line(margin, y, pageW - margin, y);
+
+  // ══════════════════════════════════════════════════════
+  // SECTION 4 — Vendor + Customer info blocks
+  // ══════════════════════════════════════════════════════
+  y = 74;
+  const colW = 78, boxH = 38;
+  const vendorX = margin;
+  const custX   = margin + colW + 10;
+
+  // Vendor box
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(vendorX, y, colW, boxH, 2, 2, 'FD');
+
+  doc.setTextColor(242, 101, 34);
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.text('VENDOR', vendorX + 4, y + 7);
+
+  doc.setTextColor(33, 37, 41);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text(doc.splitTextToSize(vendorName, colW - 8)[0], vendorX + 4, y + 14);
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(75, 85, 99);
   if (vendorAddress) {
-    const lines = doc.splitTextToSize(vendorAddress, 70);
-    doc.text(lines, 24, 61);
+    doc.splitTextToSize(vendorAddress, colW - 8).slice(0, 2)
+      .forEach((line, i) => doc.text(line, vendorX + 4, y + 21 + i * 6));
   }
 
-  // ================= CUSTOMER CARD =================
-  doc.setFillColor(...lightGray);
-  doc.roundedRect(110, 40, 80, 40, 3, 3, "F");
+  // Customer box
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(custX, y, colW, boxH, 2, 2, 'FD');
 
-  doc.setTextColor(...primary);
-  doc.setFont("helvetica", "bold");
-  doc.text("CUSTOMER", 114, 48);
+  doc.setTextColor(242, 101, 34);
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.text('CUSTOMER', custX + 4, y + 7);
 
-  doc.setTextColor(...dark);
-  doc.setFont("helvetica", "normal");
-  doc.text(customerName, 114, 55);
-
-  if (customerPhone) doc.text(`Phone: ${customerPhone}`, 114, 61);
-  if (customerEmail) doc.text(`Email: ${customerEmail}`, 114, 67);
-
-  // ================= CONDITIONAL STATUS BADGE =================
-  // Payment Method Check: CASH = PENDING (orange), UPI/Online = PAID (green)
-  const isCashPayment = /cash/i.test(paymentMethod);
-  const statusColor = isCashPayment ? orange : green;
-  const statusText = isCashPayment ? 'STATUS: PENDING' : 'STATUS: PAID';
-  
-  doc.setFillColor(...statusColor);
-  doc.roundedRect(140, 85, 55, 10, 2, 2, "F");
-
-  doc.setTextColor(255);
+  doc.setTextColor(33, 37, 41);
   doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.text(statusText, 167.5, 91.5, { align: "center" });
+  doc.setFont('helvetica', 'bold');
+  doc.text(doc.splitTextToSize(customerName, colW - 8)[0], custX + 4, y + 14);
 
-  // ================= TABLE with Meal Description =================
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(75, 85, 99);
+  if (customerPhone) doc.text('Ph: ' + customerPhone, custX + 4, y + 21);
+  if (customerEmail) {
+    doc.text(doc.splitTextToSize(customerEmail, colW - 8)[0], custX + 4, y + 27);
+  }
+
+  // ══════════════════════════════════════════════════════
+  // SECTION 5 — Subscription details table
+  // ══════════════════════════════════════════════════════
+  y = y + boxH + 8;
+
+  const tableBody = [
+    ['Tiffin Subscription', (historyItem.plan || '--') + ' Plan', 'Rs.' + orderAmount.toLocaleString('en-IN')],
+    ['Meal Preference',     mealPreference, '--'],
+    ['Plan Period',         fmtDate(historyItem.startDate) + ' to ' + fmtDate(historyItem.endDate), '--'],
+    ['Payment Method',      paymentMethod, '--'],
+  ];
+  if (hasTodayMenu) tableBody.push(["Today's Menu", menuText, '--']);
+  tableBody.push(['Transaction ID', historyItem.id || '--', '--']);
+
   autoTable(doc, {
-    startY: 100,
-    theme: "grid",
-    head: [["Description", "Amount"]],
-    body: [
-      [
-        `Tiffin Subscription: ${historyItem.plan}
-Meal for ${dayOfWeek}:
-${mealDescription}
-Meal Preference: ${mealPreference}
-Payment Method: ${paymentMethod}
-Transaction: ${transactionId}`,
-        "Rs. " + orderAmount.toFixed(2),
-      ],
-    ],
+    startY: y,
+    head: [['DESCRIPTION', 'DETAILS', 'AMOUNT']],
+    body: tableBody,
+    theme: 'plain',
     styles: {
-      fontSize: 10,
-      cellPadding: 6,
+      fontSize: 9,
+      cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
+      textColor: [33, 37, 41],
+      lineColor: [226, 232, 240],
+      lineWidth: 0.3,
+      overflow: 'linebreak',
     },
     headStyles: {
-      fillColor: primary,
-      textColor: 255,
-      halign: "left",
-      fontStyle: "bold",
+      fillColor: [243, 244, 246],
+      textColor: [107, 114, 128],
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'left',
     },
     columnStyles: {
-      0: { cellWidth: 120 },
-      1: { halign: "right" },
+      0: { cellWidth: 55, fontStyle: 'bold' },
+      1: { cellWidth: 90 },
+      2: { cellWidth: 25, halign: 'right' },
     },
+    alternateRowStyles: { fillColor: [249, 250, 251] },
+    tableLineColor: [226, 232, 240],
+    tableLineWidth: 0.3,
   });
 
-  // ================= TOTAL BOX =================
-  const y = doc.lastAutoTable.finalY + 15;
+  // ══════════════════════════════════════════════════════
+  // SECTION 6 — Totals (right-aligned)
+  // ══════════════════════════════════════════════════════
+  const tableEndY = doc.lastAutoTable.finalY;
+  const totalsY   = tableEndY + 6;
+  const totalsX   = pageW - margin - 68;
 
-  doc.setFillColor(...lightGray);
-  doc.roundedRect(120, y - 8, 70, 25, 3, 3, "F");
+  doc.setFillColor(249, 250, 251);
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(totalsX, totalsY, 68, 30, 2, 2, 'FD');
 
-  doc.setTextColor(...dark);
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.text("Subtotal:", 125, y);
-  doc.text("Rs. " + orderAmount.toFixed(2), 185, y, { align: "right" });
-
-  doc.setFontSize(12);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(...primary);
-  doc.text("Grand Total:", 125, y + 10);
-  doc.text("Rs. " + orderAmount.toFixed(2), 185, y + 10, {
-    align: "right",
-  });
-
-  // ================= PAYMENT STATUS FOOTER =================
-  doc.setFontSize(10);
-  doc.setFillColor(...statusColor);
-  doc.roundedRect(20, y + 25, 170, 12, 2, 2, "F");
-  doc.setTextColor(255);
-  doc.setFont("helvetica", "bold");
-  doc.text(
-    `${isCashPayment ? '⚠ PAYMENT PENDING - Cash on Delivery' : '✓ PAYMENT RECEIVED - Online Payment'}`, 
-    105, 
-    y + 32, 
-    { align: "center" }
-  );
-
-  // ================= FOOTER =================
   doc.setFontSize(9);
-  doc.setTextColor(...gray);
-  doc.setFont("helvetica", "italic");
-  doc.text(
-    "Thank you for using MealSetu. This is a computer-generated invoice.",
-    105,
-    285,
-    { align: "center" }
-  );
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(75, 85, 99);
+  doc.text('Subtotal:', totalsX + 5, totalsY + 8);
+  doc.text('Rs.' + orderAmount.toLocaleString('en-IN'), totalsX + 63, totalsY + 8, { align: 'right' });
 
-  // ================= SAVE =================
-  doc.save(`MealSetu_Invoice_${historyItem.id}.pdf`);
+  doc.text('Tax (0%):', totalsX + 5, totalsY + 15);
+  doc.text('Rs.0.00', totalsX + 63, totalsY + 15, { align: 'right' });
+
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.4);
+  doc.line(totalsX + 5, totalsY + 18, totalsX + 63, totalsY + 18);
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(33, 37, 41);
+  doc.text('Grand Total:', totalsX + 5, totalsY + 25);
+  doc.setTextColor(242, 101, 34);
+  doc.text('Rs.' + orderAmount.toLocaleString('en-IN'), totalsX + 63, totalsY + 25, { align: 'right' });
+
+  // ══════════════════════════════════════════════════════
+  // SECTION 7 — Payment status banner (full-width)
+  // ══════════════════════════════════════════════════════
+  const bannerY = totalsY + 38;
+  const bannerH = 22;
+
+  doc.setFillColor(...statusBgColor);
+  doc.setDrawColor(...statusColor);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(margin, bannerY, pageW - 2 * margin, bannerH, 3, 3, 'FD');
+
+  // Icon circle
+  doc.setFillColor(...statusColor);
+  doc.circle(margin + 11, bannerY + bannerH / 2, 5.5, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text(isPaid || isFree ? 'OK' : '!', margin + 11, bannerY + bannerH / 2 + 3, { align: 'center' });
+
+  // Banner title + confirmation line
+  doc.setTextColor(...statusColor);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text((isPaid || isFree) ? 'PAYMENT CONFIRMED' : 'PAYMENT PENDING', margin + 22, bannerY + 9);
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  const confirmLines = doc.splitTextToSize(confirmationLine, pageW - 2 * margin - 26);
+  doc.text(confirmLines, margin + 22, bannerY + 16);
+
+  // ══════════════════════════════════════════════════════
+  // SECTION 8 — Footer
+  // ══════════════════════════════════════════════════════
+  const footerY = bannerY + bannerH + 8;
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.4);
+  doc.line(margin, footerY, pageW - margin, footerY);
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(242, 101, 34);
+  doc.text('Thank you for choosing MealSetu!', pageW / 2, footerY + 8, { align: 'center' });
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(120, 120, 120);
+  doc.text('This is a computer-generated invoice.', pageW / 2, footerY + 14, { align: 'center' });
+  doc.text('MealSetu | Quality Food, Served with Care', pageW / 2, footerY + 20, { align: 'center' });
+
+  // ── Save with status-aware filename ──
+  const fileStatus = isPaid ? 'PAID' : isFree ? 'FREE' : 'PENDING';
+  doc.save(`MealSetu_Invoice_${historyItem.id}_${fileStatus}.pdf`);
 };
 
 
@@ -1253,7 +1372,7 @@ return (
             date: o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN'),
             plan: o.planType || o.mealPreference || 'Tiffin',
             amount: Number(o.amount) || 0,
-            status: o.paymentStatus || 'Pending',
+            status: Number(o.amount) === 0 ? 'Free' : (o.paymentStatus || 'Pending'),
             vendorId: o.vendorId?._id || o.vendorId || null,
             vendorName: o.vendorId?.kitchenName || 'Partner Kitchen',
             vendorAddress: o.vendorId?.address || '',
@@ -1263,10 +1382,13 @@ return (
             transactionId: o.transactionId || 'N/A',
             orderId: o._id || '',
             orderDate: o.orderDate || new Date().toISOString(),
+            startDate: o.startDate || null,
+            endDate: o.endDate || null,
             customerName: user.name || '',
             customerPhone: user.phone || '',
             customerEmail: user.email || '',
-            customerAddress: user.address || ''
+            customerAddress: user.address || '',
+            cashPaymentConfirmedAt: o.cashPaymentConfirmedAt || null
           }))}
           onDownloadInvoice={handleDownloadInvoice}
         />

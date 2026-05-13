@@ -358,6 +358,24 @@ const Subscription = ({
             ) : (
               <p style={{ color: '#dc2626', marginTop: '5px' }}>⚠ Expired</p>
             )}
+            {currentSubscription.paymentMethod === 'Cash' && currentSubscription.paymentStatus === 'Pending' && (
+              <div style={{
+                background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '10px',
+                padding: '14px 18px', marginTop: '12px', display: 'flex',
+                alignItems: 'flex-start', gap: '10px', textAlign: 'left'
+              }}>
+                <span style={{ fontSize: '20px' }}>💵</span>
+                <div>
+                  <p style={{ fontWeight: '700', color: '#c2410c', margin: '0 0 4px 0', fontSize: '14px' }}>
+                    Cash Payment Pending
+                  </p>
+                  <p style={{ color: '#9a3412', margin: 0, fontSize: '13px', lineHeight: '1.5' }}>
+                    Please pay ₹{currentSubscription.amount} in cash directly to the vendor
+                    while collecting your tiffin. Your subscription is already active.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="status-display">

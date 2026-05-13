@@ -82,24 +82,30 @@ const UserManagement = () => {
            );
            }, [vendors, vendorSearchTerm]);
             const formatDate = (date) => {
-    if (!date) return 'Never';
+    if (!date) return '—';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '—';
     return new Intl.DateTimeFormat('en-GB', {
       day: 'numeric',
       month: 'short',
       year: 'numeric'
-    }).format(new Date(date));
+    }).format(d);
   };
 
   const getStatusBadge = (user) => {
-    if (!user.isActive || user.daysSinceActive > 50) return 'Inactive';
-    if (user.daysSinceActive > 40) return 'Warning';
-    return 'Active';
+    if (user.isActive) {
+      if (user.daysSinceActive !== null && user.daysSinceActive > 30) return 'Warning';
+      return 'Active';
+    }
+    return 'Inactive';
   };
 
   const getStatusClass = (user) => {
-    if (!user.isActive || user.daysSinceActive > 50) return 'um-badge-inactive';
-    if (user.daysSinceActive > 40) return 'um-badge-warning';
-    return 'um-badge-active';
+    if (user.isActive) {
+      if (user.daysSinceActive !== null && user.daysSinceActive > 30) return 'um-badge-warning';
+      return 'um-badge-active';
+    }
+    return 'um-badge-inactive';
   };
 
   const getVendorImage = (vendor) => {
@@ -107,7 +113,7 @@ const UserManagement = () => {
     const path = vendor.profileImage || vendor.kitchenPoster || vendor.profilePic || '';
     if (!path) return '';
     if (path.startsWith('http')) return path;
-    return `http://localhost:5000${path}`;
+    return `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
   };
 
   const getApprovalBadgeClass = (vendor) => {
@@ -342,9 +348,9 @@ filteredVendors.map((vendor) => (
                   <td>{user.name || 'N/A'}</td>
                   <td>{user.email || 'N/A'}</td>
                   <td>{user.phone || 'N/A'}</td>
-                  <td>{formatDate(user.joinDate || user.createdAt)}</td>
+                  <td>{formatDate(user.joinDate)}</td>
                   <td>{formatDate(user.lastActiveDate)}</td>
-                  <td>{user.daysSinceActive !== undefined ? `${user.daysSinceActive} days` : 'N/A'}</td>
+                  <td>{user.daysSinceActive !== null && user.daysSinceActive !== undefined ? `${user.daysSinceActive} days` : '—'}</td>
                   <td>
                     <span className={getStatusClass(user)}>
                       {getStatusBadge(user)}
