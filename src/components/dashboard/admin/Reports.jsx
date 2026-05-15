@@ -1,12 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { getAdminCommissionTiers, updateAdminCommissionTiers, getAdminCommissionVendors, adminVerifyCommission, seedDefaultTiers } from '../../../utils/api.js';
+import { getAdminCommissionTiers, updateAdminCommissionTiers, getAdminCommissionVendors, adminVerifyCommission, seedDefaultTiers, adminVerifyScreenshot } from '../../../utils/api.js';
 import './Reports.css';
+
+const STATUS_LABELS = {
+  'not_generated':        'Not Generated',
+  'pending':              'Pending',
+  'paid':                 'Paid',
+  'overdue':              'Overdue',
+  'pending_verification': 'Under Review'
+};
 
 const Reports = () => {
   const [tiers, setTiers] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ month: '', status: 'all', search: '' });
+  const [aiAnalysis, setAiAnalysis] = useState({});   // keyed by payment_id
+  const [analyzing, setAnalyzing] = useState({});     // keyed by payment_id
+
+  // Rejection modal state
+  const [rejectModal, setRejectModal] = useState(false);
+  const [rejectPaymentId, setRejectPaymentId] = useState(null);
+  const [rejectVendorName, setRejectVendorName] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
   const downloadCommissionCSV = async () => {
     try {
@@ -70,13 +87,27 @@ const Reports = () => {
     }
   };
 
-  const handleVerifyPayment = async (paymentId, action) => {
+  const handleVerifyPayment = async (paymentId, action, notes = '') => {
     try {
-      const notes = action === 'reject' ? prompt('Rejection notes:') : '';
       await adminVerifyCommission(paymentId, { action, notes });
       loadData();
     } catch (error) {
       alert('Verification failed: ' + error.message);
+    }
+  };
+
+  const handleAnalyzeScreenshot = async (paymentId, proofUrl) => {
+    setAnalyzing(prev => ({ ...prev, [paymentId]: true }));
+    try {
+      const result = await adminVerifyScreenshot(proofUrl);
+      setAiAnalysis(prev => ({ ...prev, [paymentId]: result }));
+    } catch (err) {
+      setAiAnalysis(prev => ({
+        ...prev,
+        [paymentId]: { error: 'Analysis failed: ' + err.message }
+      }));
+    } finally {
+      setAnalyzing(prev => ({ ...prev, [paymentId]: false }));
     }
   };
 
@@ -88,6 +119,23 @@ const Reports = () => {
     } catch (error) {
       alert('Seed failed: ' + error.message);
     }
+  };
+
+  const getPaymentMethodBadge = (v) => {
+    if (!v.payment_status) return null;
+    const isRazorpay = v.utr_number?.startsWith('pay_');
+    return isRazorpay
+      ? <span style={{ background: '#dcfce7', color: '#16a34a', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' }}>Razorpay ✓</span>
+      : <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' }}>Manual</span>;
+  };
+
+  const getProofUrl = (proofUrl) => {
+    if (!proofUrl) return null;
+    if (proofUrl.startsWith('http://') || proofUrl.startsWith('https://')) return proofUrl;
+    const backendBase = window.location.hostname === 'localhost'
+      ? 'http://localhost:5000'
+      : window.location.origin;
+    return `${backendBase}${proofUrl.startsWith('/') ? '' : '/'}${proofUrl}`;
   };
 
   if (loading) {
@@ -264,6 +312,7 @@ const Reports = () => {
                 <th>Rate</th>
                 <th>Due</th>
                 <th>Paid</th>
+                <th>Method</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -271,7 +320,7 @@ const Reports = () => {
             <tbody>
               {filteredVendors.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="no-data">No vendor commission records found.</td>
+                  <td colSpan="9" className="no-data">No vendor commission records found.</td>
                 </tr>
               ) : (
                 filteredVendors.map((v) => (
@@ -282,17 +331,20 @@ const Reports = () => {
                     <td>{v.commission_rate}%</td>
                     <td>₹{v.commission_amount?.toLocaleString()}</td>
                     <td>₹{v.amount_paid?.toLocaleString()}</td>
+                    <td>{getPaymentMethodBadge(v)}</td>
                     <td>
                       <span className={`status-badge ${
-                        v.status === 'pending' ? 'status-pending' :
-                        v.status === 'paid' ? 'status-paid' : 'status-overdue'
+                        v.status === 'pending'              ? 'status-pending' :
+                        v.status === 'paid'                 ? 'status-paid' :
+                        v.status === 'pending_verification' ? 'status-pending' :
+                        'status-overdue'
                       }`}>
-                        {v.status}
+                        {STATUS_LABELS[v.status] || v.status}
                       </span>
                     </td>
                     <td>
                       {v.proof_url ? (
-                        <a href={v.proof_url} target="_blank" rel="noopener noreferrer"
+                        <a href={getProofUrl(v.proof_url)} target="_blank" rel="noopener noreferrer"
                           style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: '600' }}>
                           View Proof
                         </a>
@@ -332,22 +384,125 @@ const Reports = () => {
                     <td style={{ fontWeight: '600' }}>{v.vendor_name}</td>
                     <td>₹{v.amount_paid}</td>
                     <td>
-                      {v.proof_url ? (
-                        <a href={v.proof_url} target="_blank" rel="noopener noreferrer"
-                          style={{ color: '#3b82f6', fontWeight: '600' }}>
-                          View
-                        </a>
-                      ) : (
-                        <span style={{ color: '#9ca3af' }}>N/A</span>
-                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {v.proof_url ? (
+                          <>
+                            <a href={getProofUrl(v.proof_url)} target="_blank" rel="noopener noreferrer"
+                              style={{ color: '#3b82f6', fontWeight: '600' }}>
+                              View Proof
+                            </a>
+                            <div style={{ marginTop: '8px' }}>
+                              <button
+                                onClick={() => handleAnalyzeScreenshot(v.payment_id, v.proof_url)}
+                                disabled={analyzing[v.payment_id]}
+                                style={{
+                                  background: '#6366f1',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '6px 12px',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                {analyzing[v.payment_id] ? '🔍 Analyzing...' : '🤖 Analyze with AI'}
+                              </button>
+
+                              {aiAnalysis[v.payment_id] && !aiAnalysis[v.payment_id].fallback && (
+                                aiAnalysis[v.payment_id].aiAvailable === false ? (
+                                  <div style={{
+                                    marginTop: '6px', padding: '8px 12px', borderRadius: '6px',
+                                    background: '#fef9c3', border: '1px solid #ca8a04', fontSize: '12px'
+                                  }}>
+                                    <strong style={{ color: '#92400e' }}>⚠ Basic Check Only</strong>
+                                    <p style={{ margin: '4px 0 0', color: '#78350f' }}>
+                                      {aiAnalysis[v.payment_id].reason}
+                                    </p>
+                                    <ul style={{ margin: '4px 0 0', paddingLeft: '16px', color: '#92400e' }}>
+                                      {aiAnalysis[v.payment_id].signals?.map((s, i) => (
+                                        <li key={i} style={{ fontSize: '11px' }}>{s}</li>
+                                      ))}
+                                    </ul>
+                                    <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#78350f' }}>
+                                      Set ANTHROPIC_API_KEY in .env for full AI analysis.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div style={{
+                                    marginTop: '8px', padding: '10px 14px',
+                                    borderRadius: '8px', fontSize: '12px',
+                                    background: aiAnalysis[v.payment_id].recommendation === 'approve'
+                                      ? '#dcfce7' : aiAnalysis[v.payment_id].recommendation === 'reject'
+                                      ? '#fee2e2' : '#fef9c3',
+                                    border: `1px solid ${
+                                      aiAnalysis[v.payment_id].recommendation === 'approve' ? '#16a34a'
+                                      : aiAnalysis[v.payment_id].recommendation === 'reject' ? '#dc2626'
+                                      : '#ca8a04'
+                                    }`
+                                  }}>
+                                    <div style={{ fontWeight: '700', marginBottom: '4px' }}>
+                                      {aiAnalysis[v.payment_id].recommendation === 'approve' && '✅ Likely Authentic'}
+                                      {aiAnalysis[v.payment_id].recommendation === 'reject' && '❌ Possibly Fake'}
+                                      {aiAnalysis[v.payment_id].recommendation === 'review' && '⚠️ Needs Review'}
+                                      <span style={{ fontWeight: '400', marginLeft: '6px', color: '#64748b' }}>
+                                        ({aiAnalysis[v.payment_id].confidence} confidence)
+                                      </span>
+                                      {aiAnalysis[v.payment_id].provider && (
+                                        <span style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '8px' }}>
+                                          via {aiAnalysis[v.payment_id].provider}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{ color: '#374151', marginBottom: '4px' }}>
+                                      {aiAnalysis[v.payment_id].reason}
+                                    </div>
+                                    {aiAnalysis[v.payment_id].signals?.length > 0 && (
+                                      <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px', color: '#6b7280' }}>
+                                        {aiAnalysis[v.payment_id].signals.map((s, i) => (
+                                          <li key={i} style={{ fontSize: '11px' }}>{s}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                )
+                              )}
+
+                              {aiAnalysis[v.payment_id]?.fallback && (
+                                <div style={{
+                                  marginTop: '6px', fontSize: '11px', color: '#9a3412',
+                                  background: '#fff7ed', padding: '6px 10px', borderRadius: '6px'
+                                }}>
+                                  ⚠ {aiAnalysis[v.payment_id].reason || 'AI not configured. Verify manually.'}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: '#9ca3af' }}>No proof uploaded</span>
+                        )}
+                      </div>
                     </td>
                     <td>
-                      <button className="confirm-btn" onClick={() => handleVerifyPayment(v._id, 'confirm')}>
-                        ✓ Confirm
-                      </button>
-                      <button className="reject-btn" onClick={() => handleVerifyPayment(v._id, 'reject')}>
-                        ✕ Reject
-                      </button>
+                      {v.payment_id ? (
+                        <>
+                          <button className="confirm-btn" onClick={() => handleVerifyPayment(v.payment_id, 'confirm')}>
+                            ✓ Confirm
+                          </button>
+                          <button className="reject-btn" onClick={() => {
+                            setRejectPaymentId(v.payment_id);
+                            setRejectVendorName(v.vendor_name || 'this vendor');
+                            setRejectReason('');
+                            setRejectModal(true);
+                          }}>
+                            ✕ Reject
+                          </button>
+                        </>
+                      ) : (
+                        <span style={{ color: '#94a3b8', fontSize: '12px' }}>
+                          No proof submitted
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -356,6 +511,90 @@ const Reports = () => {
           </table>
         </div>
       </div>
+
+      {/* REJECTION MODAL */}
+      {rejectModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          zIndex: 1000, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '16px', padding: '32px',
+            width: '100%', maxWidth: '460px',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.2)'
+          }}>
+            <h3 style={{ color: '#dc2626', margin: '0 0 6px 0' }}>
+              Reject Payment Proof
+            </h3>
+            <p style={{ color: '#64748b', fontSize: '14px', margin: '0 0 20px 0' }}>
+              Vendor: <strong>{rejectVendorName}</strong>
+            </p>
+
+            <label style={{
+              display: 'block', fontWeight: '600', fontSize: '14px',
+              marginBottom: '8px', color: '#374151'
+            }}>
+              Reason for rejection <span style={{ color: '#dc2626' }}>*</span>
+            </label>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Screenshot is unclear, amount does not match, wrong UPI ID shown..."
+              rows={4}
+              style={{
+                width: '100%', padding: '10px 14px', border: '1px solid #e2e8f0',
+                borderRadius: '8px', fontSize: '14px', resize: 'vertical',
+                boxSizing: 'border-box', fontFamily: 'inherit'
+              }}
+            />
+            <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 20px 0' }}>
+              This reason will be shown to the vendor so they know what to fix.
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={() => {
+                  setRejectModal(false);
+                  setRejectReason('');
+                  setRejectPaymentId(null);
+                }}
+                style={{
+                  flex: 1, padding: '12px', border: '1px solid #e2e8f0',
+                  borderRadius: '8px', background: 'white', cursor: 'pointer',
+                  fontSize: '14px', color: '#64748b'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!rejectReason.trim()) return;
+                  setRejectSubmitting(true);
+                  try {
+                    await handleVerifyPayment(rejectPaymentId, 'reject', rejectReason.trim());
+                    setRejectModal(false);
+                    setRejectReason('');
+                    setRejectPaymentId(null);
+                  } finally {
+                    setRejectSubmitting(false);
+                  }
+                }}
+                disabled={!rejectReason.trim() || rejectSubmitting}
+                style={{
+                  flex: 1, padding: '12px', border: 'none',
+                  borderRadius: '8px',
+                  cursor: rejectReason.trim() && !rejectSubmitting ? 'pointer' : 'not-allowed',
+                  fontSize: '14px', fontWeight: '700', color: 'white',
+                  background: rejectReason.trim() && !rejectSubmitting ? '#dc2626' : '#94a3b8'
+                }}
+              >
+                {rejectSubmitting ? 'Rejecting...' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

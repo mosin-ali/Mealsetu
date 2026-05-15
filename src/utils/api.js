@@ -410,6 +410,15 @@ export const getPlatformSettings = () => {
   return apiCall('/admin/settings', { method: 'GET' });
 };
 
+export const updatePlatformSettings = (data) =>
+  apiCall('/admin/settings', {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+
+export const getAdminUpiId = () =>
+  apiCall('/vendor/admin-upi', { method: 'GET' });
+
 export const updateCommissionRate = (commissionRate) => {
   return apiCall('/admin/settings/commission', {
     method: 'PUT',
@@ -463,6 +472,12 @@ export const downloadCommissionCSV = (month = '') => {
 export const seedDefaultTiers = () => {
   return apiCall('/admin/commission/seed-tiers', { method: 'POST' });
 };
+
+export const adminVerifyScreenshot = (proofUrl) =>
+  apiCall('/admin/commission/verify-screenshot', {
+    method: 'POST',
+    body: JSON.stringify({ proofUrl })
+  });
 
 // ============ VENDOR COMMISSION ENDPOINTS ============
 export const getVendorCommissionSummary = () => {
@@ -533,3 +548,31 @@ export const calculateManualOrderAmount = (planType, startDate) => {
     `/vendor/manual-customer/calculate?planType=${planType}&startDate=${startDate}`
   );
 };
+
+// ============ RAZORPAY PAYMENT ENDPOINTS ============
+export const createRazorpayOrder = (data) =>
+  apiCall('/users/payment/create-order', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+
+export const verifyUserPayment = (data) =>
+  apiCall('/users/payment/verify', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+
+export const createCommissionPaymentOrder = (data) =>
+  apiCall('/vendor/commission/create-payment-order', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+
+export const verifyCommissionPaymentRazorpay = (data) =>
+  apiCall('/vendor/commission/verify-payment', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+
+export const checkCanAddPlan = () =>
+  apiCall('/users/check-can-add-plan', { method: 'GET' });

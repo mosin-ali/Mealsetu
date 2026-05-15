@@ -7,8 +7,10 @@ import {
   getUpcomingOrders,
   extendSubscriptionOrder,
   checkSubscriptionPaymentStatus,
-  getVendorPricingForUser
+  getVendorPricingForUser,
+  checkCanAddPlan
 } from '../../../utils/api';
+import { initiateRazorpayPayment } from '../../common/RazorpayCheckout';
 
 const Subscription = ({
   user,
@@ -36,10 +38,13 @@ const Subscription = ({
   const [plans, setPlans] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState('MONTHLY');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('Cash');
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExtending, setIsExtending] = useState(false);
   const [vendorDetails, setVendorDetails] = useState(null);
@@ -64,6 +69,7 @@ const Subscription = ({
     setShowPaymentModal(false);
     setShowQRCode(false);
     setShowSuccessModal(false);
+    setErrorMessage('');
   };
 
   const isConfirmDisabled = isProcessing || !selectedPlan || !selectedPaymentMethod;
@@ -154,6 +160,60 @@ const Subscription = ({
 
   const handlePaymentMethodSelect = (method) => {
     setSelectedPaymentMethod(method);
+  };
+
+  const handleOnlinePayment = async () => {
+    const selectedVendorId = currentSubscription?.vendorId
+      ? String(currentSubscription.vendorId)
+      : vendorId ? String(vendorId) : null;
+
+    if (!selectedVendorId) {
+      alert('No vendor available. Please browse and select a vendor first.');
+      return;
+    }
+
+    setPaymentLoading(true);
+    setErrorMessage('');
+
+    try {
+      const preCheck = await checkCanAddPlan();
+      if (!preCheck.canPurchase) {
+        setPaymentLoading(false);
+        setErrorMessage(preCheck.message || 'Cannot add more plans at this time.');
+        return;
+      }
+    } catch (err) {
+      setPaymentLoading(false);
+      setErrorMessage('Could not verify plan eligibility. Please try again.');
+      return;
+    }
+
+    const amount = selectedPlanDetails?.price || (selectedPlan === 'WEEKLY' ? 560 : 2000);
+
+    await initiateRazorpayPayment({
+      amount,
+      vendorId:       selectedVendorId,
+      plan:           selectedPlan,
+      mealPreference: 'Regular',
+      deliverySlot:   'Lunch',
+      userName:       user?.name,
+      userEmail:      user?.email,
+      userPhone:      user?.phone,
+      onSuccess: async (result) => {
+        setPaymentLoading(false);
+        setPaymentSuccess(result);
+        setShowPaymentModal(false);
+        setShowSuccessModal(true);
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
+        await fetchSubscriptionData();
+        if (onSubscriptionActivated) onSubscriptionActivated(result);
+      },
+      onFailure: (error) => {
+        setPaymentLoading(false);
+        setErrorMessage(error || 'Payment failed. Please try again.');
+      }
+    });
   };
 
   const handleConfirmSubscribe = async () => {
@@ -565,10 +625,10 @@ const Subscription = ({
               <h4 className="payment-method-heading">Payment Method</h4>
               <div className="payment-method-buttons">
                 <button
-                  className={`payment-method-btn ${selectedPaymentMethod === 'UPI' ? 'selected' : ''}`}
-                  onClick={() => handlePaymentMethodSelect('UPI')}
+                  className={`payment-method-btn ${selectedPaymentMethod === 'Razorpay' ? 'selected' : ''}`}
+                  onClick={() => handlePaymentMethodSelect('Razorpay')}
                 >
-                  📱 UPI
+                  💳 Online
                 </button>
                 <button
                   className={`payment-method-btn ${
@@ -597,6 +657,28 @@ const Subscription = ({
               )}
             </div>
 
+            {errorMessage && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}>
+                <span style={{ fontSize: '18px' }}>⚠️</span>
+                <div>
+                  <p style={{ margin: 0, fontWeight: '600', color: '#dc2626', fontSize: '14px' }}>
+                    Cannot Add Plan
+                  </p>
+                  <p style={{ margin: '4px 0 0', color: '#991b1b', fontSize: '13px' }}>
+                    {errorMessage}
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="subscribe-modal-button-row">
               <button
                 className="btn-cancel"
@@ -607,13 +689,27 @@ const Subscription = ({
               >
                 Cancel
               </button>
-              <button
-                className={`btn-confirm-subscribe ${isConfirmDisabled ? 'disabled' : ''}`}
-                onClick={handleConfirmSubscribe}
-                disabled={isConfirmDisabled}
-              >
-                {isProcessing ? 'Processing...' : 'Confirm and Subscribe'}
-              </button>
+              {selectedPaymentMethod === 'Razorpay' ? (
+                <button
+                  className="btn-confirm-subscribe"
+                  onClick={handleOnlinePayment}
+                  disabled={!selectedPlan || paymentLoading}
+                  style={{
+                    background: paymentLoading ? '#94a3b8' : '#1a237e',
+                    cursor: paymentLoading ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {paymentLoading ? 'Processing...' : '💳 Pay Online (UPI / Card)'}
+                </button>
+              ) : (
+                <button
+                  className={`btn-confirm-subscribe ${isConfirmDisabled ? 'disabled' : ''}`}
+                  onClick={handleConfirmSubscribe}
+                  disabled={isConfirmDisabled}
+                >
+                  {isProcessing ? 'Processing...' : 'Confirm and Subscribe'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -706,10 +802,10 @@ const Subscription = ({
               </p>
               <div className="order-summary-box" style={{ textAlign: 'left' }}>
                 <p style={{ margin: '8px 0' }}>
-                  <strong>Plan:</strong> {selectedPlanDetails?.name}
+                  <strong>Plan:</strong> {paymentSuccess?.planType || selectedPlanDetails?.name}
                 </p>
                 <p style={{ margin: '8px 0' }}>
-                  <strong>Amount:</strong> ₹{selectedPlanDetails?.price}
+                  <strong>Amount:</strong> ₹{paymentSuccess?.order?.amount || selectedPlanDetails?.price}
                 </p>
                 {modalVendorName && (
                   <p style={{ margin: '8px 0' }}>
@@ -720,7 +816,7 @@ const Subscription = ({
                   <strong>Payment Method:</strong> {selectedPaymentMethod}
                 </p>
                 <p style={{ margin: '8px 0' }}>
-                  <strong>Valid For:</strong> {selectedPlanDetails?.days} days
+                  <strong>Valid For:</strong> {{ Trial: 2, Weekly: 7, Monthly: 30 }[paymentSuccess?.planType] || selectedPlanDetails?.days || 30} days
                 </p>
               </div>
               <button

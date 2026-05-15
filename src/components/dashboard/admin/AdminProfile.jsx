@@ -35,7 +35,7 @@ const AdminProfile = () => {
         name: userData.name || '',
         email: userData.email || '',
         phone: userData.phone || ''
-      })); 
+      }));
     }
   }, []);
 
@@ -62,20 +62,17 @@ const AdminProfile = () => {
       const token = localStorage.getItem('token');
       const user = JSON.parse(localStorage.getItem('user'));
 
-      const response = await fetch(`/api/admin/profile`, {
+      const profileResponse = await fetch(`/api/admin/profile`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          name: profileData.name,
-          phone: profileData.phone
-        })
+        body: JSON.stringify({ name: profileData.name, phone: profileData.phone })
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      if (profileResponse.ok) {
+        const data = await profileResponse.json();
         localStorage.setItem('user', JSON.stringify(data.user));
         setMessage('Profile updated successfully!');
         setTimeout(() => setMessage(''), 3000);
@@ -202,14 +199,13 @@ const AdminProfile = () => {
               <label>
                 <Phone size={18} /> Phone Number
               </label>
-              <input 
-                type="tel" 
+              <input
+                type="tel"
                 value={profileData.phone}
                 onChange={(e) => handleProfileChange('phone', e.target.value)}
                 placeholder="Enter your phone number"
               />
             </div>
-
 
 
             <button type="submit" className="submit-btn" disabled={loading}>

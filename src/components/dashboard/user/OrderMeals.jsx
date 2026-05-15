@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './OrderMeals.css';
 import './OrderMealsFlow.css';
-import { getVendorWeeklyPlan, getVendorStatus, getUserVendorRating, createTrialOrder, getVendorsByPincode, updateUserPincode } from '../../../utils/api';
+import { getVendorWeeklyPlan, getVendorStatus, getUserVendorRating, createTrialOrder, getVendorsByPincode, updateUserPincode, checkCanAddPlan } from '../../../utils/api';
+import { initiateRazorpayPayment } from '../../common/RazorpayCheckout';
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -45,6 +46,7 @@ const OrderMeals = ({
   const [vendorRatings, setVendorRatings] = useState({});
   const [showClosedPopup, setShowClosedPopup] = useState(false);
   const [closedVendorName, setClosedVendorName] = useState('');
+  const [orderError, setOrderError] = useState('');
 
 const autoDetectDone = useRef(false);
 
@@ -310,6 +312,7 @@ const continueWithUpcomingPlan = async () => {
   };
 
   const goBack = () => {
+    setOrderError('');
     if (orderStep === 1) {
       setOrderStep(0);
       setSelectedTiffin(null);
@@ -321,8 +324,45 @@ const continueWithUpcomingPlan = async () => {
 
   const handlePaymentChange = (payment) => setOrderData({ ...orderData, payment });
 
-  const handleConfirmClick = () => {
-    if (orderData.payment === 'UPI') {
+  const handleConfirmClick = async () => {
+    if (orderData.payment === 'online') {
+      const selectedVendorId = String(selectedTiffin.vendorId || selectedTiffin._id || selectedTiffin.id);
+      const amount = getPlanPrice();
+
+      setOrderError('');
+
+      try {
+        const check = await checkCanAddPlan();
+        if (!check.canPurchase) {
+          setOrderError(check.message || 'Cannot add more plans at this time.');
+          return;
+        }
+      } catch (err) {
+        setOrderError('Could not process payment. Please try again.');
+        return;
+      }
+
+      await initiateRazorpayPayment({
+        amount,
+        vendorId:       selectedVendorId,
+        plan:           orderData.plan,
+        mealPreference: orderData.menuType === 'jain' ? 'Jain' : 'Regular',
+        deliverySlot:   'Lunch',
+        userName:       user?.name,
+        userEmail:      user?.email,
+        userPhone:      user?.phone,
+        onSuccess: (result) => {
+          alert(`Order Confirmed!\nPlan: ${result.planType}\nMeal: ${orderData.menuType === 'jain' ? 'Jain' : 'Regular'}\nTotal: ₹${amount}`);
+          setOrderStep(0);
+          setSelectedTiffin(null);
+          setWeeklyPlan(null);
+          setOrderData({ plan: '', selectedPlan: '', menuType: 'regular', payment: 'Cash', startDate: '', altMainSubji: '' });
+        },
+        onFailure: (error) => {
+          setOrderError('Payment failed: ' + error);
+        }
+      });
+    } else if (orderData.payment === 'UPI') {
       setShowQRCode(true);
     } else {
       confirmOrder();
@@ -331,12 +371,24 @@ const continueWithUpcomingPlan = async () => {
 
   const confirmOrder = async () => {
     if (!orderData.selectedPlan || !orderData.menuType) {
-      alert('Please select a plan and meal type');
+      setOrderError('Please select a plan and meal type');
+      return;
+    }
+
+    setOrderError('');
+
+    try {
+      const check = await checkCanAddPlan();
+      if (!check.canPurchase) {
+        setOrderError(check.message || 'You have reached the maximum limit of 3 upcoming plan extensions.');
+        return;
+      }
+    } catch (err) {
+      setOrderError('Could not verify plan eligibility. Please try again.');
       return;
     }
 
     try {
-      // ✅ Fixed: map plan key to plan type for correct price lookup
       const planTypeMap = { 'ONEDAY': 'daily', 'WEEKLY': 'weekly', 'MONTHLY': 'monthly' };
       const resolvedPlanType = planTypeMap[orderData.plan] || orderData.selectedPlan;
       const activePricing = selectedTiffin.activePricing ||
@@ -362,7 +414,8 @@ const continueWithUpcomingPlan = async () => {
       setWeeklyPlan(null);
       setOrderData({ plan: '', selectedPlan: '', menuType: 'regular', payment: 'Cash', startDate: '', altMainSubji: '' });
     } catch (error) {
-      alert('Failed to place order: ' + error.message);
+      setOrderError(error.message || 'Failed to place order');
+      return;
     }
   };
 
@@ -927,15 +980,34 @@ const continueWithUpcomingPlan = async () => {
       {orderStep === 3 && (
         <div className="step-content">
           <h3>Payment Method</h3>
-          <div className="payment-options">
-            <label className={`pay-option ${orderData.payment === 'Cash' ? 'active' : ''}`}>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+            <label className={`pay-option ${orderData.payment === 'Cash' ? 'active' : ''}`} style={{ flex: 1 }}>
               <input type="radio" name="pay" checked={orderData.payment === 'Cash'} onChange={() => handlePaymentChange('Cash')} />
               💵 Cash
             </label>
-            <label className={`pay-option ${orderData.payment === 'UPI' ? 'active' : ''}`}>
-              <input type="radio" name="pay" checked={orderData.payment === 'UPI'} onChange={() => handlePaymentChange('UPI')} />
-              📱 UPI
-            </label>
+            <button
+              onClick={() => handlePaymentChange('online')}
+              style={{
+                flex: 1,
+                padding: '16px',
+                border: orderData.payment === 'online'
+                  ? '2px solid #f26522' : '1px solid #e2e8f0',
+                borderRadius: '12px',
+                background: orderData.payment === 'online' ? '#fff7ed' : 'white',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '15px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+            >
+              💳 Online
+              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+                UPI / Card
+              </span>
+            </button>
           </div>
           <div className="order-summary">
             <h4>Order Summary</h4>
@@ -943,11 +1015,33 @@ const continueWithUpcomingPlan = async () => {
             <p><strong>Menu Day:</strong> {selectedMenuDay}</p>
             <p><strong>Start Date:</strong> {orderData.startDate}</p>
             <p><strong>Meal Type:</strong> {orderData.menuType === 'jain' ? 'Jain' : 'Regular'}</p>
-            <p><strong>Payment:</strong> {orderData.payment}</p>
+            <p><strong>Payment:</strong> {orderData.payment === 'online' ? 'Online (UPI/Card)' : 'Cash'}</p>
           </div>
+          {orderError && (
+            <div style={{
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '10px',
+              padding: '14px 16px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px'
+            }}>
+              <span style={{ fontSize: '18px' }}>⚠️</span>
+              <div>
+                <p style={{ margin: 0, fontWeight: '600', color: '#dc2626', fontSize: '14px' }}>
+                  Cannot Add Plan
+                </p>
+                <p style={{ margin: '4px 0 0', color: '#991b1b', fontSize: '13px' }}>
+                  {orderError}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="total-box">Total: ₹{getPlanPrice()}</div>
           <button className="primary-order-btn" onClick={handleConfirmClick}>
-            {orderData.payment === 'UPI' ? 'Show UPI QR' : 'Place Order'}
+            {orderData.payment === 'online' ? '💳 Pay Online' : 'Place Order'}
           </button>
         </div>
       )}
