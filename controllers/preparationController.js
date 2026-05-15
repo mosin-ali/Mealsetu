@@ -23,8 +23,11 @@ const getPreparationList = async (req, res) => {
       $or: [
         { endDate: { $gte: today } },
         {
-          endDate: { $in: [null, undefined] },
-          startDate: { $gte: thirtyDaysAgo }
+          $and: [
+            { endDate: { $in: [null, undefined] } },
+            { startDate: { $gte: thirtyDaysAgo } },
+            { startDate: { $lte: today } }
+          ]
         }
       ]
     });

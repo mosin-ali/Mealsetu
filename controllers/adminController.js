@@ -39,6 +39,24 @@ const updateCommissionRate = async (req, res) => {
   }
 };
 
+// @desc    Update platform settings (commission rate + admin UPI ID)
+// @route   PUT /api/admin/settings
+const updatePlatformSettings = async (req, res) => {
+  try {
+    const { commissionRate, adminUpiId } = req.body;
+    let settings = await PlatformSetting.findOne();
+    if (!settings) {
+      settings = await PlatformSetting.create({ commissionRate: 10, adminUpiId: '' });
+    }
+    if (commissionRate !== undefined) settings.commissionRate = commissionRate;
+    if (adminUpiId !== undefined) settings.adminUpiId = adminUpiId.trim();
+    await settings.save();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
 // @desc    Get all users
 
 
@@ -663,14 +681,16 @@ const getCommissionVendors = async (req, res) => {
         $project: {
           vendor_name: '$vendor.kitchenName',
           month: 1,
+          week: 1,
           total_earning: 1,
           commission_rate: 1,
           commission_amount: 1,
           status: 1,
-          amount_paid: { $ifNull: ['$latestPayment.amount_paid', 0] },
+          payment_id:     { $ifNull: ['$latestPayment._id', null] },
+          amount_paid:    { $ifNull: ['$latestPayment.amountPaid', 0] },
           payment_status: '$latestPayment.status',
-          proof_url: '$latestPayment.proof_url',
-          paid_at: { $ifNull: ['$latestPayment.paid_at', null] }
+          proof_url:      { $ifNull: ['$latestPayment.proofUrl', null] },
+          paid_at:        { $ifNull: ['$latestPayment.paidAt', null] }
         }
       },
       { $sort: { month: -1 } }
@@ -724,11 +744,48 @@ const verifyCommissionPayment = async (req, res) => {
       
       res.json({ message: 'Payment verified successfully' });
     } else if (action === 'reject') {
+      const notes = req.body.notes || '';
+
+      // Update CommissionPayment
       payment.status = 'rejected';
-      payment.notes = req.body.notes;
+      payment.notes  = notes;
       await payment.save();
-      
-      res.json({ message: 'Payment rejected' });
+
+      // Reset Commission status back to 'pending' so vendor can re-submit
+      const commission = payment.vendorEarningId;
+      commission.status            = 'pending';
+      commission.rejectionReason   = notes || 'Payment proof was rejected by admin.';
+      commission.payment_proof_url = null;
+      commission.payment_date      = null;
+      await commission.save();
+
+      // Email vendor about rejection with reason
+      try {
+        const vendor = await Vendor.findById(payment.vendorId)
+          .populate('ownerId', 'email name');
+        if (vendor?.ownerId?.email) {
+          await sendEmail(
+            vendor.ownerId.email,
+            'MealSetu — Commission Payment Proof Rejected',
+            `<div style="font-family:Arial,sans-serif;max-width:600px">
+              <h2 style="color:#dc2626">Payment Proof Rejected</h2>
+              <p>Dear ${vendor.ownerId.name},</p>
+              <p>Your commission payment proof was reviewed and could not be accepted.</p>
+              <div style="background:#fef2f2;border-left:4px solid #dc2626;
+                          padding:16px;margin:20px 0;border-radius:0 8px 8px 0">
+                <strong>Reason:</strong><br/><br/>
+                ${notes || 'Payment proof was not accepted.'}
+              </div>
+              <p>Please submit a new payment screenshot from your Commission tab.</p>
+              <p style="color:#64748b;font-size:13px">Thank you — MealSetu Team</p>
+            </div>`
+          );
+        }
+      } catch (emailErr) {
+        console.error('Email failed:', emailErr.message);
+      }
+
+      return res.json({ message: 'Payment rejected. Vendor notified.' });
     } else {
       res.status(400).json({ message: 'Invalid action' });
     }
@@ -787,11 +844,116 @@ const seedDefaultTiers = async (req, res) => {
   }
 };
 
+// @desc    AI analysis of vendor commission payment screenshot
+// @route   POST /api/admin/commission/verify-screenshot
+const verifyScreenshot = async (req, res) => {
+  try {
+    const { proofUrl } = req.body;
+    if (!proofUrl) return res.status(400).json({ message: 'proofUrl required' });
+
+    // Basic checks — always run, no API key needed
+    const basicChecks = {
+      hasValidExtension: /\.(jpg|jpeg|png|webp)$/i.test(proofUrl),
+      filenamePattern:   /screenshot|screen|payment|txn|upi/i.test(proofUrl),
+      pathIsUpload:      proofUrl.includes('/uploads/'),
+    };
+    const basicScore = Object.values(basicChecks).filter(Boolean).length;
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.json({
+        fallback: false,
+        aiAvailable: false,
+        isLikelyReal: basicScore >= 2,
+        confidence: 'low',
+        recommendation: 'review',
+        reason: 'Basic file check only — Gemini API not configured for deep analysis.',
+        signals: [
+          basicChecks.hasValidExtension ? '✓ Valid image format' : '✗ Unexpected file format',
+          basicChecks.pathIsUpload      ? '✓ File uploaded through system' : '✗ Unusual file path',
+          'Manual review recommended for payment confirmation'
+        ]
+      });
+    }
+
+    const fullImageUrl = proofUrl.startsWith('http')
+      ? proofUrl
+      : `${process.env.BACKEND_URL || 'http://localhost:5000'}${proofUrl}`;
+
+    const imageResponse = await fetch(fullImageUrl);
+    if (!imageResponse.ok) {
+      return res.status(400).json({ message: 'Could not fetch proof image' });
+    }
+
+    const imageBuffer = await imageResponse.arrayBuffer();
+    const base64Image  = Buffer.from(imageBuffer).toString('base64');
+    const mimeType     = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: mimeType, data: base64Image } },
+              {
+                text: `Analyze this UPI payment screenshot for authenticity.
+Reply ONLY with valid JSON, no markdown:
+{
+  "isLikelyReal": true,
+  "confidence": "high",
+  "recommendation": "approve",
+  "reason": "one sentence",
+  "signals": ["observation 1", "observation 2", "observation 3"]
+}
+recommendation must be one of: approve, review, reject
+Check: UPI app branding (GPay/PhonePe/Paytm), transaction ID (12+ digits),
+timestamp, amount display, success screen UI, image compression artifacts.`
+              }
+            ]
+          }],
+          generationConfig: { maxOutputTokens: 400, temperature: 0.1 }
+        })
+      }
+    );
+
+    const geminiData = await geminiResponse.json();
+    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    let analysis;
+    try {
+      analysis = JSON.parse(rawText.replace(/```json|```/g, '').trim());
+    } catch {
+      analysis = {
+        isLikelyReal: null, confidence: 'low',
+        recommendation: 'review',
+        reason: 'Could not parse AI response.',
+        signals: []
+      };
+    }
+
+    if (!['approve', 'review', 'reject'].includes(analysis.recommendation)) {
+      analysis.recommendation = 'review';
+    }
+
+    return res.json({ ...analysis, fallback: false, aiAvailable: true, provider: 'Gemini 1.5 Flash' });
+
+  } catch (error) {
+    console.error('verifyScreenshot error:', error);
+    return res.status(500).json({
+      fallback: true, message: 'Verification failed',
+      recommendation: 'review',
+      reason: 'Server error during analysis. Review manually.'
+    });
+  }
+};
+
 // ===== END COMMISSION FUNCTIONS =====
 
-module.exports = { 
-  getPlatformSettings, 
-  updateCommissionRate, 
+module.exports = {
+  getPlatformSettings,
+  updateCommissionRate,
+  updatePlatformSettings, 
   getPendingVendors, 
   getAllUsers, 
   approveVendor, 
@@ -810,7 +972,8 @@ module.exports = {
   getCommissionVendors,
   verifyCommissionPayment,
   getCommissionReportCSV,
-  seedDefaultTiers
+  seedDefaultTiers,
+  verifyScreenshot
 };
 
 

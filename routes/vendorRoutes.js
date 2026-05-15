@@ -1,7 +1,8 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments, markCashPaymentPaid } = require('../controllers/vendorController');
+const { commissionProofUpload } = require('../middleware/uploadMiddleware');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments, markCashPaymentPaid, getAdminUpiId, createCommissionPaymentOrder, verifyCommissionPaymentRazorpay } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 const { getPreparationList } = require('../controllers/preparationController');
 
@@ -57,9 +58,12 @@ router.patch('/trial-settings', updateTrialSettings);
 router.post('/compliance-submit', upload.fields([{ name: 'fssaiDoc', maxCount: 1 }, { name: 'gstDoc', maxCount: 1 }]), submitVendorCompliance);
 
 // Commission endpoints
+router.get('/admin-upi', getAdminUpiId);
 router.get('/commission/summary', getCommissionSummary);
 router.get('/commission/history', getMyCommissions); // paginated later
-router.post('/commission/pay', upload.single('proof'), payCommission);
+router.post('/commission/pay', commissionProofUpload.single('proof'), payCommission);
+router.post('/commission/create-payment-order', createCommissionPaymentOrder);
+router.post('/commission/verify-payment',       verifyCommissionPaymentRazorpay);
 
 router.get('/preparation-list', getPreparationList);
 

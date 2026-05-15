@@ -1920,6 +1920,211 @@ const getVendorPricingForUser = async (req, res) => {
   }
 };
 
+// @desc    Create Razorpay order for subscription payment
+// @route   POST /api/users/payment/create-order
+const createRazorpayOrder = async (req, res) => {
+  try {
+    const razorpay = require('../utils/razorpayUtils');
+    const { amount, vendorId, plan, mealPreference } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+
+    const razorpayOrder = await razorpay.orders.create({
+      amount:   Math.round(amount * 100),
+      currency: 'INR',
+      receipt:  `r_${Date.now()}`,
+      notes: {
+        userId:         req.user._id.toString(),
+        vendorId:       vendorId,
+        plan:           plan,
+        mealPreference: mealPreference || 'Regular'
+      }
+    });
+
+    res.json({
+      orderId:  razorpayOrder.id,
+      amount:   razorpayOrder.amount,
+      currency: razorpayOrder.currency,
+      keyId:    process.env.RAZORPAY_KEY_ID
+    });
+  } catch (error) {
+    console.error('Create Razorpay order error:', error);
+    res.status(500).json({ message: 'Payment initiation failed', error: error.message });
+  }
+};
+
+// @desc    Verify Razorpay payment + activate subscription
+// @route   POST /api/users/payment/verify
+const verifyUserPayment = async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      vendorId,
+      plan,
+      amount,
+      mealPreference,
+      deliverySlot
+    } = req.body;
+
+    // Verify signature
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ message: 'Payment verification failed. Invalid signature.' });
+    }
+
+    const PLAN_MAP = {
+      'ONEDAY':  'Trial',   'Trial':   'Trial',   'trial':   'Trial',
+      'WEEKLY':  'Weekly',  'Weekly':  'Weekly',  'weekly':  'Weekly',
+      'MONTHLY': 'Monthly', 'Monthly': 'Monthly', 'monthly': 'Monthly'
+    };
+    const planType     = PLAN_MAP[plan] || 'Trial';
+    const durationDays = getPlanDurationDays(planType);
+    const { startDate, endDate } = computeSubscriptionDates(durationDays);
+
+    const user   = await User.findById(req.user._id);
+    const vendor = await Vendor.findById(vendorId);
+    if (!user)   return res.status(404).json({ message: 'User not found' });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    // Check for existing active order — new plan queues behind it
+    const existingActiveOrder = await Order.findOne({
+      userId:  req.user._id,
+      status:  'active',
+      endDate: { $gte: new Date() }
+    });
+
+    const orderStatus = existingActiveOrder ? 'pending' : 'active';
+
+    let orderStartDate = startDate;
+    let orderEndDate   = endDate;
+
+    if (existingActiveOrder) {
+      const existingEnd  = new Date(existingActiveOrder.endDate);
+      orderStartDate     = new Date(existingEnd.getTime() + 86400000);
+      orderEndDate       = new Date(orderStartDate);
+      orderEndDate.setDate(orderEndDate.getDate() + durationDays);
+    }
+
+    const order = await Order.create({
+      userId:             req.user._id,
+      vendorId,
+      amount:             Number(amount),
+      deliverySlot:       deliverySlot || 'Lunch',
+      mealPreference:     mealPreference || 'Regular',
+      paymentStatus:      'Paid',
+      paymentMethod:      'UPI',
+      transactionId:      razorpay_payment_id,
+      planType,
+      status:             orderStatus,
+      startDate:          orderStartDate,
+      endDate:            orderEndDate,
+      scheduledStartDate: orderStatus === 'pending' ? orderStartDate : null,
+      scheduledEndDate:   orderStatus === 'pending' ? orderEndDate   : null
+    });
+
+    if (orderStatus === 'active') {
+      await Subscription.create({
+        userId:       req.user._id,
+        vendorId,
+        planType,
+        startDate:    orderStartDate,
+        expiryDate:   orderEndDate,
+        status:       'active',
+        customerName: user.name,
+        contact:      user.phone
+      });
+      user.expiryDate = orderEndDate;
+      await user.save();
+    }
+
+    try {
+      const isQueued = orderStatus === 'pending';
+      await sendEmail(
+        user.email,
+        `MealSetu — ${planType} Plan ${isQueued ? 'Queued' : 'Activated'}`,
+        `<div style="font-family:Arial,sans-serif;max-width:600px">
+          <h2 style="color:#16a34a">Payment Successful!</h2>
+          <p>Dear ${user.name},</p>
+          <div style="background:#f0fdf4;padding:20px;border-radius:10px;margin:16px 0">
+            <p><strong>Plan:</strong> ${planType}</p>
+            <p><strong>Kitchen:</strong> ${vendor.kitchenName}</p>
+            <p><strong>${isQueued ? 'Scheduled Start' : 'Valid until'}:</strong> ${(isQueued ? orderStartDate : orderEndDate).toLocaleDateString('en-IN')}</p>
+            <p><strong>Amount Paid:</strong> ₹${amount}</p>
+            <p><strong>Transaction ID:</strong> ${razorpay_payment_id}</p>
+          </div>
+          <p>${isQueued ? 'Your plan will activate automatically after your current plan ends.' : 'Enjoy your meals!'}</p>
+        </div>`
+      );
+    } catch (emailErr) {
+      console.error('Email failed:', emailErr.message);
+    }
+
+    res.json({
+      success:       true,
+      message:       orderStatus === 'pending'
+        ? 'Payment successful! Plan queued after your current subscription.'
+        : 'Payment successful! Subscription activated.',
+      order,
+      planType,
+      isQueued:      orderStatus === 'pending',
+      transactionId: razorpay_payment_id
+    });
+  } catch (error) {
+    console.error('Verify payment error:', error);
+    res.status(500).json({ message: 'Payment verification failed', error: error.message });
+  }
+};
+
+const checkCanAddPlan = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const now = new Date();
+    now.setUTCHours(0, 0, 0, 0);
+
+    const activeOrder = await Order.findOne({
+      userId,
+      status: 'active',
+      endDate: { $gte: now }
+    });
+
+    if (!activeOrder) {
+      return res.json({ canPurchase: true, reason: 'no_active_plan' });
+    }
+
+    const pendingCount = await Order.countDocuments({
+      userId,
+      $or: [{ status: 'pending' }, { offerStatus: 'pending' }]
+    });
+
+    if (pendingCount >= 3) {
+      return res.json({
+        canPurchase: false,
+        reason: 'limit_reached',
+        message: 'You have reached the maximum limit of 3 upcoming plan extensions. Wait for a plan to expire before adding more.'
+      });
+    }
+
+    return res.json({
+      canPurchase: true,
+      reason: 'has_active_plan',
+      pendingCount,
+      remaining: 3 - pendingCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 module.exports = {
   getUserSubscription,
   getActiveSubscriptionStatus,
@@ -1948,5 +2153,8 @@ module.exports = {
   checkSubscriptionPaymentStatus,
   getVendorPricingForUser,
   fixStuckOrders,
-  runFixStuckOrders
+  runFixStuckOrders,
+  createRazorpayOrder,
+  verifyUserPayment,
+  checkCanAddPlan
 };

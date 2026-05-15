@@ -1,14 +1,6 @@
 const multer = require('multer');
 const path = require('path');
 
-// Storage engine
-const storage = multer.diskStorage({
-  destination: './uploads/',
-  filename: (req, file, cb) => {
-    cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`);
-  }
-});
-
 // Check file type
 const checkFileType = (file, cb) => {
   const filetypes = /jpeg|jpg|png|pdf/;
@@ -22,12 +14,33 @@ const checkFileType = (file, cb) => {
   }
 };
 
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 5000000 }, // 5MB limit
-  fileFilter: (req, file, cb) => {
-    checkFileType(file, cb);
+// Default storage — saves to ./uploads/
+const storage = multer.diskStorage({
+  destination: './uploads/',
+  filename: (req, file, cb) => {
+    cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`);
   }
 });
 
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5000000 },
+  fileFilter: (req, file, cb) => { checkFileType(file, cb); }
+});
+
+// Commission proof storage — saves to ./uploads/commission-proofs/
+const commissionProofStorage = multer.diskStorage({
+  destination: './uploads/commission-proofs/',
+  filename: (req, file, cb) => {
+    cb(null, `proof-${Date.now()}${path.extname(file.originalname)}`);
+  }
+});
+
+const commissionProofUpload = multer({
+  storage: commissionProofStorage,
+  limits: { fileSize: 5000000 },
+  fileFilter: (req, file, cb) => { checkFileType(file, cb); }
+});
+
 module.exports = upload;
+module.exports.commissionProofUpload = commissionProofUpload;

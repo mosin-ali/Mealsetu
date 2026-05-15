@@ -68,10 +68,57 @@ const seedDefaultTiers = async () => {
 
 const app = express();
 
+// Razorpay webhook — must use raw body BEFORE express.json()
+app.post('/api/webhooks/razorpay',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    try {
+      const crypto         = require('crypto');
+      const webhookSecret  = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+      const signature      = req.headers['x-razorpay-signature'];
+
+      if (webhookSecret && signature) {
+        const expectedSig = crypto
+          .createHmac('sha256', webhookSecret)
+          .update(req.body)
+          .digest('hex');
+        if (expectedSig !== signature) {
+          return res.status(400).json({ message: 'Invalid webhook signature' });
+        }
+      }
+
+      const event = JSON.parse(req.body);
+      console.log('Razorpay webhook event:', event.event);
+
+      if (event.event === 'payment.captured') {
+        const notes = event.payload.payment.entity.notes;
+        console.log('Payment captured:', {
+          paymentId: event.payload.payment.entity.id,
+          amount:    event.payload.payment.entity.amount / 100,
+          type:      notes.type || 'subscription'
+        });
+      }
+
+      res.json({ status: 'ok' });
+    } catch (error) {
+      console.error('Webhook error:', error);
+      res.status(500).json({ message: 'Webhook processing failed' });
+    }
+  }
+);
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Ensure upload subdirectories exist on startup
+const fs = require('fs');
+const commissionsProofDir = path.join(__dirname, 'uploads', 'commission-proofs');
+if (!fs.existsSync(commissionsProofDir)) {
+  fs.mkdirSync(commissionsProofDir, { recursive: true });
+  console.log('Created uploads/commission-proofs directory');
+}
 
 // Public route for getting vendor weekly plan (no auth required)
 app.get('/api/vendor-profile/:vendorId', async (req, res) => {

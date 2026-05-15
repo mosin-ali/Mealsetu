@@ -35,7 +35,6 @@ async function calculateMonthlyEarning(vendorId, month) {
     {
       $match: {
         vendorId,
-        orderStatus: 'Delivered',
         orderDate: { $gte: startDate, $lte: endDate }
       }
     },

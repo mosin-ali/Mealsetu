@@ -37,10 +37,10 @@ month: {
     type: Number, 
     required: true 
   },
-  status: { 
-    type: String, 
-    enum: ['pending', 'paid', 'overdue'],
-    default: 'pending' 
+  status: {
+    type: String,
+    enum: ['pending', 'paid', 'overdue', 'pending_verification'],
+    default: 'pending'
   },
   payment_proof_url: {
     type: String
@@ -56,9 +56,13 @@ month: {
   },
   notes: {
     type: String
+  },
+  rejectionReason: {
+    type: String,
+    default: null
   }
-}, { 
-  timestamps: true 
+}, {
+  timestamps: true
 });
 
 // Compound index for efficient monthly queries

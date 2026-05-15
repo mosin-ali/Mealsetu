@@ -1315,25 +1315,37 @@ const getCommissionSummary = async (req, res) => {
     const commissionDue = Math.round(totalEarning * commissionRate / 100);
     const netPayout = totalEarning - commissionDue;
 
-    // STEP 6: Check existing commission record for this week
-    const existingCommission = await Commission.findOne({
-      vendorId: vendorId,
-      $or: [
-        { week:  currentMonth },
-        { month: currentMonth }
-      ]
-    });
+    // STEP 6: Save/update Commission document so history and admin panel work
+    let savedCommission = null;
+    if (totalEarning > 0) {
+      savedCommission = await Commission.findOneAndUpdate(
+        {
+          vendorId: vendorId,
+          $or: [{ week: currentMonth }, { month: currentMonth }]
+        },
+        {
+          $set: {
+            vendorId:          vendorId,
+            week:              currentMonth,
+            month:             currentMonth,
+            totalOrders:       allOrders.length,
+            total_earning:     totalEarning,
+            commission_rate:   commissionRate,
+            commission_amount: commissionDue,
+            due_date:          endOfWeek
+            // status intentionally NOT in $set — never overwrite
+            // pending_verification or paid on subsequent visits
+          },
+          $setOnInsert: {
+            status: 'pending'   // only set on first creation
+          }
+        },
+        { upsert: true, new: true }
+      );
+    }
 
-    const status = existingCommission
-      ? existingCommission.status
-      : 'not_generated';
-
-    console.log('Commission response:', {
-      totalEarning,
-      commissionRate,
-      commissionDue,
-      netPayout
-    });
+    // Use saved document's status for response (not hardcoded)
+    const finalStatus = savedCommission?.status || 'not_generated';
 
     // STEP 7: Send response
     res.status(200).json({
@@ -1344,8 +1356,9 @@ const getCommissionSummary = async (req, res) => {
       tier_name: tierName,
       current_month: weekLabel,
       month: currentMonth,
-      status: status,
-      orders_count: allOrders.length
+      status: finalStatus,
+      orders_count: allOrders.length,
+      rejectionReason: savedCommission?.rejectionReason || null
     });
 
   } catch (error) {
@@ -1421,41 +1434,42 @@ const payCommission = async (req, res) => {
     const CommissionPayment = require('../models/CommissionPayment');
 
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    if (!vendor) {
-      return res.status(404).json({ message: 'Vendor not found' });
-    }
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
-    const { commissionId, paymentMethod, transactionId } = req.body;
+    const { commissionId } = req.body;
     const proofFile = req.file;
+
+    if (!proofFile) {
+      return res.status(400).json({ message: 'Payment screenshot is required' });
+    }
 
     const commission = await Commission.findOne({
       _id: commissionId,
       vendorId: vendor._id
     });
-
     if (!commission) {
       return res.status(404).json({ message: 'Commission record not found' });
     }
-
-    let proofUrl = null;
-    if (proofFile) {
-      proofUrl = `/uploads/commission-proofs/${proofFile.filename}`;
+    if (commission.status === 'paid') {
+      return res.status(400).json({ message: 'Commission already paid' });
     }
+
+    const proofUrl = `/uploads/commission-proofs/${proofFile.filename}`;
 
     const payment = await CommissionPayment.create({
       vendorEarningId: commission._id,
-      vendorId: vendor._id,
-      amount_paid: commission.commission_amount,
-      payment_method: paymentMethod || 'upi',
-      utr_number: transactionId || '',
-      proof_url: proofUrl,
-      paid_at: new Date(),
-      verified_by_admin: false
+      vendorId:        vendor._id,
+      amountPaid:      commission.commission_amount,
+      paymentMethod:   'upi',
+      utrNumber:       '',
+      proofUrl:        proofUrl,
+      paidAt:          new Date(),
+      status:          'pending'
     });
 
-    commission.status = 'pending_verification';
+    commission.status            = 'pending_verification';
     commission.payment_proof_url = proofUrl;
-    commission.payment_date = new Date();
+    commission.payment_date      = new Date();
     await commission.save();
 
     try {
@@ -1464,12 +1478,12 @@ const payCommission = async (req, res) => {
       if (vendorWithOwner?.ownerId?.email) {
         await sendEmail(
           vendorWithOwner.ownerId.email,
-          'Commission Payment Submitted - MealSetu',
-          `<div style="font-family: Arial, sans-serif;">
-            <h2 style="color: #f97316;">Payment Proof Submitted</h2>
-            <p>Amount: ₹${commission.commission_amount}</p>
-            <p>Week: ${commission.month}</p>
-            <p>Status: Pending Admin Verification</p>
+          'Commission Payment Proof Submitted — MealSetu',
+          `<div style="font-family:Arial,sans-serif">
+            <h2 style="color:#f26522">Payment Proof Received</h2>
+            <p>Your commission payment proof for week ${commission.month}
+               (₹${commission.commission_amount}) has been submitted.</p>
+            <p>Admin will verify within 24 hours.</p>
           </div>`
         );
       }
@@ -1481,10 +1495,22 @@ const payCommission = async (req, res) => {
       message: 'Payment proof submitted. Awaiting admin verification.',
       payment
     });
-
   } catch (error) {
     console.error('payCommission error:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+const getAdminUpiId = async (req, res) => {
+  try {
+    const PlatformSetting = require('../models/PlatformSetting');
+    const settings = await PlatformSetting.findOne();
+    if (!settings || !settings.adminUpiId) {
+      return res.json({ adminUpiId: null, configured: false });
+    }
+    res.json({ adminUpiId: settings.adminUpiId, configured: true });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 
@@ -1616,7 +1642,136 @@ module.exports = {
   getPendingPayout,
   getMyCommissions,
   payCommission,
+  getAdminUpiId,
   getCashPayments,
   markCashPaymentPaid,
+  createCommissionPaymentOrder,
+  verifyCommissionPaymentRazorpay
 };
+
+// ===== RAZORPAY COMMISSION PAYMENT =====
+
+// @desc  Create Razorpay order for vendor commission payment
+// @route POST /api/vendor/commission/create-payment-order
+async function createCommissionPaymentOrder(req, res) {
+  try {
+    const razorpay  = require('../utils/razorpayUtils');
+    const Commission = require('../models/Commission');
+
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { commissionId } = req.body;
+    const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id });
+    if (!commission) return res.status(404).json({ message: 'Commission not found' });
+    if (commission.status === 'paid') {
+      return res.status(400).json({ message: 'Commission already paid' });
+    }
+
+    const razorpayOrder = await razorpay.orders.create({
+      amount:   Math.round(commission.commission_amount * 100),
+      currency: 'INR',
+      receipt:  `c_${Date.now()}`,
+      notes: {
+        vendorId:     vendor._id.toString(),
+        commissionId: commissionId,
+        type:         'commission_payment'
+      }
+    });
+
+    res.json({
+      orderId:          razorpayOrder.id,
+      amount:           razorpayOrder.amount,
+      currency:         razorpayOrder.currency,
+      keyId:            process.env.RAZORPAY_KEY_ID,
+      commissionAmount: commission.commission_amount,
+      week:             commission.month
+    });
+  } catch (error) {
+    console.error('Create commission payment order error:', error);
+    res.status(500).json({ message: 'Payment initiation failed', error: error.message });
+  }
+}
+
+// @desc  Verify Razorpay commission payment — auto-confirms, no manual review needed
+// @route POST /api/vendor/commission/verify-payment
+async function verifyCommissionPaymentRazorpay(req, res) {
+  try {
+    const crypto          = require('crypto');
+    const Commission      = require('../models/Commission');
+    const CommissionPayment = require('../models/CommissionPayment');
+
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      commissionId
+    } = req.body;
+
+    const body        = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest('hex');
+
+    if (expectedSig !== razorpay_signature) {
+      return res.status(400).json({ message: 'Payment verification failed' });
+    }
+
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id });
+    if (!commission) return res.status(404).json({ message: 'Commission not found' });
+
+    await CommissionPayment.create({
+      vendorEarningId: commission._id,
+      vendorId:        vendor._id,
+      amountPaid:      commission.commission_amount,
+      paymentMethod:   'upi',
+      utrNumber:       razorpay_payment_id,
+      paidAt:          new Date(),
+      status:          'confirmed',
+      verifiedAt:      new Date()
+    });
+
+    commission.status            = 'paid';
+    commission.payment_date      = new Date();
+    commission.admin_verified_at = new Date();
+    commission.rejectionReason   = null;
+    await commission.save();
+
+    try {
+      const vendorWithOwner = await Vendor.findById(vendor._id).populate('ownerId', 'email name');
+      if (vendorWithOwner?.ownerId?.email) {
+        await sendEmail(
+          vendorWithOwner.ownerId.email,
+          'MealSetu — Commission Payment Confirmed',
+          `<div style="font-family:Arial,sans-serif;max-width:600px">
+            <h2 style="color:#16a34a">Commission Payment Received</h2>
+            <p>Dear ${vendorWithOwner.ownerId.name},</p>
+            <div style="background:#f0fdf4;padding:20px;border-radius:10px;margin:16px 0">
+              <p><strong>Week:</strong> ${commission.month}</p>
+              <p><strong>Amount Paid:</strong> ₹${commission.commission_amount}</p>
+              <p><strong>Transaction ID:</strong> ${razorpay_payment_id}</p>
+              <p><strong>Status:</strong> Confirmed ✓</p>
+            </div>
+            <p>Thank you for your payment!</p>
+          </div>`
+        );
+      }
+    } catch (emailErr) {
+      console.error('Email failed:', emailErr.message);
+    }
+
+    res.json({
+      success:       true,
+      message:       'Commission payment successful!',
+      transactionId: razorpay_payment_id
+    });
+  } catch (error) {
+    console.error('Verify commission payment error:', error);
+    res.status(500).json({ message: 'Payment verification failed', error: error.message });
+  }
+}
 

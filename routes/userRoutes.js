@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMyCashPayments, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders } = require('../controllers/userController');
+const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMyCashPayments, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders, createRazorpayOrder, verifyUserPayment, checkCanAddPlan } = require('../controllers/userController');
 
 
 const { getActiveOffers, redeemOffer, getClaimedOffers } = require('../controllers/offerController');
@@ -71,6 +71,12 @@ router.get('/vendor-pricing/:vendorId', protect, authorize('user'), getVendorPri
 
 // FIX 4: Route to fix stuck orders in database (admin only)
 router.post('/fix-stuck-orders', protect, authorize('admin'), runFixStuckOrders);
+
+// Razorpay payment routes
+router.get('/check-can-add-plan',    protect, authorize('user'), checkCanAddPlan);
+router.post('/payment/create-order', protect, authorize('user'), createRazorpayOrder);
+router.post('/payment/verify',       protect, authorize('user'), verifyUserPayment);
+
 module.exports = router;
 
 

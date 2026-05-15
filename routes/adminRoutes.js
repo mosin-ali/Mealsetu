@@ -1,26 +1,28 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { 
-  getPlatformSettings, 
-  updateCommissionRate, 
-  getPendingVendors, 
-  getAllUsers, 
-  approveVendor, 
-  rejectVendor, 
-  getAllVendorsForAdmin, 
-  getVendorSubscribers, 
-  getAdminProfile, 
-  updateAdminProfile, 
-  getPublicAdminContact, 
-  getAllCommissions, 
-  getCommissionSummary, 
+const {
+  getPlatformSettings,
+  updateCommissionRate,
+  updatePlatformSettings,
+  getPendingVendors,
+  getAllUsers,
+  approveVendor,
+  rejectVendor,
+  getAllVendorsForAdmin,
+  getVendorSubscribers,
+  getAdminProfile,
+  updateAdminProfile,
+  getPublicAdminContact,
+  getAllCommissions,
+  getCommissionSummary,
   markCommissionPaid,
   getCommissionTiers,
   updateCommissionTiers,
   getCommissionVendors,
   getCommissionReportCSV,
   seedDefaultTiers,
-  verifyCommissionPayment
+  verifyCommissionPayment,
+  verifyScreenshot
 } = require('../controllers/adminController');
 const router = express.Router();
 
@@ -31,6 +33,7 @@ router.use(protect);
 router.use(authorize('admin'));
 
 router.get('/settings', getPlatformSettings);
+router.put('/settings', updatePlatformSettings);
 router.put('/settings/commission', updateCommissionRate);
 router.get('/vendor-requests', getPendingVendors);
 router.post('/vendor-requests/approve', approveVendor);
@@ -104,5 +107,8 @@ router.post('/commission/seed-tiers', seedDefaultTiers);
 
 // Commission payment verification
 router.post('/commission/verify/:paymentId', verifyCommissionPayment);
+
+// AI screenshot analysis
+router.post('/commission/verify-screenshot', verifyScreenshot);
 
 module.exports = router;
