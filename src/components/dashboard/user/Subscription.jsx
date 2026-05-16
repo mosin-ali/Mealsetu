@@ -10,6 +10,7 @@ import {
   getVendorPricingForUser,
   checkCanAddPlan
 } from '../../../utils/api';
+import { onEvent, offEvent } from '../../../utils/socket';
 import { initiateRazorpayPayment } from '../../common/RazorpayCheckout';
 
 const Subscription = ({
@@ -32,6 +33,24 @@ const Subscription = ({
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [mealSlotToast, setMealSlotToast] = useState(null);
+
+  const getToastKey = (orderDate) => {
+    if (!orderDate) return null;
+    const d = new Date(orderDate);
+    return `mealslot_toast_${d.toISOString().split('T')[0]}`;
+  };
+
+  const isToastDismissed = (orderDate) => {
+    const key = getToastKey(orderDate);
+    return key ? localStorage.getItem(key) === 'dismissed' : true;
+  };
+
+  const dismissToast = (orderDate) => {
+    const key = getToastKey(orderDate);
+    if (key) localStorage.setItem(key, 'dismissed');
+    setMealSlotToast(null);
+  };
 
   const isSubmittingRef = useRef(false);
 
@@ -85,6 +104,54 @@ const Subscription = ({
       // 1. Fetch current active order / subscription
       const subData = await getMySubscription();
       setCurrentSubscription(subData);
+
+      // Show meal slot toast only when plan started today and not dismissed
+      if (subData?.startDate && !isToastDismissed(subData.orderDate)) {
+        const todayUTC = new Date();
+        todayUTC.setUTCHours(0, 0, 0, 0);
+        const planStart = new Date(subData.startDate);
+        planStart.setUTCHours(0, 0, 0, 0);
+        const isToday = planStart.getTime() === todayUTC.getTime();
+
+        if (isToday) {
+          const purchase = new Date(subData.orderDate || subData.startDate);
+          const utcHour = purchase.getUTCHours() + purchase.getUTCMinutes() / 60;
+
+          let toast = null;
+          if (utcHour < 4.5) {
+            toast = {
+              emoji: '🌅',
+              title: 'Both Lunch & Dinner active today!',
+              message: 'Enjoy your meals. Your subscription is now active.',
+              color: '#16a34a',
+              bg: '#dcfce7'
+            };
+          } else if (utcHour < 11.5) {
+            toast = {
+              emoji: '🌙',
+              title: 'Dinner only today',
+              message: 'Lunch time has passed. You will get Dinner today and both meals from tomorrow.',
+              color: '#d97706',
+              bg: '#fef3c7'
+            };
+          } else {
+            toast = {
+              emoji: '🌄',
+              title: 'Your plan starts tomorrow',
+              message: 'Dinner time has passed. Your first meal will be Lunch tomorrow morning.',
+              color: '#7c3aed',
+              bg: '#ede9fe'
+            };
+          }
+
+          if (toast) {
+            setMealSlotToast(toast);
+            setTimeout(() => {
+              dismissToast(subData.orderDate);
+            }, 6000);
+          }
+        }
+      }
 
       // 2. Determine which vendor's pricing to load.
       //    subData.vendorId is the ObjectId string for the active vendor.
@@ -154,9 +221,21 @@ const Subscription = ({
   };
 
   useEffect(() => {
+    // eslint-disable-next-line
     fetchSubscriptionData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const handleSubscriptionUpdate = () => fetchSubscriptionData();
+    const handlePaymentConfirmed  = () => fetchSubscriptionData();
+    onEvent('subscription_updated', handleSubscriptionUpdate);
+    onEvent('payment_confirmed',    handlePaymentConfirmed);
+    return () => {
+      offEvent('subscription_updated', handleSubscriptionUpdate);
+      offEvent('payment_confirmed',    handlePaymentConfirmed);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePaymentMethodSelect = (method) => {
     setSelectedPaymentMethod(method);
@@ -390,6 +469,46 @@ const Subscription = ({
         <div className="success-toast">✓ Subscription extended successfully!</div>
       )}
 
+      {/* ── Meal slot toast — fixed bottom, auto-dismisses after 6s ── */}
+      {mealSlotToast && (
+        <div
+          onClick={() => dismissToast(currentSubscription?.orderDate)}
+          style={{
+            position: 'fixed',
+            bottom: '80px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9999,
+            background: mealSlotToast.bg,
+            border: `1px solid ${mealSlotToast.color}`,
+            borderRadius: '14px',
+            padding: '16px 20px',
+            maxWidth: '360px',
+            width: '90%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+            animation: 'mealSlotSlideUp 0.4s ease'
+          }}
+        >
+          <span style={{ fontSize: '28px', flexShrink: 0 }}>{mealSlotToast.emoji}</span>
+          <div>
+            <p style={{ margin: '0 0 4px 0', fontWeight: '700',
+                        color: mealSlotToast.color, fontSize: '15px' }}>
+              {mealSlotToast.title}
+            </p>
+            <p style={{ margin: 0, color: '#374151', fontSize: '13px', lineHeight: '1.5' }}>
+              {mealSlotToast.message}
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#94a3b8' }}>
+              Tap to dismiss
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Current Plan Card ── */}
       <div className="subscription-card">
         <h3>Meal Plan Status</h3>
@@ -418,6 +537,17 @@ const Subscription = ({
             ) : (
               <p style={{ color: '#dc2626', marginTop: '5px' }}>⚠ Expired</p>
             )}
+
+            {/* Start date */}
+            {currentSubscription.startDate && (
+              <p style={{ fontSize: '14px', color: '#64748b', margin: '4px 0' }}>
+                <strong>Started:</strong>{' '}
+                {new Date(currentSubscription.startDate).toLocaleDateString('en-IN', {
+                  day: 'numeric', month: 'long', year: 'numeric'
+                })}
+              </p>
+            )}
+
             {currentSubscription.paymentMethod === 'Cash' && currentSubscription.paymentStatus === 'Pending' && (
               <div style={{
                 background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '10px',
@@ -818,6 +948,32 @@ const Subscription = ({
                 <p style={{ margin: '8px 0' }}>
                   <strong>Valid For:</strong> {{ Trial: 2, Weekly: 7, Monthly: 30 }[paymentSuccess?.planType] || selectedPlanDetails?.days || 30} days
                 </p>
+                {paymentSuccess?.order?.startDate && (
+                  <p style={{ margin: '8px 0' }}>
+                    <strong>Starts:</strong>{' '}
+                    {new Date(paymentSuccess.order.startDate).toLocaleDateString('en-IN', {
+                      weekday: 'short', day: 'numeric', month: 'short'
+                    })}
+                  </p>
+                )}
+                {(() => {
+                  const utcHour = new Date().getUTCHours() + new Date().getUTCMinutes() / 60;
+                  if (utcHour < 4.5) return (
+                    <p style={{ margin: '6px 0', color: '#16a34a', fontWeight: '600', fontSize: '13px' }}>
+                      🌅 Both Lunch &amp; Dinner active today
+                    </p>
+                  );
+                  if (utcHour < 11.5) return (
+                    <p style={{ margin: '6px 0', color: '#d97706', fontWeight: '600', fontSize: '13px' }}>
+                      🌙 Dinner only today — both meals from tomorrow
+                    </p>
+                  );
+                  return (
+                    <p style={{ margin: '6px 0', color: '#7c3aed', fontWeight: '600', fontSize: '13px' }}>
+                      🌄 First meal tomorrow morning (Lunch)
+                    </p>
+                  );
+                })()}
               </div>
               <button
                 className="btn-confirm-subscribe"

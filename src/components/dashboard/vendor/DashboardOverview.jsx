@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './DashboardOverview.css';
 import { apiCall } from '../../../utils/api';
+import { onEvent, offEvent } from '../../../utils/socket';
 
 const EMPTY_SLOT = { total: 0, regular: 0, jain: 0 };
 
@@ -43,6 +44,16 @@ const DashboardOverview = ({
     const dataInterval = setInterval(fetchData, 5 * 60 * 1000);
     return () => clearInterval(dataInterval);
   }, []);
+
+  useEffect(() => {
+    const handleNewOrder = () => fetchData();
+    onEvent('new_order', handleNewOrder);
+    onEvent('newOrder', handleNewOrder);
+    return () => {
+      offEvent('new_order', handleNewOrder);
+      offEvent('newOrder', handleNewOrder);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const timeInterval = setInterval(() => {

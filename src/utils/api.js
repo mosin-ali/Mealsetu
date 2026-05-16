@@ -398,12 +398,11 @@ export const getClaimedOffers = () => {
   return apiCall('/users/claimed-offers', { method: 'GET' });
 };
 
-export const redeemOffer = (offerId, planType) => {
-  return apiCall('/users/redeem-offer', {
-    method: 'POST',
-    body: JSON.stringify({ offerId, planType }),
-  });
-};
+export const createOfferPaymentOrder = (data) =>
+  apiCall('/users/offers/create-payment-order', { method: 'POST', body: JSON.stringify(data) });
+
+export const redeemOffer = (data) =>
+  apiCall('/users/offers/redeem', { method: 'POST', body: JSON.stringify(data) });
 
 // ============ ADMIN ENDPOINTS ============
 export const getPlatformSettings = () => {

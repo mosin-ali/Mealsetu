@@ -28,7 +28,8 @@ import AllReviewsModal from '../components/dashboard/user/AllReviewsModal';
 
 import PasswordModal from '../components/dashboard/user/PasswordModal';
 
-import { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, applyLeave, getUserSubscription, getActiveSubscriptionStatus, extendSubscription, getVendorWeeklyPlan, checkReviewEligibility, getApprovedVendors, getActiveOffers, redeemOffer, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, getClaimedOffers } from '../utils/api';
+import { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, applyLeave, getUserSubscription, getActiveSubscriptionStatus, extendSubscription, getVendorWeeklyPlan, checkReviewEligibility, getApprovedVendors, getActiveOffers, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, getClaimedOffers } from '../utils/api';
+import { connectSocket, disconnectSocket, onEvent, offEvent } from '../utils/socket';
 import { OrderProvider } from '../context/OrderContext';
 
 import './UserDashbord.css';
@@ -115,6 +116,7 @@ export default function UserDashboard() {
   const [activeOffers, setActiveOffers] = useState([]);
   const [offersLoading, setOffersLoading] = useState(false);
   const [offersError, setOffersError] = useState(null);
+  const [newOfferAlert, setNewOfferAlert] = useState(null);
   
   // CLAIMED OFFERS STATE - array of offer IDs that the current user has redeemed
   const [claimedOfferIds, setClaimedOfferIds] = useState([]);
@@ -178,8 +180,23 @@ const handleViewReviews = (vendor) => {
       }));
     }
 
+    connectSocket(parsedUser._id, 'user');
     fetchUserData();
+    return () => disconnectSocket();
   }, [navigate]);
+
+  // Real-time offers socket listener
+  useEffect(() => {
+    const handleOffersUpdated = (data) => {
+      if (data?.type === 'new_offer') {
+        setNewOfferAlert(data.message || 'A new offer is available!');
+        setTimeout(() => setNewOfferAlert(null), 6000);
+      }
+      fetchActiveOffers();
+    };
+    onEvent('offers_updated', handleOffersUpdated);
+    return () => offEvent('offers_updated', handleOffersUpdated);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle trial intent from login/register redirect
   useEffect(() => {
@@ -276,43 +293,16 @@ const handleViewReviews = (vendor) => {
     }
   }, [activeTab]);
 
-  // Handle offer redemption - navigate to order flow with pre-selected vendor and plan
-  const handleRedeemOffer = async (offer, planType) => {
+  // Called by Offers.jsx after a successful redemption — updates parent state
+  const handleRedeemOffer = async (offerId) => {
+    setClaimedOfferIds(prev => prev.includes(offerId) ? prev : [...prev, offerId]);
     try {
-      // Find the vendor in tiffins or create a basic vendor object
-      const vendor = tiffins.find(t => t.vendorId === offer.vendorId) || {
-        vendorId: offer.vendorId,
-        name: offer.kitchenName,
-        price: 80,
-        menuPrice: 80
-      };
-
-      // Call the redeemOffer API to create the order with discount
-      const response = await redeemOffer(offer._id, planType);
-
-      // Show success message with offer details
-      alert(`${response.message}\n\nVendor: ${response.offerDetails?.vendorName}\nPlan: ${response.offerDetails?.planType}\nOriginal Price: ₹${response.offerDetails?.originalPrice}\nDiscount: ${response.offerDetails?.discountPercentage}% OFF\nYou Pay: ₹${response.offerDetails?.discountedPrice}`);
-
-      // IMMEDIATELY update claimedOfferIds state to show Claimed badge without page refresh
-      setClaimedOfferIds(prevIds => {
-        const newIds = [...prevIds];
-        if (!newIds.includes(offer._id)) {
-          newIds.push(offer._id);
-        }
-        return newIds;
-      });
-
-      // Refresh orders
       const userOrders = await getUserOrders();
       setOrders(userOrders || []);
-
-      // Refresh user data to get updated expiry date
       const userData = await getCurrentUser();
       setUser(prev => ({ ...prev, expiryDate: userData.expiryDate }));
-
-    } catch (error) {
-      console.error('Error redeeming offer:', error);
-      alert('Failed to redeem offer: ' + (error.message || 'Unknown error'));
+    } catch (e) {
+      console.error('Failed to refresh after offer redemption:', e);
     }
   };
 
@@ -1395,13 +1385,24 @@ return (
       )}
 
       {activeTab === 'offers' && (
-        <Offers
-          activeOffers={activeOffers}
-          offersLoading={offersLoading}
-          offersError={offersError}
-          onRedeemOffer={handleRedeemOffer}
-          claimedOfferIds={claimedOfferIds}
-        />
+        <>
+          {newOfferAlert && (
+            <div style={{
+              background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d',
+              borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', fontWeight: '600'
+            }}>
+              🎁 {newOfferAlert}
+            </div>
+          )}
+          <Offers
+            activeOffers={activeOffers}
+            offersLoading={offersLoading}
+            offersError={offersError}
+            onRedeemOffer={handleRedeemOffer}
+            claimedOfferIds={claimedOfferIds}
+            user={user}
+          />
+        </>
       )}
 
       {activeTab === 'safety' && <Safety />}

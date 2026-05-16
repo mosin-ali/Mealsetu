@@ -11,6 +11,7 @@ import CashPayments from '../components/dashboard/vendor/CashPayments';
 import VendorOffers from '../components/dashboard/vendor/VendorOffers';
 import TrialSettings from '../components/dashboard/vendor/TrialSettings';
 import { useToast } from '../components/common/Toast';
+import { connectSocket, disconnectSocket, onEvent, offEvent } from '../utils/socket';
 
 const VendorDashboard = () => {
   const { addToast } = useToast();
@@ -80,6 +81,7 @@ const VendorDashboard = () => {
   const [pricingErrors, setPricingErrors] = useState({});
 
   const [cashPendingCount, setCashPendingCount] = useState(0);
+  const [vendorSocketId, setVendorSocketId] = useState(null);
 
   // --- DASHBOARD STATS STATE ---
   const [dashboardStats, setDashboardStats] = useState({
@@ -112,6 +114,32 @@ const VendorDashboard = () => {
     fetchVendorData();
     fetchShopStatus();
   }, [navigate]);
+
+  // Connect socket once vendor ID is known
+  useEffect(() => {
+    if (!vendorSocketId) return;
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+    const parsedUser = JSON.parse(userData);
+    connectSocket(parsedUser._id, 'vendor', vendorSocketId);
+
+    const handleNewOrder = () => {
+      addToast('New order received! 🎉', 'success');
+    };
+    const handleOfferRedeemed = (data) => {
+      addToast(data.message || 'A customer redeemed your offer!', 'success');
+    };
+    onEvent('new_order', handleNewOrder);
+    onEvent('newOrder', handleNewOrder);
+    onEvent('offer_redeemed', handleOfferRedeemed);
+
+    return () => {
+      offEvent('new_order', handleNewOrder);
+      offEvent('newOrder', handleNewOrder);
+      offEvent('offer_redeemed', handleOfferRedeemed);
+      disconnectSocket();
+    };
+  }, [vendorSocketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
       // Fetch shop status from backend
       const fetchShopStatus = async () => {
@@ -204,11 +232,12 @@ const fetchPricing = async () => {
       kitchenName: vendorData.kitchenName,
       address: vendorData.address,
       phone: vendorData.ownerId?.phone || "",
-      upiId: vendorData.upiId || "",   
+      upiId: vendorData.upiId || "",
       image: resolvedImage,
       kitchenPoster: resolvedKitchenPoster,
       profileImage: vendorData.profileImage
     });
+    if (vendorData._id) setVendorSocketId(vendorData._id);
       
       // Image has been resolved, stop loading
       setImageLoading(false);

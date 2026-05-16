@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getCashPayments, markCashPaymentPaid } from '../../../utils/api';
+import { onEvent, offEvent } from '../../../utils/socket';
 
 const fmt = (dateStr) => {
   if (!dateStr) return '—';
@@ -57,8 +58,15 @@ const CashPayments = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    const handleCashUpdate = () => fetchData();
+    onEvent('cash_payment_updated', handleCashUpdate);
+    onEvent('new_order', handleCashUpdate);
+    onEvent('newOrder', handleCashUpdate);
+    return () => {
+      offEvent('cash_payment_updated', handleCashUpdate);
+      offEvent('new_order', handleCashUpdate);
+      offEvent('newOrder', handleCashUpdate);
+    };
   }, [fetchData]);
 
   const handleMarkPaid = async (orderId) => {

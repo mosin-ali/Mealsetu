@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createOffer, getVendorOffers, deleteOffer } from '../../../utils/api';
+import { onEvent, offEvent } from '../../../utils/socket';
 
 const VendorOffers = () => {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [redemptionAlert, setRedemptionAlert] = useState(null);
 
   // Form state
   const [posterImage, setPosterImage] = useState(null);
@@ -20,12 +22,7 @@ const VendorOffers = () => {
     { planName: 'Monthly', discountPercentage: 0, selected: false }
   ]);
 
-  // Fetch offers on mount
-  useEffect(() => {
-    fetchOffers();
-  }, []);
-
-  const fetchOffers = async () => {
+  const fetchOffers = useCallback(async () => {
     try {
       setLoading(true);
       const data = await getVendorOffers();
@@ -36,7 +33,29 @@ const VendorOffers = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Fetch offers on mount
+  useEffect(() => {
+    fetchOffers();
+  }, [fetchOffers]);
+
+  // Real-time socket listeners
+  useEffect(() => {
+    const handleRedemption = (data) => {
+      setRedemptionAlert(data.message || 'A customer redeemed your offer!');
+      setTimeout(() => setRedemptionAlert(null), 5000);
+      fetchOffers();
+    };
+    const handleOffersUpdated = () => fetchOffers();
+
+    onEvent('offer_redeemed', handleRedemption);
+    onEvent('offers_updated', handleOffersUpdated);
+    return () => {
+      offEvent('offer_redeemed', handleRedemption);
+      offEvent('offers_updated', handleOffersUpdated);
+    };
+  }, [fetchOffers]);
 
   const handlePosterChange = (e) => {
     const file = e.target.files[0];
@@ -142,6 +161,16 @@ const VendorOffers = () => {
   return (
     <div className="v-card">
       <h3 style={{ color: '#2b3674', marginBottom: '20px' }}> Offers & Discounts</h3>
+
+      {/* Redemption Alert */}
+      {redemptionAlert && (
+        <div style={{
+          background: '#dcfce7', color: '#15803d', border: '1px solid #86efac',
+          borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', fontWeight: '600'
+        }}>
+          🎉 {redemptionAlert}
+        </div>
+      )}
 
       {/* Success/Error Message */}
       {message.text && (

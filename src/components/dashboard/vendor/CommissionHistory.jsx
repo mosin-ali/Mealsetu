@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'; // AUTO-PAYMENT DETECTION: added useRef
+import React, { useState, useEffect, useRef } from 'react';
+import { onEvent, offEvent } from '../../../utils/socket';
 import styles from './CommissionHistory.module.css';
 import { getVendorCommissionSummary, getVendorCommissionHistory, vendorPayCommission, getAdminUpiId, createCommissionPaymentOrder, verifyCommissionPaymentRazorpay } from '../../../utils/api.js';
 import { loadRazorpayScript } from '../../common/RazorpayCheckout';
@@ -134,6 +135,18 @@ const CommissionHistory = () => {
   useEffect(() => {
     fetchCommissionData();
   }, []);
+
+  // Real-time: refresh when admin verifies or rejects commission
+  useEffect(() => {
+    const handleCommissionUpdate = (data) => {
+      fetchCommissionData();
+      if (data?.status === 'rejected') {
+        alert(`Commission payment rejected: ${data.message || 'Please resubmit your proof.'}`);
+      }
+    };
+    onEvent('commission_updated', handleCommissionUpdate);
+    return () => offEvent('commission_updated', handleCommissionUpdate);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch admin UPI ID when modal opens
   useEffect(() => {
