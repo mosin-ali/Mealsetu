@@ -3,7 +3,7 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 const { getUserSubscription, getActiveSubscriptionStatus, applyLeave, extendSubscription, getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, getVendorReviews, getVendorRating, getVendorStatus, getApprovedVendors, getVendorsByPincode, checkReviewEligibility, getTrialEligibility, createTrialOrder, getMyCashPayments, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, checkSubscriptionPaymentStatus, getVendorPricingForUser, runFixStuckOrders, createRazorpayOrder, verifyUserPayment, checkCanAddPlan } = require('../controllers/userController');
 
 
-const { getActiveOffers, redeemOffer, getClaimedOffers } = require('../controllers/offerController');
+const { getActiveOffers, redeemOffer, getClaimedOffers, createOfferPaymentOrder } = require('../controllers/offerController');
 const upload = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
@@ -43,7 +43,8 @@ router.post('/extend-subscription', protect, authorize('user'), extendSubscripti
 // Offer routes for users
 router.get('/active-offers', protect, authorize('user'), getActiveOffers);
 router.get('/claimed-offers', protect, authorize('user'), getClaimedOffers);
-router.post('/redeem-offer', protect, authorize('user'), redeemOffer);
+router.post('/offers/create-payment-order', protect, authorize('user'), createOfferPaymentOrder);
+router.post('/offers/redeem', protect, authorize('user'), redeemOffer);
 
 // Pincode routes (Public - no auth required as per user instructions)
 // TODO: implement these functions in userController.js

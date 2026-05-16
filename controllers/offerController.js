@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Subscription = require('../models/Subscription');
 const { sendEmail } = require('../utils/emailUtils');
+const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
 
 // Helper function to transform image path to full URL
 const transformImageUrl = (imagePath, req) => {
@@ -142,6 +143,16 @@ const createOffer = async (req, res) => {
       }
     });
 
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('offers_updated', {
+        type: 'new_offer',
+        vendorId: vendor._id,
+        vendorName: vendor.kitchenName,
+        message: `New offer available from ${vendor.kitchenName}!`
+      });
+    }
+
     res.status(201).json({
       message: 'Offer created successfully',
       offer: {
@@ -196,6 +207,12 @@ const deleteOffer = async (req, res) => {
     }
 
     await Offer.findByIdAndDelete(req.params.id);
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('offers_updated', { type: 'offer_deleted', vendorId: vendor._id });
+    }
+
     res.json({ message: 'Offer deleted successfully' });
   } catch (error) {
     console.error('Delete offer error:', error);
@@ -356,358 +373,287 @@ const getClaimedOffers = async (req, res) => {
   }
 };
 
+// @desc    Create Razorpay order for offer payment
+// @route   POST /api/users/offers/create-payment-order
+const createOfferPaymentOrder = async (req, res) => {
+  try {
+    const razorpay = require('../utils/razorpayUtils');
+    const { offerId, planType } = req.body;
+
+    if (!offerId || !planType) {
+      return res.status(400).json({ message: 'offerId and planType are required' });
+    }
+
+    const offer = await Offer.findById(offerId);
+    if (!offer) return res.status(404).json({ message: 'Offer not found' });
+    if (!offer.isActive) return res.status(400).json({ message: 'This offer has expired' });
+
+    const planDiscount = offer.planDiscounts.find(
+      pd => pd.planName.toLowerCase() === planType.toLowerCase()
+    );
+    if (!planDiscount || planDiscount.discountPercentage === 0) {
+      return res.status(400).json({ message: `No discount available for ${planType} plan` });
+    }
+
+    const PLAN_PRICES = { 'One Day': 80, 'Weekly': 560, 'Monthly': 2000 };
+    const originalPrice = PLAN_PRICES[planType] || 80;
+    const discountedPrice = Math.round(originalPrice * (1 - planDiscount.discountPercentage / 100));
+
+    const razorpayOrder = await razorpay.orders.create({
+      amount: Math.round(discountedPrice * 100),
+      currency: 'INR',
+      receipt: `o_${Date.now()}`,
+      notes: { userId: req.user._id.toString(), offerId, planType }
+    });
+
+    res.json({
+      orderId: razorpayOrder.id,
+      amount: razorpayOrder.amount,
+      currency: razorpayOrder.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      discountedPrice
+    });
+  } catch (error) {
+    console.error('Create offer payment order error:', error);
+    res.status(500).json({ message: 'Payment initiation failed', error: error.message });
+  }
+};
+
 // @desc    Redeem an offer (user)
-// @route   POST /api/users/redeem-offer
+// @route   POST /api/users/offers/redeem
 const redeemOffer = async (req, res) => {
   try {
-    const { offerId, planType } = req.body;
+    const { offerId, planType, paymentMethod, razorpayData = {} } = req.body;
     const userId = req.user._id;
 
     if (!offerId || !planType) {
       return res.status(400).json({ message: 'offerId and planType are required' });
     }
 
-    // Get the offer
-    const offer = await Offer.findById(offerId).populate('vendorId', 'kitchenName');
-    if (!offer) {
-      return res.status(404).json({ message: 'Offer not found' });
+    // CHECK 1 — Offer exists and isActive flag is true
+    const offerCheck = await Offer.findById(offerId);
+    if (!offerCheck) return res.status(404).json({ message: 'Offer not found' });
+    if (!offerCheck.isActive) return res.status(400).json({ message: 'This offer has expired' });
+
+    // CHECK 2 — 3-plan limit
+    const limitNow = new Date();
+    limitNow.setUTCHours(0, 0, 0, 0);
+    const activeOrder = await Order.findOne({ userId, status: 'active', endDate: { $gte: limitNow } });
+    if (activeOrder) {
+      const pendingCount = await Order.countDocuments({ userId, status: 'pending' });
+      if (pendingCount >= 3) {
+        const earliestPlan = await Order.findOne({
+          userId, status: 'active', endDate: { $gte: limitNow }
+        }).sort({ endDate: 1 });
+        return res.status(400).json({
+          code: 'LIMIT_REACHED',
+          message: earliestPlan?.endDate
+            ? `Your plan queue is full. Your earliest plan ends on ${
+                new Date(earliestPlan.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
+              }. Wait for a slot to open then redeem this offer.`
+            : 'You have reached the maximum limit of 3 upcoming plans.'
+        });
+      }
     }
 
-    // Validate vendorId exists after populate
+    // CHECK 3 — Validate paymentMethod
+    if (!paymentMethod || !['Cash', 'Online'].includes(paymentMethod)) {
+      return res.status(400).json({ message: 'Please select a payment method', code: 'NO_PAYMENT_METHOD' });
+    }
+
+    // CHECK 4 — If Online, verify Razorpay signature
+    if (paymentMethod === 'Online') {
+      const crypto = require('crypto');
+      const sigBody = razorpayData.razorpay_order_id + '|' + razorpayData.razorpay_payment_id;
+      const expectedSig = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET).update(sigBody).digest('hex');
+      if (expectedSig !== razorpayData.razorpay_signature) {
+        return res.status(400).json({ message: 'Payment verification failed' });
+      }
+    }
+
+    // Fetch offer with vendor populated
+    const offer = await Offer.findById(offerId).populate('vendorId', 'kitchenName');
     if (!offer.vendorId || !offer.vendorId._id) {
-      console.error('[redeemOffer] ERROR: Offer vendor is not properly populated');
       return res.status(500).json({ message: 'Offer vendor data is invalid. Please contact support.' });
     }
 
-    // Check if offer is still active
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const startDate = new Date(offer.startDate);
-    const endDate = new Date(offer.endDate);
-    startDate.setHours(0, 0, 0, 0);
-    endDate.setHours(23, 59, 59, 999);
-
-    if (now < startDate || now > endDate) {
+    // Check offer date range
+    const dateNow = new Date();
+    dateNow.setHours(0, 0, 0, 0);
+    const offerStart = new Date(offer.startDate);
+    const offerEnd = new Date(offer.endDate);
+    offerStart.setHours(0, 0, 0, 0);
+    offerEnd.setHours(23, 59, 59, 999);
+    if (dateNow < offerStart || dateNow > offerEnd) {
       return res.status(400).json({ message: 'This offer has expired or is not yet active' });
     }
 
-    // Find the discount for the selected plan
+    // Find plan discount
     const planDiscount = offer.planDiscounts.find(
       pd => pd.planName.toLowerCase() === planType.toLowerCase()
     );
-
     if (!planDiscount || planDiscount.discountPercentage === 0) {
-      return res.status(400).json({ 
-        message: `No discount available for ${planType} plan` 
-      });
+      return res.status(400).json({ message: `No discount available for ${planType} plan` });
     }
 
-    // Calculate prices
-    const PLAN_PRICES = {
-      'One Day': 80,
-      'Weekly': 560,
-      'Monthly': 2000
-    };
-
+    // Prices
+    const PLAN_PRICES = { 'One Day': 80, 'Weekly': 560, 'Monthly': 2000 };
     const originalPrice = PLAN_PRICES[planType] || 80;
     const discountPercentage = planDiscount.discountPercentage;
     const discountedPrice = Math.round(originalPrice * (1 - discountPercentage / 100));
 
-    // Calculate duration in days based on planType
-    let durationDays = 1;
+    // Duration — 'One Day' maps to Trial (1 day), not in getPlanDurationDays
+    let durationDays;
     switch (planType) {
-      case 'Weekly':
-        durationDays = 7;
-        break;
-      case 'Monthly':
-        durationDays = 30;
-        break;
-      case 'One Day':
-      default:
-        durationDays = 1;
-        break;
+      case 'Weekly':  durationDays = 7;  break;
+      case 'Monthly': durationDays = 30; break;
+      default:        durationDays = 1;  break; // 'One Day'
     }
 
-    // STEP 0: DUPLICATE CHECK - Prevent creating duplicate pending orders for offer redemption
-    // Check for any existing pending order with same userId, vendorId, planType created within last 60 seconds
+    // Map 'One Day' → 'Trial' for Order.planType enum
+    const PLAN_TYPE_MAP = { 'One Day': 'Trial', 'Weekly': 'Weekly', 'Monthly': 'Monthly' };
+    const orderPlanType = PLAN_TYPE_MAP[planType] || planType;
+
+    // Duplicate check (60-second window)
     const sixtySecondsAgo = new Date(Date.now() - 60000);
     const duplicateOrder = await Order.findOne({
-      userId: userId,
+      userId,
       vendorId: offer.vendorId._id,
-      planType: planType,
-      $or: [
-        { status: 'pending' },
-        { offerStatus: 'pending' }
-      ],
+      planType: orderPlanType,
+      $or: [{ status: 'pending' }, { offerStatus: 'pending' }],
       createdAt: { $gte: sixtySecondsAgo }
     });
-
     if (duplicateOrder) {
-      return res.status(409).json({ 
-        message: 'A pending order with the same plan already exists. Please wait or cancel the existing order first.' 
+      return res.status(409).json({
+        message: 'A pending order with the same plan already exists. Please wait or cancel the existing order first.'
       });
     }
 
-    // Check if user has an active subscription
-    const activeSubscription = await Subscription.findOne({
-      userId: userId,
-      status: 'active',
-      expiryDate: { $gte: now }
+    // Active/pending logic — chain from last pending if exists, else from active
+    const existingActiveOrder = await Order.findOne({
+      userId, status: 'active', endDate: { $gte: new Date() }
     });
 
-    // If user has active plan, we need to schedule the offer (pending order)
-    if (activeSubscription) {
-      // STEP 1: Query all existing pending orders for this user, sorted by scheduledEndDate descending
-      // FIX: Check both status: 'pending' AND offerStatus: 'pending' to include all pending orders
-      const existingPendingOrders = await Order.find({
-        userId: userId,
-        $or: [
-          { status: 'pending' },
-          { offerStatus: 'pending' }
-        ]
-      }).sort({ scheduledEndDate: -1 });
+    const lastPendingOrder = await Order.findOne({
+      userId, status: 'pending'
+    }).sort({ endDate: -1 });
 
-      let scheduledStartDate;
-      
-      if (existingPendingOrders && existingPendingOrders.length > 0) {
-        // STEP 2: User has existing pending orders - take the most recent one's scheduledEndDate + 1 day
-        const mostRecentPendingOrder = existingPendingOrders[0];
-        const lastScheduledEndDate = new Date(mostRecentPendingOrder.scheduledEndDate);
-        scheduledStartDate = new Date(lastScheduledEndDate.getTime() + 86400000); // Add 1 day
-      } else if (activeSubscription && activeSubscription.expiryDate) {
-        // STEP 3: No pending orders but has active subscription - use active subscription endDate + 1 day
-        const activeEndDate = new Date(activeSubscription.expiryDate);
-        scheduledStartDate = new Date(activeEndDate.getTime() + 86400000); // Add 1 day
-      } else {
-        // Fallback - start from tomorrow
-        scheduledStartDate = new Date(now);
-        scheduledStartDate.setDate(scheduledStartDate.getDate() + 1);
-      }
+    const chainFromOrder = lastPendingOrder || existingActiveOrder;
+    const orderStatus = existingActiveOrder ? 'pending' : 'active';
+    const { startDate: computedStart, endDate: computedEnd } = computeSubscriptionDates(durationDays);
 
-      // STEP 4: Calculate scheduledEndDate using the formula: scheduledStartDate.getTime() + durationDays * 86400000
-      const scheduledEndDate = new Date(scheduledStartDate.getTime() + durationDays * 86400000);
+    let orderStartDate = computedStart;
+    let orderEndDate = computedEnd;
+    if (chainFromOrder) {
+      const chainEnd = new Date(chainFromOrder.endDate);
+      chainEnd.setUTCHours(0, 0, 0, 0);
+      orderStartDate = new Date(chainEnd.getTime() + 86400000);
+      orderEndDate = new Date(orderStartDate);
+      orderEndDate.setUTCDate(orderEndDate.getUTCDate() + durationDays);
+    }
 
-      // Create a pending order
-      const order = await Order.create({
-        userId: userId,
-        vendorId: offer.vendorId._id,
-        amount: discountedPrice,
-        deliverySlot: 'Lunch',
-        mealPreference: 'Regular',
-        paymentStatus: 'Pending',
-        paymentMethod: 'Cash',
-        planType: planType,
-        isOfferOrder: true,
-        offerId: offer._id,
-        originalPrice: originalPrice,
-        discountPercentage: discountPercentage,
-        discountedPrice: discountedPrice,
-        scheduledActivationDate: scheduledStartDate,
-        scheduledStartDate: scheduledStartDate,
-        scheduledEndDate: scheduledEndDate,
-        offerStatus: 'pending',
-        customerName: req.user.name
-      });
+    const dbPaymentMethod = paymentMethod === 'Online' ? 'UPI' : 'Cash';
+    const dbPaymentStatus = paymentMethod === 'Online' ? 'Paid' : 'Pending';
 
-      // Also create a pending subscription
-      const subscriptionStartDate = scheduledStartDate;
-      const subscriptionEndDate = new Date(scheduledStartDate.getTime() + durationDays * 86400000);
+    const order = await Order.create({
+      userId,
+      vendorId: offer.vendorId._id,
+      amount: discountedPrice,
+      deliverySlot: 'Lunch',
+      mealPreference: 'Regular',
+      paymentStatus: dbPaymentStatus,
+      paymentMethod: dbPaymentMethod,
+      ...(paymentMethod === 'Online' && { transactionId: razorpayData.razorpay_payment_id }),
+      planType: orderPlanType,
+      status: orderStatus,
+      startDate: orderStartDate,
+      endDate: orderEndDate,
+      scheduledStartDate: orderStatus === 'pending' ? orderStartDate : null,
+      scheduledEndDate:   orderStatus === 'pending' ? orderEndDate   : null,
+      isOfferOrder: true,
+      offerId: offer._id,
+      originalPrice,
+      discountPercentage,
+      discountedPrice,
+      offerStatus: orderStatus,
+      customerName: req.user.name
+    });
 
+    if (orderStatus === 'active') {
       await Subscription.create({
-        userId: userId,
+        userId,
         vendorId: offer.vendorId._id,
-        planType: planType,
-        startDate: subscriptionStartDate,
-        expiryDate: subscriptionEndDate,
-        status: 'pending', // Will be activated by cron job
+        planType: orderPlanType,
+        startDate: orderStartDate,
+        expiryDate: orderEndDate,
+        status: 'active',
         customerName: req.user.name,
         contact: req.user.phone,
         isOfferSubscription: true,
         offerId: offer._id
       });
-
-      // ============================================================
-      // Track that this user has redeemed this offer
-      // Add userId to the redeemedBy array on the offer
-      // ============================================================
-      await Offer.findByIdAndUpdate(offerId, {
-        $addToSet: { redeemedBy: userId } // $addToSet ensures no duplicates
-      });
-
-      // Send confirmation email (non-blocking)
-      try {
-        const emailSubject = 'MealSetu - Offer Redeemed Successfully!';
-        const emailHtml = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #f26522 0%, #ff6b35 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-              <h1 style="color: white; margin: 0;">🎉 Offer Redeemed!</h1>
-            </div>
-            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-              <p style="font-size: 16px;">Dear <strong>${req.user.name}</strong>,</p>
-              <p style="font-size: 16px;">Your offer from <strong>${offer.vendorId.kitchenName}</strong> has been redeemed successfully!</p>
-              
-              <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #f26522;">
-                <h3 style="color: #f26522; margin: 0 0 15px 0;">📋 Offer Details</h3>
-                <p style="margin: 8px 0;"><strong>🏪 Vendor:</strong> ${offer.vendorId.kitchenName}</p>
-                <p style="margin: 8px 0;"><strong>📦 Plan Type:</strong> ${planType}</p>
-                <p style="margin: 8px 0;"><strong>💰 Original Price:</strong> ₹${originalPrice}</p>
-                <p style="margin: 8px 0;"><strong>🏷️ Discount:</strong> ${discountPercentage}% OFF</p>
-                <p style="margin: 8px 0; font-size: 18px; color: #16a34a;"><strong>✅ Amount Paid:</strong> ₹${discountedPrice}</p>
-                <p style="margin: 8px 0;"><strong>📅 Scheduled Start Date:</strong> ${scheduledStartDate.toLocaleDateString('en-IN')}</p>
-                <p style="margin: 8px 0;"><strong>📅 Scheduled End Date:</strong> ${scheduledEndDate.toLocaleDateString('en-IN')}</p>
-              </div>
-              
-              <p style="color: #555; font-size: 16px; background: #fef3c7; padding: 15px; border-radius: 8px;">
-                ⏰ <strong>Note:</strong> Your discounted plan will automatically activate on <strong>${scheduledStartDate.toLocaleDateString('en-IN')}</strong>.
-              </p>
-              
-              <p style="color: #555;">Thank you for choosing MealSetu!</p>
-            </div>
-            <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
-              <p>MealSetu - Quality Food, Delivered with Care</p>
-            </div>
-          </div>
-        `;
-        await sendEmail(req.user.email, emailSubject, emailHtml);
-      } catch (emailError) {
-        console.error('Failed to send offer redemption confirmation email:', emailError.message);
-      }
-
-      return res.status(201).json({
-        message: 'Offer redeemed successfully!',
-        status: 'pending',
-        currentPlanExpiry: activeSubscription.expiryDate,
-        scheduledActivationDate: scheduledStartDate,
-        offerDetails: {
-          vendorName: offer.vendorId.kitchenName,
-          planType: planType,
-          originalPrice: originalPrice,
-          discountPercentage: discountPercentage,
-          discountedPrice: discountedPrice,
-          offerEndDate: offer.endDate
-        }
-      });
+      await User.findByIdAndUpdate(userId, { expiryDate: orderEndDate });
     }
 
-    // No active subscription - create and activate immediately
-    // Create order
-    const subscriptionStartDate = new Date();
-    const subscriptionEndDate = new Date(subscriptionStartDate.getTime() + durationDays * 86400000);
+    await Offer.findByIdAndUpdate(offerId, { $addToSet: { redeemedBy: userId } });
 
-    const order = await Order.create({
-      userId: userId,
-      vendorId: offer.vendorId._id,
-      amount: discountedPrice,
-      deliverySlot: 'Lunch',
-      mealPreference: 'Regular',
-      paymentStatus: 'Pending',
-      paymentMethod: 'Cash',
-      planType: planType,
-      isOfferOrder: true,
-      offerId: offer._id,
-      originalPrice: originalPrice,
-      discountPercentage: discountPercentage,
-      discountedPrice: discountedPrice,
-      offerStatus: 'active',
-      customerName: req.user.name
-    });
+    // Socket events
+    const io = req.app.get('io');
+    if (io) {
+      io.to(userId.toString()).emit('subscription_updated', {
+        type: 'offer_redeemed', planType: orderPlanType,
+        message: orderStatus === 'pending'
+          ? `${planType} offer queued after your current subscription.`
+          : `Your ${planType} offer is now active!`
+      });
+      io.to(`vendor_${offer.vendorId._id}`).emit('offer_redeemed', {
+        userName: req.user.name, planType, discountedPrice,
+        message: `${req.user.name} redeemed your ${planType} offer for ₹${discountedPrice}!`
+      });
+      io.to(`vendor_${offer.vendorId._id}`).emit('offers_updated', { type: 'redemption', vendorId: offer.vendorId._id });
+    }
 
-    // Create and activate subscription immediately
-    const subscription = await Subscription.create({
-      userId: userId,
-      vendorId: offer.vendorId._id,
-      planType: planType,
-      startDate: subscriptionStartDate,
-      expiryDate: subscriptionEndDate,
-      status: 'active',
-      customerName: req.user.name,
-      contact: req.user.phone,
-      isOfferSubscription: true,
-      offerId: offer._id
-    });
-
-    // Update user expiry date
-    const User = require('../models/User');
-    await User.findByIdAndUpdate(userId, { expiryDate: subscriptionEndDate });
-
-    // ============================================================
-    // Track that this user has redeemed this offer
-    // Add userId to the redeemedBy array on the offer
-    // ============================================================
-    await Offer.findByIdAndUpdate(offerId, {
-      $addToSet: { redeemedBy: userId } // $addToSet ensures no duplicates
-    });
-
-    // Send confirmation email (await for immediate activation)
-    try {
-      const emailSubject = `🎉 Offer Activated! - ${offer.vendorId.kitchenName}`;
-      const emailHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #16a34a;">Offer Activated!</h1>
+    // Email (non-blocking for pending, awaited for active)
+    const isQueued = orderStatus === 'pending';
+    const sendOfferEmail = async () => {
+      try {
+        const subject = isQueued ? 'MealSetu - Offer Redeemed Successfully!' : `🎉 Offer Activated! - ${offer.vendorId.kitchenName}`;
+        const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <h2 style="color:${isQueued ? '#f26522' : '#16a34a'}">${isQueued ? '🎉 Offer Redeemed!' : '🎉 Offer Activated!'}</h2>
           <p>Dear ${req.user.name},</p>
-          <p>Your redeemed offer from <strong>${offer.vendorId.kitchenName}</strong> is now active!</p>
-          <div style="background: #f5f5f5; padding: 20px; margin: 20px 0;">
-            <p><strong>Vendor:</strong> ${offer.vendorId.kitchenName}</p>
+          <p>Your offer from <strong>${offer.vendorId.kitchenName}</strong> has been ${isQueued ? 'redeemed' : 'activated'} successfully!</p>
+          <div style="background:#f5f5f5;padding:20px;border-radius:10px;margin:16px 0">
             <p><strong>Plan:</strong> ${planType}</p>
             <p><strong>Original Price:</strong> ₹${originalPrice}</p>
             <p><strong>Discount:</strong> ${discountPercentage}% OFF</p>
-            <p><strong>You Paid:</strong> ₹${discountedPrice}</p>
-            <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
-            <p><strong>End Date:</strong> ${subscriptionEndDate.toLocaleDateString()}</p>
+            <p><strong>You Pay:</strong> ₹${discountedPrice}</p>
+            <p><strong>Payment:</strong> ${paymentMethod}</p>
+            <p><strong>${isQueued ? 'Scheduled Start' : 'Valid until'}:</strong> ${orderEndDate.toLocaleDateString('en-IN')}</p>
           </div>
-          <p>Enjoy your discounted meals!</p>
-          <hr/>
-          <p style="color: #999; font-size: 12px;">MealSetu - Quality Food, Delivered with Care</p>
-        </div>
-      `;
-      await sendEmail(req.user.email, emailSubject, emailHtml);
-    } catch (emailError) {
-      console.error('Failed to send offer activation email:', emailError.message);
-    }
+          ${isQueued ? '<p style="color:#555;background:#fef3c7;padding:15px;border-radius:8px;">⏰ Your plan will activate automatically after your current subscription ends.</p>' : '<p>Enjoy your discounted meals!</p>'}
+        </div>`;
+        await sendEmail(req.user.email, subject, html);
+      } catch (e) { console.error('Offer email error:', e.message); }
+    };
+    if (isQueued) setImmediate(sendOfferEmail); else await sendOfferEmail();
 
     return res.status(201).json({
-      message: 'Offer redeemed and activated successfully!',
-      status: 'active',
+      message: isQueued ? 'Offer redeemed successfully!' : 'Offer redeemed and activated successfully!',
+      status: orderStatus,
+      ...(isQueued && { scheduledActivationDate: orderStartDate }),
       offerDetails: {
         vendorName: offer.vendorId.kitchenName,
-        planType: planType,
-        originalPrice: originalPrice,
-        discountPercentage: discountPercentage,
-        discountedPrice: discountedPrice
+        planType, originalPrice, discountPercentage, discountedPrice,
+        offerEndDate: offer.endDate
       },
-      subscription: {
-        planType: planType,
-        startDate: subscriptionStartDate,
-        expiryDate: subscriptionEndDate,
-        status: 'active'
-      }
+      ...(!isQueued && {
+        subscription: { planType: orderPlanType, startDate: orderStartDate, expiryDate: orderEndDate, status: 'active' }
+      })
     });
+
   } catch (error) {
-    console.error('========================================');
-    console.error('REDEMPTION ERROR - FULL DETAILS:');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('Error name:', error.name);
-    console.error('========================================');
-    
-    // Check if it's a validation error
-    if (error.name === 'ValidationError') {
-      console.error('VALIDATION ERROR DETAILS:');
-      console.error('Required fields missing or invalid:');
-      for (const [key, value] of Object.entries(error.errors)) {
-        console.error(`  - ${key}: ${value.message}`);
-      }
-    }
-    
-    // Check if it's a cast error (invalid ObjectId)
-    if (error.name === 'CastError') {
-      console.error('CAST ERROR - Invalid ID format:');
-      console.error('  Path:', error.path);
-      console.error('  Value:', error.value);
-    }
-    
-    console.error('========================================');
-    res.status(500).json({ message: 'Error redeeming offer', error: error.message });
+    console.error('Redeem offer error:', error.message);
+    res.status(500).json({ message: 'Failed to redeem offer', error: error.message });
   }
 };
 
@@ -717,6 +663,7 @@ module.exports = {
   deleteOffer,
   getActiveOffers,
   getClaimedOffers,
+  createOfferPaymentOrder,
   redeemOffer
 };
 

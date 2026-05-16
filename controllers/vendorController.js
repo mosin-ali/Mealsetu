@@ -1576,24 +1576,64 @@ const markCashPaymentPaid = async (req, res) => {
     order.cashPaymentConfirmedBy = vendor._id;
     await order.save();
 
+    const io = req.app.get('io');
+    if (io) {
+      if (order.userId) {
+        io.to(order.userId.toString()).emit('payment_confirmed', {
+          orderId: order._id,
+          message: 'Your cash payment has been confirmed by the vendor!'
+        });
+      }
+      io.to(`vendor_${vendor._id}`).emit('cash_payment_updated', {
+        orderId: order._id
+      });
+    }
+
     try {
       if (order.userId?.email) {
+        const { getMealSlotInfo } = require('../utils/mealTimingUtils');
+        const slotInfo = getMealSlotInfo(order.startDate, order.orderDate);
+        const endFormatted = order.endDate
+          ? new Date(order.endDate).toLocaleDateString('en-IN', {
+              day: 'numeric', month: 'long', year: 'numeric'
+            })
+          : 'N/A';
         const confirmedAt = new Date(order.cashPaymentConfirmedAt).toLocaleString('en-IN');
         await sendEmail(
           order.userId.email,
-          'MealSetu - Cash Payment Confirmed',
-          `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #16a34a;">✅ Cash Payment Confirmed</h1>
-            <p>Dear ${order.userId.name || 'Customer'},</p>
-            <p>Your cash payment has been confirmed by the vendor.</p>
-            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
-              <p><strong>Plan:</strong> ${order.planType}</p>
-              <p><strong>Amount:</strong> ₹${order.amount}</p>
-              <p><strong>Confirmed at:</strong> ${confirmedAt}</p>
+          'MealSetu — Cash Payment Confirmed ✅',
+          `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+            <div style="background:#16a34a;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+              <h1 style="color:white;margin:0;font-size:22px">✅ Cash Payment Confirmed</h1>
             </div>
-            <p>Your subscription is active. Enjoy your meals!</p>
-            <hr/>
-            <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+            <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+              <p>Dear ${order.userId.name || 'Customer'},</p>
+              <p>Your cash payment has been confirmed by the vendor. Your subscription is now active.</p>
+              <div style="background:${slotInfo.badgeBg};border-left:4px solid ${slotInfo.badgeColor};border-radius:8px;padding:16px;margin:16px 0">
+                <p style="margin:0 0 6px 0;font-weight:700;color:${slotInfo.badgeColor};font-size:16px">${slotInfo.slotLabel}</p>
+                <p style="margin:0 0 4px 0;color:#374151;font-size:14px">${slotInfo.startMessage}</p>
+                <p style="margin:0;color:#64748b;font-size:13px">${slotInfo.mealMessage}</p>
+              </div>
+              <table style="width:100%;border-collapse:collapse;margin:16px 0">
+                <tr style="background:#f8fafc">
+                  <td style="padding:10px 14px;font-weight:600;color:#374151">Plan</td>
+                  <td style="padding:10px 14px;color:#64748b">${order.planType}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;font-weight:600;color:#374151">Amount</td>
+                  <td style="padding:10px 14px;color:#64748b">₹${order.amount}</td>
+                </tr>
+                <tr style="background:#f8fafc">
+                  <td style="padding:10px 14px;font-weight:600;color:#374151">Valid Until</td>
+                  <td style="padding:10px 14px;color:#64748b">${endFormatted}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;font-weight:600;color:#374151">Confirmed At</td>
+                  <td style="padding:10px 14px;color:#64748b">${confirmedAt}</td>
+                </tr>
+              </table>
+              <p style="color:#64748b;font-size:13px;text-align:center;margin-top:20px">Thank you for choosing MealSetu!</p>
+            </div>
           </div>`
         );
       }

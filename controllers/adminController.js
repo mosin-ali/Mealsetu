@@ -742,6 +742,15 @@ const verifyCommissionPayment = async (req, res) => {
         );
       }
       
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`vendor_${payment.vendorId}`).emit('commission_updated', {
+          status: 'paid',
+          message: 'Your commission payment has been verified!'
+        });
+        io.to('admin_room').emit('commission_list_updated', {});
+      }
+
       res.json({ message: 'Payment verified successfully' });
     } else if (action === 'reject') {
       const notes = req.body.notes || '';
@@ -783,6 +792,15 @@ const verifyCommissionPayment = async (req, res) => {
         }
       } catch (emailErr) {
         console.error('Email failed:', emailErr.message);
+      }
+
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`vendor_${payment.vendorId}`).emit('commission_updated', {
+          status: 'rejected',
+          message: 'Your commission payment was rejected. Please resubmit.'
+        });
+        io.to('admin_room').emit('commission_list_updated', {});
       }
 
       return res.json({ message: 'Payment rejected. Vendor notified.' });

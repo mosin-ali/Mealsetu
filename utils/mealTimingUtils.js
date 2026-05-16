@@ -61,9 +61,53 @@ const getPlanDurationDays = (planType) => {
   return map[planType] || 7;
 };
 
+/**
+ * Returns human-readable meal slot info for emails and UI.
+ * Pass the order's startDate and orderDate (purchase time).
+ */
+const getMealSlotInfo = (startDate, orderDate) => {
+  const purchaseTime = orderDate ? new Date(orderDate) : new Date();
+  const utcHour = purchaseTime.getUTCHours() +
+                  purchaseTime.getUTCMinutes() / 60;
+
+  const startFormatted = new Date(startDate).toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  });
+
+  if (utcHour < LUNCH_CUTOFF_UTC_HOURS) {
+    return {
+      slot:         'both',
+      slotLabel:    '🌅 Lunch + Dinner',
+      startMessage: `Your plan is active from today (${startFormatted})`,
+      mealMessage:  'You will receive both Lunch and Dinner starting today.',
+      badgeColor:   '#16a34a',
+      badgeBg:      '#dcfce7'
+    };
+  } else if (utcHour < DINNER_CUTOFF_UTC_HOURS) {
+    return {
+      slot:         'dinner',
+      slotLabel:    '🌙 Dinner Only Today',
+      startMessage: `Your plan is active from today (${startFormatted})`,
+      mealMessage:  'Lunch time has passed. You will receive Dinner today. From tomorrow, both Lunch and Dinner will be served. One extra day has been added to your plan to compensate.',
+      badgeColor:   '#d97706',
+      badgeBg:      '#fef3c7'
+    };
+  } else {
+    return {
+      slot:         'none',
+      slotLabel:    '🌄 Starts Tomorrow',
+      startMessage: `Your plan starts tomorrow (${startFormatted})`,
+      mealMessage:  'Dinner time has passed for today. Your plan will start from tomorrow with both Lunch and Dinner.',
+      badgeColor:   '#7c3aed',
+      badgeBg:      '#ede9fe'
+    };
+  }
+};
+
 module.exports = {
   computeSubscriptionDates,
   getPlanDurationDays,
+  getMealSlotInfo,
   LUNCH_CUTOFF_UTC_HOURS,
   DINNER_CUTOFF_UTC_HOURS
 };

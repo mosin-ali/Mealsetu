@@ -7,7 +7,7 @@ const Subscription = require('../models/Subscription');
 const Transaction = require('../models/Transaction');
 const bcrypt = require('bcryptjs');
 const { sendEmail } = require('../utils/emailUtils');
-const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
+const { computeSubscriptionDates, getPlanDurationDays, getMealSlotInfo } = require('../utils/mealTimingUtils');
 const VendorPricing = require('../models/VendorPricing');
 const JainMenu = require('../models/JainMenu');
 
@@ -734,7 +734,7 @@ const placeOrder = async (req, res) => {
     }
 
     const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    now.setUTCHours(0, 0, 0, 0);
 
     const activeOrder = await Order.findOne({
       userId: req.user._id,
@@ -876,35 +876,66 @@ user.expiryDate = subscriptionExpiryDate;
     // ===== REAL-TIME: Emit socket events for new order =====
     if (io) {
       // Notify vendor about new order
-      io.to(`vendor_${vendorId}`).emit('newOrder', { 
+      io.to(`vendor_${vendorId}`).emit('newOrder', {
         order: order,
         message: 'New order received!'
       });
       // Notify admin about new order
-      io.to('admin_room').emit('orderUpdate', { 
+      io.to('admin_room').emit('orderUpdate', {
         order: order,
         message: 'New order placed'
+      });
+      // Notify user their subscription is now active
+      io.to(req.user._id.toString()).emit('subscription_updated', {
+        type: 'order_placed',
+        planType: order.planType
       });
       console.log('📡 Socket events emitted for new order');
     }
 
     try {
-      const emailSubject = `MealSetu - ${planType} Subscription Confirmed`;
+      const slotInfo = getMealSlotInfo(subscriptionStartDate, new Date());
+      const endFormatted = new Date(subscriptionExpiryDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric'
+      });
+      const emailSubject = `MealSetu — ${planType} Subscription Confirmed`;
       const emailHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #333;">Order Confirmed!</h1>
-          <p>Dear ${user.name},</p>
-          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
-            <p><strong>Vendor:</strong> ${vendor.kitchenName}</p>
-            <p><strong>Plan:</strong> ${planType}</p>
-            <p><strong>Start Date:</strong> ${subscriptionStartDate.toLocaleDateString()}</p>
-            <p><strong>Expiry Date:</strong> ${subscriptionExpiryDate.toLocaleDateString()}</p>
-            <p><strong>Amount:</strong> ₹${numericAmount}</p>
-            <p><strong>Payment Method:</strong> ${paymentMethod}</p>
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#f26522;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+            <h1 style="color:white;margin:0;font-size:22px">✅ Subscription Confirmed!</h1>
           </div>
-          <p>Enjoy your meals!</p>
-          <hr/>
-          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+          <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+            <p>Dear ${user.name},</p>
+            <p>Your <strong>${planType}</strong> plan from <strong>${vendor.kitchenName}</strong> is confirmed.</p>
+            <div style="background:${slotInfo.badgeBg};border-left:4px solid ${slotInfo.badgeColor};border-radius:8px;padding:16px;margin:16px 0">
+              <p style="margin:0 0 6px 0;font-weight:700;color:${slotInfo.badgeColor};font-size:16px">${slotInfo.slotLabel}</p>
+              <p style="margin:0 0 4px 0;color:#374151;font-size:14px">${slotInfo.startMessage}</p>
+              <p style="margin:0;color:#64748b;font-size:13px">${slotInfo.mealMessage}</p>
+            </div>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0">
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Plan</td>
+                <td style="padding:10px 14px;color:#64748b">${planType}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Kitchen</td>
+                <td style="padding:10px 14px;color:#64748b">${vendor.kitchenName}</td>
+              </tr>
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Valid Until</td>
+                <td style="padding:10px 14px;color:#64748b">${endFormatted}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Amount</td>
+                <td style="padding:10px 14px;color:#64748b">₹${numericAmount}</td>
+              </tr>
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Payment Method</td>
+                <td style="padding:10px 14px;color:#64748b">${paymentMethod}</td>
+              </tr>
+            </table>
+            <p style="color:#64748b;font-size:13px;text-align:center;margin-top:20px">Thank you for choosing MealSetu!</p>
+          </div>
         </div>
       `;
       await sendEmail(user.email, emailSubject, emailHtml);
@@ -1434,25 +1465,57 @@ const createTrialOrder = async (req, res) => {
     await user.save();
 
     try {
-      const emailSubject = 'MealSetu - Your 2-Day Free Trial is Activated!';
+      const slotInfo = getMealSlotInfo(startDate, new Date());
+      const endFormatted = new Date(endDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric'
+      });
+      const emailSubject = 'MealSetu — Your 2-Day Trial is Activated!';
       const emailHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #16a34a;">🎉 Trial Activated!</h1>
-          <p>Dear ${user.name},</p>
-          <p>Your 2-day trial from <strong>${vendor.kitchenName}</strong> has been activated!</p>
-          <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 10px;">
-            <p><strong>Kitchen:</strong> ${vendor.kitchenName}</p>
-            <p><strong>Trial Start:</strong> ${startDate.toLocaleDateString('en-IN')}</p>
-            <p><strong>Trial End:</strong> ${endDate.toLocaleDateString('en-IN')}</p>
-            <p><strong>Trial Fee:</strong> ${trialFee > 0 ? `₹${trialFee}` : 'FREE'}</p>
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#16a34a;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+            <h1 style="color:white;margin:0;font-size:22px">🎉 Trial Activated!</h1>
           </div>
-          <hr/>
-          <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
+          <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+            <p>Dear ${user.name},</p>
+            <p>Your 2-day trial from <strong>${vendor.kitchenName}</strong> has been activated!</p>
+            <div style="background:${slotInfo.badgeBg};border-left:4px solid ${slotInfo.badgeColor};border-radius:8px;padding:16px;margin:16px 0">
+              <p style="margin:0 0 6px 0;font-weight:700;color:${slotInfo.badgeColor};font-size:16px">${slotInfo.slotLabel}</p>
+              <p style="margin:0 0 4px 0;color:#374151;font-size:14px">${slotInfo.startMessage}</p>
+              <p style="margin:0;color:#64748b;font-size:13px">${slotInfo.mealMessage}</p>
+            </div>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0">
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Kitchen</td>
+                <td style="padding:10px 14px;color:#64748b">${vendor.kitchenName}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Trial Ends</td>
+                <td style="padding:10px 14px;color:#64748b">${endFormatted}</td>
+              </tr>
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Trial Fee</td>
+                <td style="padding:10px 14px;color:#64748b">${trialFee > 0 ? `₹${trialFee}` : 'FREE'}</td>
+              </tr>
+            </table>
+            <p style="color:#64748b;font-size:13px;text-align:center;margin-top:20px">Thank you for choosing MealSetu!</p>
+          </div>
         </div>
       `;
       await sendEmail(user.email, emailSubject, emailHtml);
     } catch (emailError) {
       console.error('Failed to send trial confirmation email:', emailError);
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(req.user._id.toString()).emit('subscription_updated', {
+        type: 'trial_started',
+        message: 'Your trial is now active!'
+      });
+      io.to(`vendor_${vendorId}`).emit('new_order', {
+        type: 'trial_order',
+        message: 'New trial order received'
+      });
     }
 
     res.status(201).json({
@@ -1539,6 +1602,7 @@ const getMySubscription = async (req, res) => {
       planType: activeOrder.planType,
       startDate: activeOrder.startDate,
       endDate: activeOrder.endDate,
+      orderDate: activeOrder.orderDate,
       status: 'active',
       vendorId: activeOrder.vendorId?._id,
       vendorName: activeOrder.vendorId?.kitchenName || 'Partner Kitchen',
@@ -1562,16 +1626,15 @@ const getUpcomingOrders = async (req, res) => {
   try {
     const userId = req.user._id;
     const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    now.setUTCHours(0, 0, 0, 0);
 
-    // FIX 3: Only return orders where startDate is in the future
     const upcomingOrders = await Order.find({
       userId: userId,
       status: 'pending',
-      startDate: { $gt: now }   // only future orders
+      startDate: { $gte: now }
     })
       .populate('vendorId', 'kitchenName')
-      .sort({ scheduledStartDate: 1 });
+      .sort({ startDate: 1 });
 
     const formattedOrders = upcomingOrders.map(order => ({
       _id: order._id,
@@ -1751,19 +1814,21 @@ const extendSubscriptionOrder = async (req, res) => {
       scheduledStartDate = new Date(lastScheduledEndDate.getTime() + 86400000);
     } else {
       const now = new Date();
-      now.setHours(0, 0, 0, 0);
+      now.setUTCHours(0, 0, 0, 0);
 
-      const activeSubscription = await Subscription.findOne({
+      const activeOrder = await Order.findOne({
         userId: userId,
         status: 'active',
-        expiryDate: { $gte: now }
+        endDate: { $gte: now }
       });
 
-      if (activeSubscription && activeSubscription.expiryDate) {
-        scheduledStartDate = new Date(new Date(activeSubscription.expiryDate).getTime() + 86400000);
+      if (activeOrder && activeOrder.endDate) {
+        const activeEnd = new Date(activeOrder.endDate);
+        activeEnd.setUTCHours(0, 0, 0, 0);
+        scheduledStartDate = new Date(activeEnd.getTime() + 86400000);
       } else {
         scheduledStartDate = new Date(now);
-        scheduledStartDate.setDate(scheduledStartDate.getDate() + 1);
+        scheduledStartDate.setUTCDate(scheduledStartDate.getUTCDate() + 1);
       }
     }
 
@@ -2003,16 +2068,23 @@ const verifyUserPayment = async (req, res) => {
       endDate: { $gte: new Date() }
     });
 
+    const lastPendingOrder = await Order.findOne({
+      userId:  req.user._id,
+      status:  'pending'
+    }).sort({ endDate: -1 });
+
+    const chainFromOrder = lastPendingOrder || existingActiveOrder;
     const orderStatus = existingActiveOrder ? 'pending' : 'active';
 
     let orderStartDate = startDate;
     let orderEndDate   = endDate;
 
-    if (existingActiveOrder) {
-      const existingEnd  = new Date(existingActiveOrder.endDate);
-      orderStartDate     = new Date(existingEnd.getTime() + 86400000);
-      orderEndDate       = new Date(orderStartDate);
-      orderEndDate.setDate(orderEndDate.getDate() + durationDays);
+    if (chainFromOrder) {
+      const chainEnd   = new Date(chainFromOrder.endDate);
+      chainEnd.setUTCHours(0, 0, 0, 0);
+      orderStartDate   = new Date(chainEnd.getTime() + 86400000);
+      orderEndDate     = new Date(orderStartDate);
+      orderEndDate.setUTCDate(orderEndDate.getUTCDate() + durationDays);
     }
 
     const order = await Order.create({
@@ -2049,24 +2121,77 @@ const verifyUserPayment = async (req, res) => {
 
     try {
       const isQueued = orderStatus === 'pending';
+      const slotInfo = !isQueued ? getMealSlotInfo(orderStartDate, new Date()) : null;
+      const endFormatted = new Date(orderEndDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric'
+      });
+      const startFormatted = new Date(orderStartDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric'
+      });
       await sendEmail(
         user.email,
         `MealSetu — ${planType} Plan ${isQueued ? 'Queued' : 'Activated'}`,
-        `<div style="font-family:Arial,sans-serif;max-width:600px">
-          <h2 style="color:#16a34a">Payment Successful!</h2>
-          <p>Dear ${user.name},</p>
-          <div style="background:#f0fdf4;padding:20px;border-radius:10px;margin:16px 0">
-            <p><strong>Plan:</strong> ${planType}</p>
-            <p><strong>Kitchen:</strong> ${vendor.kitchenName}</p>
-            <p><strong>${isQueued ? 'Scheduled Start' : 'Valid until'}:</strong> ${(isQueued ? orderStartDate : orderEndDate).toLocaleDateString('en-IN')}</p>
-            <p><strong>Amount Paid:</strong> ₹${amount}</p>
-            <p><strong>Transaction ID:</strong> ${razorpay_payment_id}</p>
+        `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#f26522;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+            <h1 style="color:white;margin:0;font-size:22px">✅ Payment Successful!</h1>
           </div>
-          <p>${isQueued ? 'Your plan will activate automatically after your current plan ends.' : 'Enjoy your meals!'}</p>
+          <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+            <p>Dear ${user.name},</p>
+            <p>Your <strong>${planType}</strong> plan from <strong>${vendor.kitchenName}</strong> is confirmed.</p>
+            ${isQueued
+              ? `<div style="background:#eff6ff;border-left:4px solid #3b82f6;border-radius:8px;padding:16px;margin:16px 0">
+                   <p style="margin:0 0 4px 0;font-weight:700;color:#1d4ed8;font-size:15px">📅 Plan Queued</p>
+                   <p style="margin:0;color:#374151;font-size:14px">Your plan will activate automatically on <strong>${startFormatted}</strong> after your current plan ends.</p>
+                 </div>`
+              : `<div style="background:${slotInfo.badgeBg};border-left:4px solid ${slotInfo.badgeColor};border-radius:8px;padding:16px;margin:16px 0">
+                   <p style="margin:0 0 6px 0;font-weight:700;color:${slotInfo.badgeColor};font-size:16px">${slotInfo.slotLabel}</p>
+                   <p style="margin:0 0 4px 0;color:#374151;font-size:14px">${slotInfo.startMessage}</p>
+                   <p style="margin:0;color:#64748b;font-size:13px">${slotInfo.mealMessage}</p>
+                 </div>`
+            }
+            <table style="width:100%;border-collapse:collapse;margin:16px 0">
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Plan</td>
+                <td style="padding:10px 14px;color:#64748b">${planType}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Kitchen</td>
+                <td style="padding:10px 14px;color:#64748b">${vendor.kitchenName}</td>
+              </tr>
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Valid Until</td>
+                <td style="padding:10px 14px;color:#64748b">${endFormatted}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Amount Paid</td>
+                <td style="padding:10px 14px;color:#64748b">₹${amount}</td>
+              </tr>
+              <tr style="background:#f8fafc">
+                <td style="padding:10px 14px;font-weight:600;color:#374151">Transaction ID</td>
+                <td style="padding:10px 14px;color:#64748b">${razorpay_payment_id}</td>
+              </tr>
+            </table>
+            <p style="color:#64748b;font-size:13px;text-align:center;margin-top:20px">Thank you for choosing MealSetu!</p>
+          </div>
         </div>`
       );
     } catch (emailErr) {
       console.error('Email failed:', emailErr.message);
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(req.user._id.toString()).emit('subscription_updated', {
+        type: 'payment_success',
+        planType,
+        message: orderStatus === 'pending'
+          ? `${planType} plan queued after your current subscription.`
+          : `Your ${planType} subscription is now active!`
+      });
+      io.to(`vendor_${vendorId}`).emit('new_order', {
+        type: 'new_subscription',
+        message: 'New subscription order received'
+      });
     }
 
     res.json({
@@ -2107,10 +2232,22 @@ const checkCanAddPlan = async (req, res) => {
     });
 
     if (pendingCount >= 3) {
+      const earliestPlan = await Order.findOne({
+        userId,
+        status: 'pending'
+      }).sort({ startDate: 1 });
+
+      const earliestExpiry = earliestPlan
+        ? earliestPlan.startDate.toISOString().split('T')[0]
+        : null;
+
       return res.json({
         canPurchase: false,
         reason: 'limit_reached',
-        message: 'You have reached the maximum limit of 3 upcoming plan extensions. Wait for a plan to expire before adding more.'
+        message: earliestExpiry
+          ? `You already have 3 upcoming plans. Your earliest plan starts on ${earliestExpiry}. Wait for a plan to expire before adding more.`
+          : 'You have reached the maximum limit of 3 upcoming plan extensions. Wait for a plan to expire before adding more.',
+        earliestExpiry
       });
     }
 
