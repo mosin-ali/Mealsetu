@@ -35,20 +35,19 @@ const Subscription = ({
   const [error, setError] = useState(null);
   const [mealSlotToast, setMealSlotToast] = useState(null);
 
-  const getToastKey = (orderDate) => {
-    if (!orderDate) return null;
-    const d = new Date(orderDate);
-    return `mealslot_toast_${d.toISOString().split('T')[0]}`;
+  const isToastDismissed = (orderId) => {
+    if (!orderId) {
+      console.log('=== isToastDismissed: orderId is null/undefined — returning false ===');
+      return false;
+    }
+    const key    = `mealslot_dismissed_${orderId}`;
+    const result = localStorage.getItem(key) === 'true';
+    console.log(`=== isToastDismissed: key=${key} result=${result} ===`);
+    return result;
   };
 
-  const isToastDismissed = (orderDate) => {
-    const key = getToastKey(orderDate);
-    return key ? localStorage.getItem(key) === 'dismissed' : true;
-  };
-
-  const dismissToast = (orderDate) => {
-    const key = getToastKey(orderDate);
-    if (key) localStorage.setItem(key, 'dismissed');
+  const dismissToast = (orderId) => {
+    if (orderId) localStorage.setItem(`mealslot_dismissed_${orderId}`, 'true');
     setMealSlotToast(null);
   };
 
@@ -103,53 +102,66 @@ const Subscription = ({
     try {
       // 1. Fetch current active order / subscription
       const subData = await getMySubscription();
+      console.log('=== SUBSCRIPTION.JSX subData ===', JSON.stringify(subData));
+      console.log('=== subData.startsTomorrow ===', subData?.startsTomorrow);
+      console.log('=== subData.startDate ===', subData?.startDate);
+      console.log('=== subData.status ===', subData?.status);
       setCurrentSubscription(subData);
 
-      // Show meal slot toast only when plan started today and not dismissed
-      if (subData?.startDate && !isToastDismissed(subData.orderDate)) {
+      // Show meal slot banner when plan needs user assurance (not dismissed)
+      if (subData?.startDate && !isToastDismissed(subData.orderId)) {
+        console.log('=== BANNER CHECK ENTERED ===');
+        console.log('isToastDismissed:', isToastDismissed(subData.orderId));
+        console.log('subData.orderId:', subData?.orderId);
+
         const todayUTC = new Date();
         todayUTC.setUTCHours(0, 0, 0, 0);
+        const tomorrowUTC = new Date(todayUTC);
+        tomorrowUTC.setUTCDate(tomorrowUTC.getUTCDate() + 1);
         const planStart = new Date(subData.startDate);
         planStart.setUTCHours(0, 0, 0, 0);
-        const isToday = planStart.getTime() === todayUTC.getTime();
+        const isToday    = planStart.getTime() === todayUTC.getTime();
+        const isTomorrow = subData?.startsTomorrow === true;
+
+        console.log('=== BANNER CONDITIONS ===', {
+          planStart:      planStart.toISOString(),
+          todayUTC:       todayUTC.toISOString(),
+          tomorrowUTC:    tomorrowUTC.toISOString(),
+          isToday,
+          isTomorrow,
+          startsTomorrow: subData?.startsTomorrow,
+          rawStartDate:   subData?.startDate
+        });
 
         if (isToday) {
+          console.log('=== ENTERED isToday block ===');
           const purchase = new Date(subData.orderDate || subData.startDate);
-          const utcHour = purchase.getUTCHours() + purchase.getUTCMinutes() / 60;
+          const utcHour  = purchase.getUTCHours() + purchase.getUTCMinutes() / 60;
 
-          let toast = null;
-          if (utcHour < 4.5) {
-            toast = {
-              emoji: '🌅',
-              title: 'Both Lunch & Dinner active today!',
-              message: 'Enjoy your meals. Your subscription is now active.',
-              color: '#16a34a',
-              bg: '#dcfce7'
-            };
-          } else if (utcHour < 11.5) {
-            toast = {
-              emoji: '🌙',
-              title: 'Dinner only today',
-              message: 'Lunch time has passed. You will get Dinner today and both meals from tomorrow.',
-              color: '#d97706',
-              bg: '#fef3c7'
-            };
-          } else {
-            toast = {
-              emoji: '🌄',
-              title: 'Your plan starts tomorrow',
-              message: 'Dinner time has passed. Your first meal will be Lunch tomorrow morning.',
-              color: '#7c3aed',
-              bg: '#ede9fe'
-            };
+          if (utcHour >= 4.5 && utcHour < 11.5) {
+            setMealSlotToast({
+              emoji:   '🌙',
+              title:   'Dinner Only Today',
+              message: 'Lunch time has passed. You will receive Dinner today. From tomorrow both Lunch and Dinner will be served. One extra day has been added to your plan.',
+              color:   '#d97706',
+              bg:      '#fef3c7'
+            });
           }
-
-          if (toast) {
-            setMealSlotToast(toast);
-            setTimeout(() => {
-              dismissToast(subData.orderDate);
-            }, 6000);
-          }
+          // utcHour < 4.5 → both meals active, no banner needed
+        } else if (isTomorrow) {
+          console.log('=== ENTERED isTomorrow block ===');
+          const deliveryDate = planStart.toLocaleDateString('en-IN', {
+            weekday: 'long', day: 'numeric', month: 'long'
+          });
+          setMealSlotToast({
+            emoji:   '🌄',
+            title:   'Plan Starts Tomorrow',
+            message: `Dinner time has passed for today. Your plan will be active from ${deliveryDate} with both Lunch and Dinner.`,
+            color:   '#7c3aed',
+            bg:      '#ede9fe'
+          });
+        } else {
+          console.log('=== NEITHER isToday NOR isTomorrow — banner skipped ===');
         }
       }
 
@@ -469,49 +481,52 @@ const Subscription = ({
         <div className="success-toast">✓ Subscription extended successfully!</div>
       )}
 
-      {/* ── Meal slot toast — fixed bottom, auto-dismisses after 6s ── */}
-      {mealSlotToast && (
-        <div
-          onClick={() => dismissToast(currentSubscription?.orderDate)}
-          style={{
-            position: 'fixed',
-            bottom: '80px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 9999,
-            background: mealSlotToast.bg,
-            border: `1px solid ${mealSlotToast.color}`,
-            borderRadius: '14px',
-            padding: '16px 20px',
-            maxWidth: '360px',
-            width: '90%',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px',
-            animation: 'mealSlotSlideUp 0.4s ease'
-          }}
-        >
-          <span style={{ fontSize: '28px', flexShrink: 0 }}>{mealSlotToast.emoji}</span>
-          <div>
-            <p style={{ margin: '0 0 4px 0', fontWeight: '700',
-                        color: mealSlotToast.color, fontSize: '15px' }}>
-              {mealSlotToast.title}
-            </p>
-            <p style={{ margin: 0, color: '#374151', fontSize: '13px', lineHeight: '1.5' }}>
-              {mealSlotToast.message}
-            </p>
-            <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#94a3b8' }}>
-              Tap to dismiss
-            </p>
-          </div>
-        </div>
-      )}
+{/* meal slot banner rendered inline — see inside Meal Plan Status card */}
 
       {/* ── Current Plan Card ── */}
       <div className="subscription-card">
         <h3>Meal Plan Status</h3>
+
+        {mealSlotToast && (
+          <div
+            style={{
+              background:   mealSlotToast.bg,
+              border:       `1.5px solid ${mealSlotToast.color}`,
+              borderRadius: 10,
+              padding:      '14px 18px',
+              marginBottom: 16,
+              display:      'flex',
+              alignItems:   'flex-start',
+              gap:          12
+            }}
+          >
+            <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0 }}>{mealSlotToast.emoji}</span>
+            <div style={{ flex: 1 }}>
+              <strong style={{ color: mealSlotToast.color, fontSize: 15 }}>
+                {mealSlotToast.title}
+              </strong>
+              <p style={{ margin: '4px 0 0', color: '#4b5563', fontSize: 13, lineHeight: 1.5 }}>
+                {mealSlotToast.message}
+              </p>
+            </div>
+            <button
+              onClick={() => dismissToast(currentSubscription?.orderId)}
+              style={{
+                background: 'none',
+                border:     'none',
+                cursor:     'pointer',
+                color:      '#9ca3af',
+                fontSize:   18,
+                padding:    0,
+                lineHeight: 1,
+                flexShrink: 0
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {currentSubscription ? (
           <div className="status-display">
             <p className="status-label">Current Plan</p>
@@ -957,7 +972,28 @@ const Subscription = ({
                   </p>
                 )}
                 {(() => {
-                  const utcHour = new Date().getUTCHours() + new Date().getUTCMinutes() / 60;
+                  const orderStartDate = paymentSuccess?.order?.startDate;
+                  if (!orderStartDate) return null;
+
+                  const planStart = new Date(orderStartDate);
+                  planStart.setUTCHours(0, 0, 0, 0);
+
+                  const todayUTC = new Date();
+                  todayUTC.setUTCHours(0, 0, 0, 0);
+
+                  const tomorrowUTC = new Date(todayUTC);
+                  tomorrowUTC.setUTCDate(tomorrowUTC.getUTCDate() + 1);
+
+                  const startsToday    = planStart.getTime() === todayUTC.getTime();
+                  const startsTomorrow = planStart.getTime() === tomorrowUTC.getTime();
+
+                  if (!startsToday && !startsTomorrow) return null;
+
+                  const purchaseTime = paymentSuccess?.order?.orderDate
+                    ? new Date(paymentSuccess.order.orderDate)
+                    : new Date();
+                  const utcHour = purchaseTime.getUTCHours() + purchaseTime.getUTCMinutes() / 60;
+
                   if (utcHour < 4.5) return (
                     <p style={{ margin: '6px 0', color: '#16a34a', fontWeight: '600', fontSize: '13px' }}>
                       🌅 Both Lunch &amp; Dinner active today

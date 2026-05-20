@@ -203,9 +203,49 @@ export const getVendorStatus = (vendorId) => {
 };
 
 // ============ SUBSCRIPTION ORDER ENDPOINTS ============
-export const getMySubscription = () => {
-  return apiCall('/users/orders/my-subscription', { method: 'GET' });
-};
+// export const getMySubscription = async () => {
+//   const res = await apiCall('/users/orders/my-subscription', { method: 'GET' });
+//   console.log('=== API.JS getMySubscription RAW RES ===', JSON.stringify(res));
+//   console.log('=== res.currentPlan ===', JSON.stringify(res?.currentPlan));
+//   console.log('=== res.startsTomorrow ===', res?.startsTomorrow);
+//   if (!res) return null;
+//   return { ...res, startsTomorrow: res.startsTomorrow ?? false };
+// };
+
+export const getMySubscription = async () => {
+  try {
+    const res = await apiCall('/users/orders/my-subscription', { method: 'GET' })
+
+    console.log('=== RAW RES ===', JSON.stringify(res))
+
+    // API returns null or empty
+    if (!res) return null
+
+    // New format: { currentPlan: {...}, startsTomorrow: true }
+    if (res.currentPlan !== undefined) {
+      if (!res.currentPlan) return null
+      return {
+        ...res.currentPlan,
+        startsTomorrow: res.startsTomorrow ?? false
+      }
+    }
+
+    // Old format: backend returns plan fields directly at top level
+    // e.g. { planType: 'Weekly', startDate: '...', endDate: '...' }
+    if (res.planType || res.startDate || res.orderId) {
+      return {
+        ...res,
+        startsTomorrow: res.startsTomorrow ?? false
+      }
+    }
+
+    return null
+
+  } catch (err) {
+    console.error('getMySubscription error:', err)
+    return null
+  }
+}
 
 export const getUpcomingOrders = () => {
   return apiCall('/users/orders/upcoming', { method: 'GET' });
@@ -367,6 +407,15 @@ export const getVendorShopStatus = () => {
   return apiCall('/vendor/shop-status', { method: 'GET' });
 };
 
+export const closeKitchenWithClosure = (data) =>
+  apiCall('/vendor/kitchen/close', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+
+export const reopenKitchen = () =>
+  apiCall('/vendor/kitchen/reopen', { method: 'POST' });
+
 export const updateVendorTrialSettings = (trialEnabled, trialFee) => {
   return apiCall('/vendor/trial-settings', {
     method: 'PATCH',
@@ -472,11 +521,11 @@ export const seedDefaultTiers = () => {
   return apiCall('/admin/commission/seed-tiers', { method: 'POST' });
 };
 
-export const adminVerifyScreenshot = (proofUrl) =>
-  apiCall('/admin/commission/verify-screenshot', {
-    method: 'POST',
-    body: JSON.stringify({ proofUrl })
-  });
+export const getAdminMarkCommissionPaid = (commissionId) =>
+  apiCall(`/admin/commissions/${commissionId}/mark-paid`, { method: 'PUT' });
+
+export const getVendorCommissionDetail = (vendorId) =>
+  apiCall(`/admin/commission/vendor/${vendorId}`);
 
 // ============ VENDOR COMMISSION ENDPOINTS ============
 export const getVendorCommissionSummary = () => {
@@ -487,11 +536,9 @@ export const getVendorCommissionHistory = () => {
   return apiCall('/vendor/commission/history');
 };
 
-export const vendorPayCommission = (formData) => {
-  return apiCall('/vendor/commission/pay', {
-    method: 'POST',
-    body: formData,
-  });
+export const getVendorWeekOrderBreakdown = (weekStart, weekEnd) => {
+  const qs = `weekStart=${encodeURIComponent(weekStart)}&weekEnd=${encodeURIComponent(weekEnd)}`;
+  return apiCall(`/vendor/commission/week-orders?${qs}`);
 };
 
 // ============ PINCODE ENDPOINTS ============
