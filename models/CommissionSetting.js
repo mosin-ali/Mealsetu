@@ -20,9 +20,28 @@ const commissionSettingSchema = new mongoose.Schema({
     required: true
   },
   isActive: {
-    type: Boolean,
+    type:    Boolean,
     default: true
-  }
+  },
+  effectiveFrom: {
+    type:    Date,
+    default: null
+  },
+  createdBy: {
+    type:    String,
+    default: null
+  },
+  updatedBy: {
+    type:    String,
+    default: null
+  },
+  changeHistory: [{
+    changedAt:  { type: Date },
+    changedBy:  { type: String },
+    oldRate:    { type: Number },
+    newRate:    { type: Number },
+    note:       { type: String }
+  }]
 }, {
   timestamps: true
 });

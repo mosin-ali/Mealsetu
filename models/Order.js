@@ -68,4 +68,8 @@ userId: {
   isManualOrder: { type: Boolean, default: false }
 });
 
+orderSchema.index({ vendorId: 1, createdAt: -1 });
+orderSchema.index({ vendorId: 1, status: 1, createdAt: -1 });
+orderSchema.index({ userId: 1, status: 1, endDate: 1 });
+
 module.exports = mongoose.model('Order', orderSchema);

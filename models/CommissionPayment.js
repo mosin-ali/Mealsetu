@@ -40,13 +40,34 @@ const commissionPaymentSchema = new mongoose.Schema({
   notes: { 
     type: String 
   },
-  status: { 
-    type: String, 
+  status: {
+    type: String,
     enum: ['pending', 'confirmed', 'rejected'],
     default: 'pending'
+  },
+  attemptCount: {
+    type:    Number,
+    default: 1
+  },
+  failureReason: {
+    type:    String,
+    default: null
+  },
+  idempotencyKey: {
+    type:    String,
+    default: null,
+    index:   true
+  },
+  razorpayOrderId: {
+    type:    String,
+    default: null
+  },
+  razorpayPaymentId: {
+    type:    String,
+    default: null
   }
-}, { 
-  timestamps: true 
+}, {
+  timestamps: true
 });
 
 module.exports = mongoose.model('CommissionPayment', commissionPaymentSchema);

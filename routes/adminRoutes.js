@@ -21,8 +21,10 @@ const {
   getCommissionVendors,
   getCommissionReportCSV,
   seedDefaultTiers,
-  verifyCommissionPayment,
-  verifyScreenshot
+  getVendorCommissionDetail,
+  downloadVendorCommissionReport,
+  getAdminVendorWeekOrders,
+  getVendorPaymentHistory
 } = require('../controllers/adminController');
 const router = express.Router();
 
@@ -105,10 +107,10 @@ router.get('/commission/report/csv', getCommissionReportCSV);
 // Commission seed (one-time)
 router.post('/commission/seed-tiers', seedDefaultTiers);
 
-// Commission payment verification
-router.post('/commission/verify/:paymentId', verifyCommissionPayment);
-
-// AI screenshot analysis
-router.post('/commission/verify-screenshot', verifyScreenshot);
+// Vendor commission drill-down
+router.get('/commission/vendor/:vendorId',             getVendorCommissionDetail);
+router.get('/commission/vendor/:vendorId/report',      downloadVendorCommissionReport);
+router.get('/commission/vendor/:vendorId/week-orders', getAdminVendorWeekOrders);
+router.get('/commission/vendor/:vendorId/payments',    getVendorPaymentHistory);
 
 module.exports = router;

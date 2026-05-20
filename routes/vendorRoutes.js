@@ -1,8 +1,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
-const { commissionProofUpload } = require('../middleware/uploadMiddleware');
-const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, payCommission, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments, markCashPaymentPaid, getAdminUpiId, createCommissionPaymentOrder, verifyCommissionPaymentRazorpay } = require('../controllers/vendorController');
+const { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorMenus, addMenu, getVendorOrders, getFilteredOrders, updateOrderStatus, getVendorReviews, getVendorCustomers, getVendorComplaints, resolveComplaint, getVendorReports, getDashboardStats, saveWeeklyPlan, getWeeklyPlan, toggleShopStatus, getShopStatus, updateTrialSettings, submitVendorCompliance, getPendingPayout, getMyCommissions, getCommissionSummary, getJainMenu, saveJainMenu, getPricing, savePricing, getVendorWeeklyPlan, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments, markCashPaymentPaid, getAdminUpiId, createCommissionPaymentOrder, verifyCommissionPaymentRazorpay, closeKitchenWithClosure, reopenKitchen, getWeekOrderBreakdown, downloadSettlementInvoice, raiseCommissionDispute } = require('../controllers/vendorController');
 const { createOffer, getVendorOffers, deleteOffer } = require('../controllers/offerController');
 const { getPreparationList } = require('../controllers/preparationController');
 
@@ -46,6 +45,10 @@ router.post('/pricing', savePricing);
 router.get('/shop-status', getShopStatus);
 router.put('/shop-status', toggleShopStatus);
 
+// Kitchen closure endpoints
+router.post('/kitchen/close',  closeKitchenWithClosure);
+router.post('/kitchen/reopen', reopenKitchen);
+
 // Offer endpoints
 router.get('/offers', getVendorOffers);
 router.post('/offers', upload.single('posterImage'), createOffer);
@@ -60,8 +63,10 @@ router.post('/compliance-submit', upload.fields([{ name: 'fssaiDoc', maxCount: 1
 // Commission endpoints
 router.get('/admin-upi', getAdminUpiId);
 router.get('/commission/summary', getCommissionSummary);
-router.get('/commission/history', getMyCommissions); // paginated later
-router.post('/commission/pay', commissionProofUpload.single('proof'), payCommission);
+router.get('/commission/history', getMyCommissions);
+router.get('/commission/week-orders', getWeekOrderBreakdown);
+router.get('/commission/invoice/:commissionId', downloadSettlementInvoice);
+router.post('/commission/:commissionId/dispute', raiseCommissionDispute);
 router.post('/commission/create-payment-order', createCommissionPaymentOrder);
 router.post('/commission/verify-payment',       verifyCommissionPaymentRazorpay);
 

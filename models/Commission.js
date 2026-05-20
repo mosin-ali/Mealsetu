@@ -60,15 +60,115 @@ month: {
   rejectionReason: {
     type: String,
     default: null
-  }
+  },
+  weekStart: {
+    type: Date,
+    default: null
+  },
+  weekEnd: {
+    type: Date,
+    default: null
+  },
+  financialYear: {
+    type: String,
+    default: null
+  },
+  financialWeekNumber: {
+    type: Number,
+    default: null
+  },
+
+  // ── SETTLEMENT IDENTITY ──────────────────────────────────
+  settlementNumber: {
+    type:    String,
+    default: null
+  },
+
+  // ── LOCK STATE ───────────────────────────────────────────
+  isLocked: {
+    type:    Boolean,
+    default: false
+  },
+  lockedAt: {
+    type:    Date,
+    default: null
+  },
+  lockedBy: {
+    type:    String,
+    default: null
+  },
+
+  // ── PAYMENT METADATA ─────────────────────────────────────
+  paidOnTime: {
+    type:    Boolean,
+    default: null
+  },
+  paymentReference: {
+    type:    String,
+    default: null
+  },
+
+  // ── TIER SNAPSHOT ────────────────────────────────────────
+  tierSnapshot: {
+    tierName:    { type: String,  default: null },
+    minEarning:  { type: Number,  default: null },
+    maxEarning:  { type: Number,  default: null },
+    ratePercent: { type: Number,  default: null }
+  },
+
+  // ── REMINDER TRACKING ────────────────────────────────────
+  reminderCount: {
+    type:    Number,
+    default: 0
+  },
+  lastReminderSentAt: {
+    type:    Date,
+    default: null
+  },
+
+  // ── DISPUTE ──────────────────────────────────────────────
+  disputeStatus: {
+    type:    String,
+    enum:    [null, 'raised', 'under_review', 'resolved'],
+    default: null
+  },
+  disputeNote: {
+    type:    String,
+    default: null
+  },
+  disputeRaisedAt: {
+    type:    Date,
+    default: null
+  },
+  disputeResolvedAt: {
+    type:    Date,
+    default: null
+  },
+  disputeResolvedBy: {
+    type:    String,
+    default: null
+  },
+
+  // ── AUDIT LOG ────────────────────────────────────────────
+  auditLog: [{
+    action:      { type: String },
+    performedBy: { type: String },
+    at:          { type: Date,   default: Date.now },
+    note:        { type: String },
+    valueBefore: { type: mongoose.Schema.Types.Mixed },
+    valueAfter:  { type: mongoose.Schema.Types.Mixed }
+  }]
 }, {
   timestamps: true
 });
 
-// Compound index for efficient monthly queries
 commissionSchema.index({ vendorId: 1, month: 1 });
 commissionSchema.index({ vendorId: 1, week: 1 });
 commissionSchema.index({ status: 1, due_date: 1 });
+commissionSchema.index({ weekStart: 1 });
+commissionSchema.index({ vendorId: 1, weekStart: 1 });
+commissionSchema.index({ vendorId: 1, status: 1 });
+commissionSchema.index({ isLocked: 1, weekEnd: 1 });
 
 module.exports = mongoose.model('Commission', commissionSchema);
 

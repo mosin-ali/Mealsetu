@@ -1577,7 +1577,7 @@ const getMySubscription = async (req, res) => {
     const tomorrowMidnight = new Date(now);
     tomorrowMidnight.setUTCDate(tomorrowMidnight.getUTCDate() + 1);
 
-    const activeOrder = await Order.findOne({
+    let activeOrder = await Order.findOne({
       userId: userId,
       status: { $in: ['active', 'trial'] },
       startDate: { $lt: tomorrowMidnight },
@@ -1585,6 +1585,34 @@ const getMySubscription = async (req, res) => {
     })
       .populate('vendorId', 'kitchenName')
       .sort({ createdAt: -1 });
+
+    let startsTomorrow = false;
+
+    if (!activeOrder) {
+      const tomorrowStart = new Date();
+      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+      tomorrowStart.setUTCHours(0, 0, 0, 0);
+
+      const tomorrowEnd = new Date(tomorrowStart);
+      tomorrowEnd.setUTCHours(23, 59, 59, 999);
+
+      activeOrder = await Order.findOne({
+        userId,
+        status:    { $in: ['active', 'pending'] },
+        startDate: { $gte: tomorrowStart, $lte: tomorrowEnd }
+      }).populate('vendorId', 'kitchenName');
+
+      console.log('=== PENDING ORDER QUERY ===', {
+        tomorrowStart: tomorrowStart.toISOString(),
+        tomorrowEnd:   tomorrowEnd.toISOString(),
+        foundOrder:    !!activeOrder,
+        orderId:       activeOrder?._id,
+        orderStatus:   activeOrder?.status,
+        orderStart:    activeOrder?.startDate,
+      });
+
+      if (activeOrder) startsTomorrow = true;
+    }
 
     if (!activeOrder) return res.json(null);
 
@@ -1597,6 +1625,14 @@ const getMySubscription = async (req, res) => {
     const pricing = vendorPricingRecords
       .filter(p => p.price > 0)
       .map(p => ({ type: p.plan_type, price: p.price }));
+
+    console.log('=== getMySubscription RESPONSE ===', JSON.stringify({
+      hasOrder:        !!activeOrder,
+      orderStatus:     activeOrder?.status,
+      orderStart:      activeOrder?.startDate,
+      startsTomorrow,
+      currentPlanKeys: activeOrder ? Object.keys(activeOrder.toObject ? activeOrder.toObject() : activeOrder) : null
+    }, null, 2));
 
     res.json({
       planType: activeOrder.planType,
@@ -1611,7 +1647,8 @@ const getMySubscription = async (req, res) => {
       paymentStatus: activeOrder.paymentStatus,
       cashPaymentConfirmedAt: activeOrder.cashPaymentConfirmedAt || null,
       orderId: activeOrder._id,
-      pricing
+      pricing,
+      startsTomorrow
     });
   } catch (error) {
     console.error('Get my subscription error:', error);
@@ -1661,7 +1698,7 @@ const getUpcomingOrders = async (req, res) => {
 const fixStuckOrders = async () => {
   try {
     const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    now.setUTCHours(0, 0, 0, 0);
 
     console.log('🔧 Running fixStuckOrders...');
 
@@ -1684,16 +1721,17 @@ const fixStuckOrders = async () => {
         });
 
         if (!hasActive) {
-          // Activate this stuck order
-          const startDate = new Date(now);
+          // Activate using the stored startDate (honours any closure-shifted dates)
           const DURATION_MAP = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
           const durationDays = DURATION_MAP[order.planType] ?? 7;
-          const endDate = new Date(startDate);
-          endDate.setDate(endDate.getDate() + durationDays);
+          const honouredStart = new Date(order.startDate);
+          honouredStart.setUTCHours(0, 0, 0, 0);
+          const honouredEnd = new Date(honouredStart);
+          honouredEnd.setUTCDate(honouredEnd.getUTCDate() + durationDays);
 
           order.status = 'active';
-          order.startDate = startDate;
-          order.endDate = endDate;
+          order.startDate = honouredStart;
+          order.endDate = honouredEnd;
           await order.save();
 
           console.log('✅ Fixed stuck order:', order._id);

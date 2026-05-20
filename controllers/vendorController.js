@@ -10,6 +10,7 @@ const Commission = require('../models/Commission');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
+const { calculateMissedMeals, calculatePlannedClosureMeals } = require('../utils/mealSlotCalculator');
 
 const VendorPricing = require('../models/VendorPricing');
 const CommissionSetting = require('../models/CommissionSetting');
@@ -948,10 +949,44 @@ const getShopStatus = async (req, res) => {
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
+
+    const now = new Date();
+
+    // LAZY REOPEN: if planned closure endDate has passed, auto-clear on read.
+    // Defense-in-depth in case the nightly cron missed this vendor.
+    if (
+      !vendor.isOpen &&
+      vendor.currentClosure?.isActive &&
+      vendor.currentClosure?.closureType === 'planned' &&
+      vendor.currentClosure?.endDate &&
+      new Date(vendor.currentClosure.endDate) < now
+    ) {
+      // Capture meal data before clearing — closure object is reset below
+      const closureMissedMeals   = vendor.currentClosure.missedMeals;
+      const closureExtensionDays = vendor.currentClosure.extensionDays;
+
+      vendor.isOpen = true;
+      vendor.currentClosure = {
+        isActive: false, startDate: null,
+        endDate: null, reason: null, closureType: null,
+        closedAt: null, missedMeals: null, extensionDays: null
+      };
+      await vendor.save();
+      console.log(`[lazyReopen] Auto-reopened ${vendor.kitchenName} on dashboard load`);
+
+      // Notify customers async — do not block the response
+      const { sendKitchenReopenEmail } = require('../cron/kitchenClosureCron');
+      sendKitchenReopenEmail(vendor._id, vendor.kitchenName, 'planned', {
+        missedMeals:   closureMissedMeals,
+        extensionDays: closureExtensionDays
+      }).catch(err =>
+        console.error('[lazyReopen] Reopen email failed:', err.message)
+      );
+    }
+
     res.json({
-      isOpen: vendor.isOpen,
-      closureStartDate: vendor.closureStartDate,
-      closureEndDate: vendor.closureEndDate
+      isOpen:         vendor.isOpen,
+      currentClosure: vendor.currentClosure || null
     });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -1231,139 +1266,201 @@ const submitVendorCompliance = async (req, res) => {
 
 // ===== COMMISSION FUNCTIONS =====
 
-// @desc    Get vendor commission summary (current week)
+// @desc    Get vendor commission summary (current rolling week)
 // @route   GET /api/vendor/commission/summary
 const getCommissionSummary = async (req, res) => {
   try {
-    // STEP 1: Get real vendor using ownerId
-    const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    if (!vendor) {
-      return res.status(404).json({ message: 'Vendor not found' });
-    }
-    const vendorId = vendor._id;
+    console.log('=== getCommissionSummary CALLED ===');
+    console.log('req.user._id:', req.user?._id);
+    const { getCommissionWeek } = require('../utils/commissionWeekCalculator');
 
-    // STEP 2: Current WEEK range (Monday to Sunday)
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+    const vendorId = vendor._id;
+    console.log('vendorId:', vendorId);
+
     const now = new Date();
 
-    // Get Monday of current week
-    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...6=Sat
-    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() + diffToMonday);
-    startOfWeek.setHours(0, 0, 0, 0);
+    // Rolling week anchored to vendor's first order — matches cron exactly
+    const firstOrder = await Order.findOne({ vendorId })
+      .sort({ orderDate: 1, createdAt: 1 })
+      .select('createdAt orderDate startDate')
+      .lean();
 
-    // Get Sunday of current week
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
+    const anchorDate = firstOrder?.createdAt || firstOrder?.orderDate || firstOrder?.startDate;
+    console.log('=== firstOrder found ===', anchorDate || 'NOT FOUND');
+    if (!anchorDate) {
+      return res.json({
+        success:            true,
+        currentWeek:        null,
+        isWeekOpen:         false,
+        canPay:             false,
+        lifetimeEarnings:   0,
+        lifetimeCommission: 0,
+        lifetimeNet:        0
+      });
+    }
 
-    // Week key like "2026-W12" for database
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const weekNumber = Math.ceil(
-      (((startOfWeek - startOfYear) / 86400000) + 1) / 7
-    );
-    const currentMonth = `${now.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+    const weekInfo = getCommissionWeek(anchorDate, now);
+    if (!weekInfo || isNaN(new Date(weekInfo.weekStart).getTime())) {
+      return res.json({
+        success:            true,
+        currentWeek:        null,
+        isWeekOpen:         false,
+        canPay:             false,
+        lifetimeEarnings:   0,
+        lifetimeCommission: 0,
+        lifetimeNet:        0
+      });
+    }
 
-    // Week label like "20 Mar - 26 Mar 2026"
-    const weekLabel = `${startOfWeek.toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short'
-    })} - ${endOfWeek.toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric'
-    })}`;
+    const isWeekOpen = now <= new Date(weekInfo.weekEnd);
 
-    console.log('Commission Summary vendorId:', vendorId);
-    console.log('Week range:', startOfWeek, '->', endOfWeek);
-    console.log('Week key:', currentMonth);
+    const start = new Date(weekInfo.weekStart);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(weekInfo.weekEnd);
+    end.setUTCHours(23, 59, 59, 999);
 
-    // STEP 3: Sum ALL orders this week for this vendor
-    const allOrders = await Order.find({
-      vendorId: vendorId,
-      orderDate: { $gte: startOfWeek, $lte: endOfWeek }
-    });
+    // Check if existing locked record
+    let commission = await Commission.findOne({ vendorId, week: weekInfo.weekKey });
 
-    console.log('All orders this week:', allOrders.length);
+    // Lifetime aggregation (always computed)
+    const lifetimeAgg = await Commission.aggregate([
+      { $match: { vendorId: vendorId } },
+      { $group: {
+        _id:                null,
+        lifetimeEarnings:   { $sum: '$total_earning' },
+        lifetimeCommission: { $sum: '$commission_amount' }
+      }}
+    ]);
+    const lifetimeEarnings   = lifetimeAgg[0]?.lifetimeEarnings   || 0;
+    const lifetimeCommission = lifetimeAgg[0]?.lifetimeCommission || 0;
+    const lifetimeNet        = lifetimeEarnings - lifetimeCommission;
 
-    const totalEarning = allOrders.reduce((sum, order) => {
-      return sum + (order.amount || 0);
-    }, 0);
+    // If locked — return frozen values, never recalculate
+    if (commission?.isLocked) {
+      const dueDate   = new Date(commission.due_date);
+      const isOverdue = dueDate < now && commission.status !== 'paid';
+      const canPay    = commission.status !== 'paid' && commission.isLocked;
+      const daysUntilDue = isOverdue
+        ? -Math.floor((now - dueDate) / 86400000)
+        : Math.ceil((dueDate - now) / 86400000);
 
-    console.log('Total earning this week:', totalEarning);
+      console.log('=== getCommissionSummary RETURNING (locked) ===', JSON.stringify({
+        hasCurrentWeek:   true,
+        weekKey:          commission.week,
+        totalEarning:     commission.total_earning,
+        commissionAmount: commission.commission_amount,
+        status:           commission.status,
+        isLocked:         commission.isLocked,
+        firstOrderExists: !!firstOrder,
+        firstOrderDate:   anchorDate
+      }));
+      return res.json({
+        success:     true,
+        currentWeek: {
+          ...commission.toObject(),
+          isWeekOpen:  false,
+          canPay,
+          isOverdue,
+          isEstimate:  false,
+          daysUntilDue
+        },
+        lifetimeEarnings,
+        lifetimeCommission,
+        lifetimeNet
+      });
+    }
 
-    // STEP 4: Find correct commission tier
-    let commissionRate = 3;
-    let tierName = 'Starter';
+    // Not locked — calculate live, check both createdAt and orderDate
+    const orders = await Order.find({
+      vendorId,
+      status: { $in: ['active', 'completed', 'trial', 'pending'] },
+      $or: [
+        { createdAt: { $gte: start, $lte: end } },
+        { orderDate: { $gte: start, $lte: end } }
+      ]
+    }).select('amount status createdAt orderDate').lean();
 
-    const tiers = await CommissionSetting.find({ isActive: true })
-      .sort({ minEarning: 1 });
+    console.log('[getCommissionSummary] orders found:', orders.length,
+      'for week:', start.toISOString(), '→', end.toISOString());
 
-    console.log('Tiers found:', tiers.length);
+    const totalEarning = orders.reduce((s, o) => s + (o.amount || 0), 0);
 
-    if (tiers.length > 0) {
-      for (const tier of tiers) {
-        if (
-          totalEarning >= tier.minEarning &&
-          (tier.maxEarning === null || totalEarning <= tier.maxEarning)
-        ) {
-          commissionRate = tier.ratePercent;
-          tierName = tier.tierName;
-          break;
+    // Tier lookup
+    const tier = await CommissionSetting.findOne({
+      isActive:   true,
+      minEarning: { $lte: totalEarning },
+      $or: [
+        { maxEarning: { $gte: totalEarning } },
+        { maxEarning: null }
+      ]
+    }).sort({ minEarning: -1 }).limit(1).lean();
+
+    const rate             = tier?.ratePercent || 3;
+    const commissionAmount = Math.round(totalEarning * rate / 100);
+    const dueDate          = new Date(weekInfo.weekEnd);
+    dueDate.setUTCDate(dueDate.getUTCDate() + 7);
+
+    const settlementNumber = `MS-${weekInfo.financialYear}-W${String(
+      weekInfo.fyWeekNumber
+    ).padStart(2, '0')}-${String(vendorId).slice(-4).toUpperCase()}`;
+
+    // Upsert — never overwrite a locked record
+    commission = await Commission.findOneAndUpdate(
+      { vendorId, week: weekInfo.weekKey, isLocked: { $ne: true } },
+      {
+        $set: {
+          total_orders:        orders.length,
+          total_earning:       totalEarning,
+          commission_rate:     rate,
+          commission_amount:   commissionAmount,
+          due_date:            dueDate,
+          weekStart:           weekInfo.weekStart,
+          weekEnd:             weekInfo.weekEnd,
+          financialYear:       weekInfo.financialYear,
+          financialWeekNumber: weekInfo.fyWeekNumber,
+          settlementNumber
+        },
+        $setOnInsert: {
+          status:        'pending',
+          isLocked:      false,
+          reminderCount: 0
         }
-      }
-    }
+      },
+      { upsert: true, new: true }
+    );
 
-    // STEP 5: Calculate commission amounts
-    const commissionDue = Math.round(totalEarning * commissionRate / 100);
-    const netPayout = totalEarning - commissionDue;
+    const canPay = !isWeekOpen && commission.status !== 'paid' && commission.isLocked;
 
-    // STEP 6: Save/update Commission document so history and admin panel work
-    let savedCommission = null;
-    if (totalEarning > 0) {
-      savedCommission = await Commission.findOneAndUpdate(
-        {
-          vendorId: vendorId,
-          $or: [{ week: currentMonth }, { month: currentMonth }]
-        },
-        {
-          $set: {
-            vendorId:          vendorId,
-            week:              currentMonth,
-            month:             currentMonth,
-            totalOrders:       allOrders.length,
-            total_earning:     totalEarning,
-            commission_rate:   commissionRate,
-            commission_amount: commissionDue,
-            due_date:          endOfWeek
-            // status intentionally NOT in $set — never overwrite
-            // pending_verification or paid on subsequent visits
-          },
-          $setOnInsert: {
-            status: 'pending'   // only set on first creation
-          }
-        },
-        { upsert: true, new: true }
-      );
-    }
-
-    // Use saved document's status for response (not hardcoded)
-    const finalStatus = savedCommission?.status || 'not_generated';
-
-    // STEP 7: Send response
-    res.status(200).json({
-      total_earning: totalEarning,
-      commission_rate: commissionRate,
-      commission_due: commissionDue,
-      net_payout: netPayout,
-      tier_name: tierName,
-      current_month: weekLabel,
-      month: currentMonth,
-      status: finalStatus,
-      orders_count: allOrders.length,
-      rejectionReason: savedCommission?.rejectionReason || null
+    console.log('=== getCommissionSummary RETURNING (live) ===', JSON.stringify({
+      hasCurrentWeek:   !!commission,
+      weekKey:          commission?.week,
+      totalEarning:     commission?.total_earning,
+      commissionAmount: commission?.commission_amount,
+      status:           commission?.status,
+      isLocked:         commission?.isLocked,
+      firstOrderExists: !!firstOrder,
+      firstOrderDate:   firstOrder?.createdAt
+    }));
+    return res.json({
+      success:     true,
+      currentWeek: {
+        ...commission.toObject(),
+        isWeekOpen,
+        canPay,
+        isOverdue:   false,
+        isEstimate:  isWeekOpen,
+        daysUntilDue: Math.ceil((dueDate - now) / 86400000)
+      },
+      lifetimeEarnings,
+      lifetimeCommission,
+      lifetimeNet
     });
 
-  } catch (error) {
-    console.error('getCommissionSummary error:', error);
-    res.status(500).json({ message: 'Server Error', error: error.message });
+  } catch (err) {
+    console.error('[getCommissionSummary]', err);
+    return res.status(500).json({ message: err.message });
   }
 };
 
@@ -1400,10 +1497,12 @@ const getPendingPayout = async (req, res) => {
 // @route   GET /api/vendor/commission/history
 const getMyCommissions = async (req, res) => {
   try {
+    console.log('=== getCommissionHistory CALLED ===');
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
       return res.status(200).json({ commissions: [], total: 0 });
     }
+    console.log('vendorId:', vendor._id);
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -1416,6 +1515,20 @@ const getMyCommissions = async (req, res) => {
 
     const total = await Commission.countDocuments({ vendorId: vendor._id });
 
+    const allCommissions = await Commission.find({ vendorId: vendor._id }).lean();
+    console.log('=== ALL COMMISSIONS IN DB FOR VENDOR ===', {
+      count:    allCommissions.length,
+      vendorId: vendor._id,
+      records:  allCommissions.map(c => ({
+        id:      c._id,
+        week:    c.week,
+        status:  c.status,
+        amount:  c.commission_amount,
+        earning: c.total_earning,
+        vendorIdOnRecord: c.vendorId
+      }))
+    });
+
     res.status(200).json({
       commissions,
       total,
@@ -1423,80 +1536,6 @@ const getMyCommissions = async (req, res) => {
       pages: Math.ceil(total / limit)
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
-  }
-};
-
-// @desc    Vendor submits commission payment proof
-// @route   POST /api/vendor/commission/pay
-const payCommission = async (req, res) => {
-  try {
-    const CommissionPayment = require('../models/CommissionPayment');
-
-    const vendor = await Vendor.findOne({ ownerId: req.user._id });
-    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
-
-    const { commissionId } = req.body;
-    const proofFile = req.file;
-
-    if (!proofFile) {
-      return res.status(400).json({ message: 'Payment screenshot is required' });
-    }
-
-    const commission = await Commission.findOne({
-      _id: commissionId,
-      vendorId: vendor._id
-    });
-    if (!commission) {
-      return res.status(404).json({ message: 'Commission record not found' });
-    }
-    if (commission.status === 'paid') {
-      return res.status(400).json({ message: 'Commission already paid' });
-    }
-
-    const proofUrl = `/uploads/commission-proofs/${proofFile.filename}`;
-
-    const payment = await CommissionPayment.create({
-      vendorEarningId: commission._id,
-      vendorId:        vendor._id,
-      amountPaid:      commission.commission_amount,
-      paymentMethod:   'upi',
-      utrNumber:       '',
-      proofUrl:        proofUrl,
-      paidAt:          new Date(),
-      status:          'pending'
-    });
-
-    commission.status            = 'pending_verification';
-    commission.payment_proof_url = proofUrl;
-    commission.payment_date      = new Date();
-    await commission.save();
-
-    try {
-      const vendorWithOwner = await Vendor.findById(vendor._id)
-        .populate('ownerId', 'email name');
-      if (vendorWithOwner?.ownerId?.email) {
-        await sendEmail(
-          vendorWithOwner.ownerId.email,
-          'Commission Payment Proof Submitted — MealSetu',
-          `<div style="font-family:Arial,sans-serif">
-            <h2 style="color:#f26522">Payment Proof Received</h2>
-            <p>Your commission payment proof for week ${commission.month}
-               (₹${commission.commission_amount}) has been submitted.</p>
-            <p>Admin will verify within 24 hours.</p>
-          </div>`
-        );
-      }
-    } catch (emailErr) {
-      console.error('Email failed:', emailErr.message);
-    }
-
-    res.status(200).json({
-      message: 'Payment proof submitted. Awaiting admin verification.',
-      payment
-    });
-  } catch (error) {
-    console.error('payCommission error:', error);
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
@@ -1648,6 +1687,354 @@ const markCashPaymentPaid = async (req, res) => {
   }
 };
 
+// Extends all active orders and shifts all pending orders by extensionDays.
+// Uses millisecond math so 0.5-day (12-hour) extensions are precise.
+// Returns { activeUpdated, upcomingUpdated } counts.
+const extendAllPlansOnClosure = async (vendorId, extensionDays) => {
+  if (!extensionDays || extensionDays <= 0) {
+    console.log(`[extendPlans] extensionDays=${extensionDays} — skipping`);
+    return { activeUpdated: 0, upcomingUpdated: 0 };
+  }
+
+  const extensionMs = extensionDays * 24 * 60 * 60 * 1000;
+
+  const activeOrders = await Order.find({
+    vendorId,
+    status:  'active',
+    endDate: { $gte: new Date() }
+  });
+
+  const pendingOrders = await Order.find({ vendorId, status: 'pending' });
+
+  console.log(`[extendPlans] vendorId=${vendorId} extensionDays=${extensionDays} extensionMs=${extensionMs}`);
+  console.log(`[extendPlans] active=${activeOrders.length} pending=${pendingOrders.length}`);
+
+  for (const order of activeOrders) {
+    const oldEnd  = new Date(order.endDate);
+    order.endDate = new Date(oldEnd.getTime() + extensionMs);
+    await order.save();
+    console.log(`[extendPlans] active ${order._id}: ${oldEnd.toDateString()} → ${order.endDate.toDateString()}`);
+  }
+
+  for (const order of pendingOrders) {
+    if (order.startDate) {
+      order.startDate          = new Date(new Date(order.startDate).getTime() + extensionMs);
+      order.scheduledStartDate = order.scheduledStartDate
+        ? new Date(new Date(order.scheduledStartDate).getTime() + extensionMs)
+        : order.startDate;
+    }
+    if (order.endDate) {
+      order.endDate            = new Date(new Date(order.endDate).getTime() + extensionMs);
+      order.scheduledEndDate   = order.scheduledEndDate
+        ? new Date(new Date(order.scheduledEndDate).getTime() + extensionMs)
+        : order.endDate;
+    }
+    await order.save();
+    console.log(`[extendPlans] pending ${order._id} shifted +${extensionDays} days`);
+  }
+
+  return { activeUpdated: activeOrders.length, upcomingUpdated: pendingOrders.length };
+};
+
+// @desc  Close kitchen with user notification + plan extension
+// @route POST /api/vendor/kitchen/close
+const closeKitchenWithClosure = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id })
+      .populate('ownerId', 'email name');
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    if (vendor.currentClosure?.isActive === true) {
+      return res.status(409).json({ message: 'Kitchen is already closed. Reopen before closing again.' });
+    }
+
+    const { closureType, startDate, endDate, reason } = req.body;
+    const isEmergency = closureType === 'emergency';
+
+    // For emergency: start is always NOW server-side — never trust client time
+    const start = isEmergency ? new Date() : (() => {
+      const d = new Date(startDate);
+      d.setUTCHours(0, 0, 0, 0);
+      return d;
+    })();
+
+    const end = new Date(endDate);
+    // 18:29:59 UTC = 23:59:59 IST — end of day in Indian timezone, avoids +1 day display artifact
+    end.setUTCHours(18, 29, 59, 999);
+
+    // Compute meal-accurate extension for planned closures.
+    // For emergency: unknown duration — compute at reopen using closedAt.
+    let plannedMissedMeals   = null;
+    let plannedExtensionDays = null;
+    let plannedBreakdown     = [];
+    if (!isEmergency) {
+      const calc = calculatePlannedClosureMeals(start, end);
+      plannedMissedMeals   = calc.missedMeals;
+      plannedExtensionDays = calc.extensionDays;
+      plannedBreakdown     = calc.breakdown;
+      console.log(`[plannedClosure] vendor=${vendor._id} kitchen=${vendor.kitchenName}`);
+      console.log(`[plannedClosure] missedMeals=${plannedMissedMeals} extensionDays=${plannedExtensionDays}`);
+      console.log(`[plannedClosure] breakdown=${JSON.stringify(plannedBreakdown)}`);
+    }
+
+    vendor.currentClosure = {
+      isActive:      true,
+      startDate:     start,
+      endDate:       end,
+      reason:        reason || (isEmergency ? 'Emergency' : 'Holiday'),
+      closureType,
+      closedAt:      new Date(),   // exact API-call timestamp; for emergency: precise close time
+      missedMeals:   plannedMissedMeals,
+      extensionDays: plannedExtensionDays
+    };
+    vendor.plannedClosures.push({
+      startDate:   start,
+      endDate:     end,
+      reason:      reason || (isEmergency ? 'Emergency' : 'Holiday'),
+      closureType,
+      notifiedAt:  new Date()
+    });
+    vendor.isOpen = false;
+    await vendor.save();
+
+    const startFormatted = start.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    const endFormatted   = end.toLocaleDateString('en-IN',   { day: 'numeric', month: 'long', year: 'numeric' });
+
+    const activeOrders = await Order.find({
+      vendorId: vendor._id,
+      status:   'active',
+      endDate:  { $gte: new Date() }
+    }).populate('userId', 'email name');
+
+    // ── EMERGENCY: send Email 1 only, do NOT extend plans yet ──
+    if (isEmergency) {
+      for (const order of activeOrders) {
+        if (!order.userId?.email) continue;
+        try {
+          await sendEmail(
+            order.userId.email,
+            `🚨 ${vendor.kitchenName} – Emergency Closure Notice`,
+            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+              <div style="background:#dc2626;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+                <h1 style="color:white;margin:0;font-size:20px">⚠️ Emergency Kitchen Closure</h1>
+              </div>
+              <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+                <p>Dear ${order.userId.name},</p>
+                <p><strong>${vendor.kitchenName}</strong> has had to close temporarily due to an emergency.</p>
+                <div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0">
+                  <p style="margin:0 0 8px;font-weight:700;color:#92400e">Closure Details</p>
+                  <p style="margin:4px 0;color:#374151">📅 <strong>Closed from:</strong> ${startFormatted}</p>
+                  <p style="margin:4px 0;color:#374151">📅 <strong>Expected reopen:</strong> ${endFormatted}</p>
+                  <p style="margin:4px 0;color:#374151">📝 <strong>Reason:</strong> ${reason || 'Emergency'}</p>
+                </div>
+                <div style="background:#f0f9ff;border-left:4px solid #3b82f6;border-radius:8px;padding:16px;margin:16px 0">
+                  <p style="margin:0 0 8px;font-weight:700;color:#1d4ed8">ℹ️ Your Plan</p>
+                  <p style="margin:0;color:#374151">Your active plan has been noted. It will be extended by the <strong>exact number of meals missed</strong> during the closure. We will confirm your new plan end date when the kitchen reopens.</p>
+                </div>
+                <p style="color:#64748b;font-size:13px">We will notify you the moment the kitchen reopens.</p>
+                <p style="color:#64748b;font-size:13px">Thank you for your understanding — MealSetu Team</p>
+              </div>
+            </div>`
+          );
+        } catch (emailErr) {
+          console.error('Emergency Email 1 failed:', order.userId.email, emailErr.message);
+        }
+      }
+
+      const io = req.app.get('io');
+      if (io) {
+        for (const order of activeOrders) {
+          if (order.userId?._id) {
+            io.to(order.userId._id.toString()).emit('subscription_updated', {
+              type: 'kitchen_closed',
+              message: `${vendor.kitchenName} has temporarily closed. Your plan will be extended when they reopen.`
+            });
+          }
+        }
+      }
+
+      return res.json({
+        success:       true,
+        message:       `Kitchen closed (emergency). ${activeOrders.length} subscribers notified.`,
+        extendedCount: 0,
+        missedMeals:   null,
+        extensionDays: null,
+        startDate:     start,
+        endDate:       end
+      });
+    }
+
+    // ── PLANNED: extend active plans + shift upcoming (pending) plans ──
+    const extensionMs = plannedExtensionDays * 24 * 60 * 60 * 1000;
+
+    if (plannedExtensionDays > 0) {
+      await extendAllPlansOnClosure(vendor._id, plannedExtensionDays);
+    } else {
+      console.log(`[plannedClosure] extensionDays=0 — no order extension needed`);
+    }
+
+    // Send closure notification to each active subscriber
+    // activeOrders was fetched before the extension; new endDate = oldEnd + extensionMs
+    for (const order of activeOrders) {
+      if (!order.userId?.email) continue;
+      const newEndDate      = new Date(new Date(order.endDate).getTime() + extensionMs);
+      const newEndFormatted = newEndDate.toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric'
+      });
+      const mealLine = plannedMissedMeals > 0
+        ? `<p style="margin:4px 0;color:#374151">🍽️ <strong>Meals covered:</strong> ${plannedMissedMeals} meal${plannedMissedMeals !== 1 ? 's' : ''}</p>`
+        : '';
+      try {
+        await sendEmail(
+          order.userId.email,
+          `📅 ${vendor.kitchenName} – Planned Closure Notice`,
+          `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+            <div style="background:#f26522;padding:24px;text-align:center;border-radius:12px 12px 0 0">
+              <h1 style="color:white;margin:0;font-size:20px">📅 Planned Kitchen Closure</h1>
+            </div>
+            <div style="padding:24px;border:1px solid #e2e8f0;border-radius:0 0 12px 12px">
+              <p>Dear ${order.userId.name},</p>
+              <p><strong>${vendor.kitchenName}</strong> will be closed for a planned break.</p>
+              <div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0">
+                <p style="margin:0 0 8px;font-weight:700;color:#92400e">Closure Details</p>
+                <p style="margin:4px 0;color:#374151">📅 <strong>From:</strong> ${startFormatted}</p>
+                <p style="margin:4px 0;color:#374151">📅 <strong>To:</strong> ${endFormatted}</p>
+                <p style="margin:4px 0;color:#374151">📝 <strong>Reason:</strong> ${reason || 'Holiday'}</p>
+              </div>
+              <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:8px;padding:16px;margin:16px 0">
+                <p style="margin:0 0 8px;font-weight:700;color:#166534">✅ Your Plan Has Been Extended</p>
+                <p style="margin:4px 0;color:#374151">Your subscription has been automatically extended by <strong>${plannedExtensionDays} day${plannedExtensionDays !== 1 ? 's' : ''}</strong>.</p>
+                ${mealLine}
+                <p style="margin:8px 0 0;color:#374151">New plan end date: <strong style="color:#16a34a">${newEndFormatted}</strong></p>
+              </div>
+              <p style="color:#64748b;font-size:13px">We apologize for the inconvenience and look forward to serving you again.</p>
+              <p style="color:#64748b;font-size:13px">Thank you for your understanding — MealSetu Team</p>
+            </div>
+          </div>`
+        );
+      } catch (emailErr) {
+        console.error('Planned closure email failed:', order.userId.email, emailErr.message);
+      }
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      for (const order of activeOrders) {
+        if (order.userId?._id) {
+          io.to(order.userId._id.toString()).emit('subscription_updated', {
+            type: 'plan_extended',
+            message: plannedExtensionDays > 0
+              ? `${vendor.kitchenName} is closed. Your plan has been extended by ${plannedExtensionDays} days.`
+              : `${vendor.kitchenName} is closed temporarily.`
+          });
+        }
+      }
+    }
+
+    res.json({
+      success:       true,
+      message:       `Kitchen closed. ${activeOrders.length} active plans extended by ${plannedExtensionDays} days (${plannedMissedMeals} missed meals).`,
+      extendedCount: activeOrders.length,
+      missedMeals:   plannedMissedMeals,
+      extensionDays: plannedExtensionDays,
+      startDate:     start,
+      endDate:       end
+    });
+  } catch (error) {
+    console.error('closeKitchenWithClosure error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc  Reopen kitchen after closure
+// @route POST /api/vendor/kitchen/reopen
+const reopenKitchen = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const closure = vendor.currentClosure;
+
+    if (!closure?.isActive) {
+      return res.status(400).json({ success: false, message: 'No active closure found' });
+    }
+
+    const reopenTime = new Date();
+
+    let extensionDays = 0;
+    let missedMeals   = 0;
+    let breakdown     = [];
+
+    if (closure.closureType === 'emergency') {
+      // Use closedAt (exact close time), not startDate (UTC midnight)
+      const closeTime = new Date(closure.closedAt || closure.startDate);
+      const result    = calculateMissedMeals(closeTime, reopenTime);
+      extensionDays   = result.extensionDays;
+      missedMeals     = result.missedMeals;
+      breakdown       = result.breakdown;
+
+      console.log(`[emergencyReopen] vendor=${vendor._id} kitchen=${vendor.kitchenName}`);
+      console.log(`[emergencyReopen] closeTime=${closeTime.toISOString()} reopenTime=${reopenTime.toISOString()}`);
+      console.log(`[emergencyReopen] missedMeals=${missedMeals} extensionDays=${extensionDays}`);
+      console.log(`[emergencyReopen] breakdown=${JSON.stringify(breakdown)}`);
+    }
+
+    if (closure.closureType === 'planned') {
+      console.log(`[plannedReopen] vendor=${vendor._id} — planned closure cleared, no re-extension`);
+    }
+
+    // Clear closure state first — vendor is open again
+    vendor.isOpen = true;
+    vendor.currentClosure = {
+      isActive:      false,
+      startDate:     null,
+      endDate:       null,
+      reason:        null,
+      closureType:   null,
+      closedAt:      null,
+      missedMeals:   null,
+      extensionDays: null
+    };
+    await vendor.save();
+
+    // Extend orders only for emergency (planned orders were extended at close time)
+    if (closure.closureType === 'emergency') {
+      await extendAllPlansOnClosure(vendor._id, extensionDays);
+    }
+
+    // Send reopen notification with accurate meal info
+    const { sendKitchenReopenEmail } = require('../cron/kitchenClosureCron');
+    sendKitchenReopenEmail(vendor._id, vendor.kitchenName, closure.closureType, {
+      missedMeals, extensionDays
+    }).catch(err => console.error('[reopenKitchen] Email failed:', err.message));
+
+    const io = req.app.get('io');
+    if (io) {
+      const activeOrders = await Order.find({ vendorId: vendor._id, status: 'active', endDate: { $gte: new Date() } });
+      for (const order of activeOrders) {
+        if (order.userId) {
+          io.to(order.userId.toString()).emit('subscription_updated', {
+            type:    'plan_extended',
+            message: extensionDays > 0
+              ? `${vendor.kitchenName} has reopened! Your plan was extended by ${extensionDays} days.`
+              : `${vendor.kitchenName} has reopened!`
+          });
+        }
+      }
+    }
+
+    return res.json({
+      success:       true,
+      message:       'Kitchen reopened successfully',
+      missedMeals,
+      extensionDays
+    });
+  } catch (error) {
+    console.error('[reopenKitchen] Error:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -1681,12 +2068,17 @@ module.exports = {
   getCommissionSummary,
   getPendingPayout,
   getMyCommissions,
-  payCommission,
   getAdminUpiId,
   getCashPayments,
   markCashPaymentPaid,
   createCommissionPaymentOrder,
-  verifyCommissionPaymentRazorpay
+  verifyCommissionPaymentRazorpay,
+  closeKitchenWithClosure,
+  reopenKitchen,
+  extendAllPlansOnClosure,
+  getWeekOrderBreakdown,
+  downloadSettlementInvoice,
+  raiseCommissionDispute
 };
 
 // ===== RAZORPAY COMMISSION PAYMENT =====
@@ -1765,19 +2157,36 @@ async function verifyCommissionPaymentRazorpay(req, res) {
     if (!commission) return res.status(404).json({ message: 'Commission not found' });
 
     await CommissionPayment.create({
-      vendorEarningId: commission._id,
-      vendorId:        vendor._id,
-      amountPaid:      commission.commission_amount,
-      paymentMethod:   'upi',
-      utrNumber:       razorpay_payment_id,
-      paidAt:          new Date(),
-      status:          'confirmed',
-      verifiedAt:      new Date()
+      vendorEarningId:   commission._id,
+      vendorId:          vendor._id,
+      amountPaid:        commission.commission_amount,
+      paymentMethod:     'upi',
+      utrNumber:         razorpay_payment_id,
+      razorpayOrderId:   razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      paidAt:            new Date(),
+      status:            'confirmed',
+      verifiedAt:        new Date()
+    });
+
+    const paymentTime = new Date();
+    const isPaidOnTime = paymentTime <= new Date(commission.due_date);
+
+    if (!commission.auditLog) commission.auditLog = [];
+    commission.auditLog.push({
+      action:      'paid',
+      performedBy: 'vendor',
+      at:          paymentTime,
+      note:        `Paid via Razorpay. On time: ${isPaidOnTime}`,
+      valueBefore: { status: commission.status },
+      valueAfter:  { status: 'paid', paymentReference: razorpay_payment_id }
     });
 
     commission.status            = 'paid';
-    commission.payment_date      = new Date();
-    commission.admin_verified_at = new Date();
+    commission.payment_date      = paymentTime;
+    commission.paidOnTime        = isPaidOnTime;
+    commission.paymentReference  = razorpay_payment_id;
+    commission.admin_verified_at = paymentTime;
     commission.rejectionReason   = null;
     await commission.save();
 
@@ -1815,3 +2224,174 @@ async function verifyCommissionPaymentRazorpay(req, res) {
   }
 }
 
+// @desc  Vendor raises dispute on a settlement
+// @route POST /api/vendor/commission/:commissionId/dispute
+async function raiseCommissionDispute(req, res) {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { commissionId } = req.params;
+    const { note }         = req.body;
+
+    if (!note || !note.trim()) {
+      return res.status(400).json({ message: 'Dispute note is required' });
+    }
+
+    const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id });
+    if (!commission) return res.status(404).json({ message: 'Settlement not found' });
+    if (commission.status === 'paid') {
+      return res.status(400).json({ message: 'Cannot dispute a paid settlement' });
+    }
+    if (commission.disputeStatus === 'raised') {
+      return res.status(400).json({ message: 'Dispute already raised for this settlement' });
+    }
+
+    commission.disputeStatus   = 'raised';
+    commission.disputeNote     = note.trim();
+    commission.disputeRaisedAt = new Date();
+    if (!commission.auditLog) commission.auditLog = [];
+    commission.auditLog.push({
+      action:      'disputed',
+      performedBy: `vendor:${vendor._id}`,
+      at:          new Date(),
+      note:        `Vendor raised dispute: ${note.trim()}`,
+      valueBefore: { disputeStatus: null },
+      valueAfter:  { disputeStatus: 'raised' }
+    });
+
+    await commission.save();
+    return res.json({ success: true, message: 'Dispute raised successfully' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+}
+
+// @desc  Order breakdown for a specific commission week
+// @route GET /api/vendor/commission/week-orders
+async function getWeekOrderBreakdown(req, res) {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { weekStart, weekEnd } = req.query;
+    if (!weekStart || !weekEnd) {
+      return res.status(400).json({ message: 'weekStart and weekEnd are required' });
+    }
+
+    const start = new Date(weekStart);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(weekEnd);
+    end.setUTCHours(23, 59, 59, 999);
+
+    const orders = await Order.find({
+      vendorId: vendor._id,
+      status:   { $in: ['active', 'completed', 'trial'] },
+      createdAt: { $gte: start, $lte: end }
+    })
+      .populate('userId', 'name phone')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const commission = await Commission.findOne({
+      vendorId: vendor._id,
+      weekStart: { $gte: start },
+      weekEnd:   { $lte: end }
+    }).lean();
+
+    const commissionRate = commission?.commission_rate || 5;
+    const grossEarnings  = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
+    const commissionAmt  = commission?.commission_amount ||
+                           Math.round(grossEarnings * commissionRate / 100);
+    const netEarnings    = grossEarnings - commissionAmt;
+
+    const orderBreakdown = orders.map(order => ({
+      orderId:       order._id,
+      orderDate:     order.createdAt,
+      customerName:  order.userId?.name || 'Customer',
+      customerPhone: order.userId?.phone || '',
+      planType:      order.planType,
+      grossAmount:   order.amount || 0,
+      commissionRate,
+      commissionCut: Math.round((order.amount || 0) * commissionRate / 100),
+      netAmount:     (order.amount || 0) - Math.round((order.amount || 0) * commissionRate / 100),
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus
+    }));
+
+    return res.json({
+      success:          true,
+      weekStart:        start,
+      weekEnd:          end,
+      weekKey:          commission?.week || '',
+      totalOrders:      orders.length,
+      grossEarnings,
+      commissionRate,
+      commissionAmount: commissionAmt,
+      netEarnings,
+      commissionStatus: commission?.status || 'pending',
+      dueDate:          commission?.due_date || null,
+      settlementId:     commission?._id || null,
+      orders:           orderBreakdown
+    });
+  } catch (err) {
+    console.error('[getWeekOrderBreakdown]', err);
+    return res.status(500).json({ message: err.message });
+  }
+}
+
+// @desc  Download PDF settlement invoice for a commission week
+// @route GET /api/vendor/commission/invoice/:commissionId
+async function downloadSettlementInvoice(req, res) {
+  try {
+    const { generateSettlementInvoicePDF } = require('../utils/invoicePdfGenerator');
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { commissionId } = req.params;
+    const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id }).lean();
+    if (!commission) return res.status(404).json({ message: 'Settlement not found' });
+
+    const start = new Date(commission.weekStart);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(commission.weekEnd);
+    end.setUTCHours(23, 59, 59, 999);
+
+    const orders = await Order.find({
+      vendorId: vendor._id,
+      status:   { $in: ['active', 'completed', 'trial'] },
+      createdAt: { $gte: start, $lte: end }
+    })
+      .populate('userId', 'name')
+      .lean();
+
+    const commissionRate = commission.commission_rate || 5;
+    const orderBreakdown = orders.map(o => ({
+      orderDate:     o.createdAt,
+      customerName:  o.userId?.name || 'Customer',
+      planType:      o.planType,
+      grossAmount:   o.amount || 0,
+      commissionCut: Math.round((o.amount || 0) * commissionRate / 100),
+      netAmount:     (o.amount || 0) - Math.round((o.amount || 0) * commissionRate / 100)
+    }));
+
+    generateSettlementInvoicePDF(res, {
+      settlementId:     commission._id,
+      vendorName:       vendor.kitchenName,
+      vendorAddress:    vendor.address,
+      weekStart:        commission.weekStart,
+      weekEnd:          commission.weekEnd,
+      orders:           orderBreakdown,
+      grossEarnings:    commission.total_earning,
+      commissionRate,
+      commissionAmount: commission.commission_amount,
+      netEarnings:      commission.total_earning - commission.commission_amount,
+      commissionStatus: commission.status,
+      dueDate:          commission.due_date,
+      generatedAt:      new Date()
+    });
+  } catch (err) {
+    console.error('[downloadSettlementInvoice]', err);
+    return res.status(500).json({ message: err.message });
+  }
+}

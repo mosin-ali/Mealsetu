@@ -21,7 +21,28 @@ pincode: { type: String },
   // --- Status & Wallet ---
   closureStartDate: { type: Date }, // Tracks when shop was closed
   closureEndDate: { type: Date },   // Optional: when shop is expected to reopen
-  
+
+  plannedClosures: [
+    {
+      startDate:   { type: Date, required: true },
+      endDate:     { type: Date, required: true },
+      reason:      { type: String, default: 'Holiday' },
+      closureType: { type: String, enum: ['planned', 'emergency'], default: 'planned' },
+      notifiedAt:  { type: Date, default: null },
+      createdAt:   { type: Date, default: Date.now }
+    }
+  ],
+  currentClosure: {
+    isActive:      { type: Boolean, default: false },
+    startDate:     { type: Date,    default: null  },
+    endDate:       { type: Date,    default: null  },
+    reason:        { type: String,  default: null  },
+    closureType:   { type: String,  default: null  },
+    closedAt:      { type: Date,    default: null  }, // exact close timestamp (emergency: precise; planned: start of day)
+    missedMeals:   { type: Number,  default: null  }, // null for emergency until reopen
+    extensionDays: { type: Number,  default: null  }  // null for emergency until reopen
+  },
+
   approvalStatus: { 
     type: String, 
     enum: ['Pending', 'Approved', 'Rejected'], 

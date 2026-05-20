@@ -20,6 +20,7 @@ const { startTrialExpiryCron } = require('./cron/trialExpiry');
 const { startUserActivityCron } = require('./cron/userActivityCron');
 const { verifyEmailConnection } = require('./utils/emailUtils');
 const { startWeeklyCommissionCron } = require('./cron/weeklyCommission');
+const { startKitchenClosureCron, runAutoReopen } = require('./cron/kitchenClosureCron');
 
 // ===== SEED DEFAULT COMMISSION TIERS =====
 const seedDefaultTiers = async () => {
@@ -235,9 +236,13 @@ const startServer = async () => {
       // This activates orders that are stuck as pending where startDate <= today
       const { fixStuckOrders } = require('./controllers/userController');
       fixStuckOrders().catch(err => console.error('Error running fixStuckOrders on startup:', err));
+      runAutoReopen().catch(err => console.error('Error running runAutoReopen on startup:', err));
 
       // Start weekly commission cron
       startWeeklyCommissionCron();
+
+      // Start kitchen closure advance-notification cron
+      startKitchenClosureCron();
 
       console.log('⏰ All cron jobs started');
     });

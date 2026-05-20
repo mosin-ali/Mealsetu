@@ -578,11 +578,26 @@ const markCommissionPaid = async (req, res) => {
     if (!commission) {
       return res.status(404).json({ message: 'Commission not found' });
     }
-    
-    commission.status = 'paid';
-    commission.paidAt = new Date();
+
+    const now       = new Date();
+    const prevStatus = commission.status;
+
+    commission.status           = 'paid';
+    commission.payment_date     = now;
+    commission.paidOnTime       = now <= new Date(commission.due_date);
+    commission.paymentReference = `ADMIN-MANUAL-${now.getTime()}`;
+
+    if (!commission.auditLog) commission.auditLog = [];
+    commission.auditLog.push({
+      action:      'marked_paid',
+      performedBy: `admin:${req.user?._id || 'unknown'}`,
+      at:          now,
+      note:        'Manually marked as paid by admin',
+      valueBefore: { status: prevStatus },
+      valueAfter:  { status: 'paid', payment_date: now }
+    });
+
     await commission.save();
-    
     res.status(200).json(commission);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -679,13 +694,21 @@ const getCommissionVendors = async (req, res) => {
       },
       {
         $project: {
-          vendor_name: '$vendor.kitchenName',
-          month: 1,
-          week: 1,
-          total_earning: 1,
-          commission_rate: 1,
+          vendor_name:       '$vendor.kitchenName',
+          vendorId:          1,
+          month:             1,
+          week:              1,
+          weekStart:         1,
+          weekEnd:           1,
+          total_earning:     1,
+          commission_rate:   1,
           commission_amount: 1,
-          status: 1,
+          status:            1,
+          due_date:          1,
+          payment_date:      1,
+          paidOnTime:        1,
+          financialYear:     1,
+          disputeStatus:     1,
           payment_id:     { $ifNull: ['$latestPayment._id', null] },
           amount_paid:    { $ifNull: ['$latestPayment.amountPaid', 0] },
           payment_status: '$latestPayment.status',
@@ -708,131 +731,73 @@ const getCommissionVendors = async (req, res) => {
   }
 };
 
-// @desc    Verify commission payment
-// @route   POST /api/admin/commission/verify/:paymentId
-const verifyCommissionPayment = async (req, res) => {
-  try {
-    const { paymentId } = req.params;
-    const { action } = req.body; // 'confirm' or 'reject'
-    
-    const payment = await CommissionPayment.findById(paymentId).populate('vendorEarningId');
-    
-    if (!payment) {
-      return res.status(404).json({ message: 'Payment not found' });
-    }
-    
-    if (action === 'confirm') {
-      payment.status = 'confirmed';
-      payment.verifiedByAdmin = req.user._id;
-      payment.verifiedAt = new Date();
-      await payment.save();
-      
-      // Update commission
-      payment.vendorEarningId.status = 'paid';
-      payment.vendorEarningId.adminVerifiedAt = new Date();
-      await payment.vendorEarningId.save();
-      
-      // Email vendor
-      const vendor = await Vendor.findById(payment.vendorId).populate('ownerId');
-      if (vendor.ownerId.email) {
-        await sendEmail(
-          vendor.ownerId.email,
-          'Commission Payment Verified',
-          `<p>Your payment of ₹${payment.amountPaid} has been verified by admin.</p>`
-        );
-      }
-      
-      const io = req.app.get('io');
-      if (io) {
-        io.to(`vendor_${payment.vendorId}`).emit('commission_updated', {
-          status: 'paid',
-          message: 'Your commission payment has been verified!'
-        });
-        io.to('admin_room').emit('commission_list_updated', {});
-      }
-
-      res.json({ message: 'Payment verified successfully' });
-    } else if (action === 'reject') {
-      const notes = req.body.notes || '';
-
-      // Update CommissionPayment
-      payment.status = 'rejected';
-      payment.notes  = notes;
-      await payment.save();
-
-      // Reset Commission status back to 'pending' so vendor can re-submit
-      const commission = payment.vendorEarningId;
-      commission.status            = 'pending';
-      commission.rejectionReason   = notes || 'Payment proof was rejected by admin.';
-      commission.payment_proof_url = null;
-      commission.payment_date      = null;
-      await commission.save();
-
-      // Email vendor about rejection with reason
-      try {
-        const vendor = await Vendor.findById(payment.vendorId)
-          .populate('ownerId', 'email name');
-        if (vendor?.ownerId?.email) {
-          await sendEmail(
-            vendor.ownerId.email,
-            'MealSetu — Commission Payment Proof Rejected',
-            `<div style="font-family:Arial,sans-serif;max-width:600px">
-              <h2 style="color:#dc2626">Payment Proof Rejected</h2>
-              <p>Dear ${vendor.ownerId.name},</p>
-              <p>Your commission payment proof was reviewed and could not be accepted.</p>
-              <div style="background:#fef2f2;border-left:4px solid #dc2626;
-                          padding:16px;margin:20px 0;border-radius:0 8px 8px 0">
-                <strong>Reason:</strong><br/><br/>
-                ${notes || 'Payment proof was not accepted.'}
-              </div>
-              <p>Please submit a new payment screenshot from your Commission tab.</p>
-              <p style="color:#64748b;font-size:13px">Thank you — MealSetu Team</p>
-            </div>`
-          );
-        }
-      } catch (emailErr) {
-        console.error('Email failed:', emailErr.message);
-      }
-
-      const io = req.app.get('io');
-      if (io) {
-        io.to(`vendor_${payment.vendorId}`).emit('commission_updated', {
-          status: 'rejected',
-          message: 'Your commission payment was rejected. Please resubmit.'
-        });
-        io.to('admin_room').emit('commission_list_updated', {});
-      }
-
-      return res.json({ message: 'Payment rejected. Vendor notified.' });
-    } else {
-      res.status(400).json({ message: 'Invalid action' });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error' });
-  }
-};
-
-
-
 // @desc    Get commission report CSV
 // @route   GET /api/admin/commission/report/csv
 const getCommissionReportCSV = async (req, res) => {
   try {
-    const commissions = await Commission.find({})
-      .populate('vendorId', 'kitchenName')
+    const { month, status } = req.query;
+
+    const query = {};
+    if (status && status !== 'all') query.status = status;
+    if (month) {
+      const [year, mon] = month.split('-').map(Number);
+      const monthStart  = new Date(Date.UTC(year, mon - 1, 1));
+      const monthEnd    = new Date(Date.UTC(year, mon, 0, 23, 59, 59, 999));
+      query.weekStart   = { $gte: monthStart, $lte: monthEnd };
+    }
+
+    const commissions = await Commission.find(query)
+      .populate('vendorId', 'kitchenName address')
+      .sort({ weekStart: -1 })
       .lean();
-    
-    let csv = 'Vendor,Month,Total Orders,Total Earning,Rate,Commission Amount,Status,Due Date\n';
-    
-    commissions.forEach(c => {
-      csv += `"${c.vendorId.kitchenName}","${c.month}",${c.total_orders},"₹${c.total_earning}",${c.commission_rate}%,₹${c.commission_amount},"${c.status}","${c.due_date?.toLocaleDateString() || ''}"\n`;
-    });
-    
-    res.header('Content-Type', 'text/csv');
-    res.attachment('mealsetu-commissions.csv');
-    res.send(csv);
-  } catch (error) {
-    res.status(500).json({ message: 'CSV generation failed' });
+
+    const rows = [
+      [
+        'Settlement ID', 'Vendor Name', 'Week',
+        'Week Start', 'Week End', 'Total Orders',
+        'Total Earning (INR)', 'Commission Rate (%)', 'Commission Amount (INR)',
+        'Net Payout (INR)', 'Status', 'Due Date', 'Payment Date', 'Paid On Time'
+      ],
+      ...commissions.map(c => [
+        c.settlementNumber || `MS-${c.financialYear || 'FY'}-${c.week || ''}`,
+        c.vendorId?.kitchenName || 'Unknown Vendor',
+        c.week || '',
+        c.weekStart ? new Date(c.weekStart).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '',
+        c.weekEnd   ? new Date(c.weekEnd).toLocaleDateString('en-IN',   { day: '2-digit', month: '2-digit', year: 'numeric' }) : '',
+        c.total_orders      ?? 0,
+        c.total_earning     ?? 0,
+        c.commission_rate   ?? 0,
+        c.commission_amount ?? 0,
+        (c.total_earning ?? 0) - (c.commission_amount ?? 0),
+        c.status || 'pending',
+        c.due_date     ? new Date(c.due_date).toLocaleDateString('en-IN',     { day: '2-digit', month: '2-digit', year: 'numeric' }) : '',
+        c.payment_date ? new Date(c.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '',
+        c.paidOnTime === true ? 'Yes' : c.paidOnTime === false ? 'No' : 'N/A'
+      ])
+    ];
+
+    const csvContent = rows
+      .map(row =>
+        row.map(cell => {
+          const str = String(cell ?? '');
+          return str.includes(',') || str.includes('\n')
+            ? `"${str.replace(/"/g, '""')}"`
+            : str;
+        }).join(',')
+      )
+      .join('\n');
+
+    const BOM = '﻿';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="MealSetu_Commission_${month || new Date().toISOString().split('T')[0]}.csv"`
+    );
+    return res.send(BOM + csvContent);
+
+  } catch (err) {
+    console.error('[getCommissionReportCSV]', err);
+    return res.status(500).json({ message: err.message });
   }
 };
 
@@ -862,107 +827,171 @@ const seedDefaultTiers = async (req, res) => {
   }
 };
 
-// @desc    AI analysis of vendor commission payment screenshot
-// @route   POST /api/admin/commission/verify-screenshot
-const verifyScreenshot = async (req, res) => {
+// @desc    Get full week-by-week commission history for one vendor
+// @route   GET /api/admin/commission/vendor/:vendorId
+const getVendorCommissionDetail = async (req, res) => {
   try {
-    const { proofUrl } = req.body;
-    if (!proofUrl) return res.status(400).json({ message: 'proofUrl required' });
+    console.log('=== getVendorCommissionDetail CALLED ===');
+    console.log('vendorId param:', req.params.vendorId, '| type:', typeof req.params.vendorId);
+    const { vendorId } = req.params;
+    const vendor  = await Vendor.findById(vendorId).select('kitchenName address');
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
 
-    // Basic checks — always run, no API key needed
-    const basicChecks = {
-      hasValidExtension: /\.(jpg|jpeg|png|webp)$/i.test(proofUrl),
-      filenamePattern:   /screenshot|screen|payment|txn|upi/i.test(proofUrl),
-      pathIsUpload:      proofUrl.includes('/uploads/'),
-    };
-    const basicScore = Object.values(basicChecks).filter(Boolean).length;
+    const history = await Commission.find({ vendorId }).sort({ weekStart: -1, createdAt: -1 }).lean();
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.json({
-        fallback: false,
-        aiAvailable: false,
-        isLikelyReal: basicScore >= 2,
-        confidence: 'low',
-        recommendation: 'review',
-        reason: 'Basic file check only — Gemini API not configured for deep analysis.',
-        signals: [
-          basicChecks.hasValidExtension ? '✓ Valid image format' : '✗ Unexpected file format',
-          basicChecks.pathIsUpload      ? '✓ File uploaded through system' : '✗ Unusual file path',
-          'Manual review recommended for payment confirmation'
-        ]
-      });
-    }
-
-    const fullImageUrl = proofUrl.startsWith('http')
-      ? proofUrl
-      : `${process.env.BACKEND_URL || 'http://localhost:5000'}${proofUrl}`;
-
-    const imageResponse = await fetch(fullImageUrl);
-    if (!imageResponse.ok) {
-      return res.status(400).json({ message: 'Could not fetch proof image' });
-    }
-
-    const imageBuffer = await imageResponse.arrayBuffer();
-    const base64Image  = Buffer.from(imageBuffer).toString('base64');
-    const mimeType     = imageResponse.headers.get('content-type') || 'image/jpeg';
-
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inline_data: { mime_type: mimeType, data: base64Image } },
-              {
-                text: `Analyze this UPI payment screenshot for authenticity.
-Reply ONLY with valid JSON, no markdown:
-{
-  "isLikelyReal": true,
-  "confidence": "high",
-  "recommendation": "approve",
-  "reason": "one sentence",
-  "signals": ["observation 1", "observation 2", "observation 3"]
-}
-recommendation must be one of: approve, review, reject
-Check: UPI app branding (GPay/PhonePe/Paytm), transaction ID (12+ digits),
-timestamp, amount display, success screen UI, image compression artifacts.`
-              }
-            ]
-          }],
-          generationConfig: { maxOutputTokens: 400, temperature: 0.1 }
-        })
-      }
-    );
-
-    const geminiData = await geminiResponse.json();
-    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    let analysis;
-    try {
-      analysis = JSON.parse(rawText.replace(/```json|```/g, '').trim());
-    } catch {
-      analysis = {
-        isLikelyReal: null, confidence: 'low',
-        recommendation: 'review',
-        reason: 'Could not parse AI response.',
-        signals: []
-      };
-    }
-
-    if (!['approve', 'review', 'reject'].includes(analysis.recommendation)) {
-      analysis.recommendation = 'review';
-    }
-
-    return res.json({ ...analysis, fallback: false, aiAvailable: true, provider: 'Gemini 1.5 Flash' });
-
-  } catch (error) {
-    console.error('verifyScreenshot error:', error);
-    return res.status(500).json({
-      fallback: true, message: 'Verification failed',
-      recommendation: 'review',
-      reason: 'Server error during analysis. Review manually.'
+    const rawHistory = await Commission.find({ vendorId }).lean();
+    console.log('=== COMMISSION QUERY ===', {
+      vendorIdQueried: vendorId,
+      recordsFound:    rawHistory.length,
+      records:         rawHistory.map(c => ({
+        id:               c._id,
+        week:             c.week,
+        amount:           c.commission_amount,
+        status:           c.status,
+        vendorIdOnRecord: c.vendorId
+      }))
     });
+
+    const totalPaid    = history.filter(h => h.status === 'paid').reduce((s, h) => s + (h.commission_amount || 0), 0);
+    const totalPending = history.filter(h => h.status !== 'paid').reduce((s, h) => s + (h.commission_amount || 0), 0);
+    const overdueCount = history.filter(h => h.status === 'overdue').length;
+
+    return res.json({
+      success: true,
+      vendor:  { _id: vendor._id, kitchenName: vendor.kitchenName, address: vendor.address },
+      summary: { totalPaid, totalPending, overdueCount, totalWeeks: history.length },
+      history
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Download CSV report for one vendor's commission history
+// @route   GET /api/admin/commission/vendor/:vendorId/report
+const downloadVendorCommissionReport = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const vendor  = await Vendor.findById(vendorId).select('kitchenName');
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
+
+    const history = await Commission.find({ vendorId }).sort({ weekStart: 1 }).lean();
+
+    const rows = [
+      ['Week', 'Period Start', 'Period End', 'Earnings', 'Rate %', 'Commission', 'Due Date', 'Status', 'Paid Date'],
+      ...history.map(h => [
+        h.week || h.month,
+        h.weekStart ? new Date(h.weekStart).toLocaleDateString('en-IN') : '-',
+        h.weekEnd   ? new Date(h.weekEnd).toLocaleDateString('en-IN')   : '-',
+        h.total_earning,
+        h.commission_rate,
+        h.commission_amount,
+        h.due_date      ? new Date(h.due_date).toLocaleDateString('en-IN')      : '-',
+        h.status,
+        h.payment_date  ? new Date(h.payment_date).toLocaleDateString('en-IN')  : '-'
+      ])
+    ];
+
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const filename = `commission_${vendor.kitchenName.replace(/\s+/g, '_')}_${Date.now()}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(csv);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc  Admin view of order breakdown for a vendor for a specific week
+// @route GET /api/admin/commission/vendor/:vendorId/week-orders
+const getAdminVendorWeekOrders = async (req, res) => {
+  try {
+    const { vendorId }           = req.params;
+    const { weekStart, weekEnd } = req.query;
+
+    if (!weekStart || !weekEnd) {
+      return res.status(400).json({ message: 'weekStart and weekEnd are required' });
+    }
+
+    const start = new Date(weekStart);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(weekEnd);
+    end.setUTCHours(23, 59, 59, 999);
+
+    const orders = await Order.find({
+      vendorId,
+      status:    { $in: ['active', 'completed', 'trial'] },
+      createdAt: { $gte: start, $lte: end }
+    })
+      .populate('userId', 'name phone')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const commission = await Commission.findOne({
+      vendorId,
+      weekStart: { $gte: start },
+      weekEnd:   { $lte: end }
+    }).lean();
+
+    const commissionRate = commission?.commission_rate || 5;
+    const grossEarnings  = orders.reduce((s, o) => s + (o.amount || 0), 0);
+    const commissionAmt  = commission?.commission_amount ||
+                           Math.round(grossEarnings * commissionRate / 100);
+
+    return res.json({
+      success:          true,
+      weekStart:        start,
+      weekEnd:          end,
+      totalOrders:      orders.length,
+      grossEarnings,
+      commissionRate,
+      commissionAmount: commissionAmt,
+      netEarnings:      grossEarnings - commissionAmt,
+      commissionStatus: commission?.status,
+      settlementId:     commission?._id,
+      orders: orders.map(o => ({
+        orderId:       o._id,
+        orderDate:     o.createdAt,
+        customerName:  o.userId?.name || 'Customer',
+        planType:      o.planType,
+        grossAmount:   o.amount || 0,
+        commissionCut: Math.round((o.amount || 0) * commissionRate / 100),
+        netAmount:     (o.amount || 0) - Math.round((o.amount || 0) * commissionRate / 100),
+        paymentMethod: o.paymentMethod
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// @desc  Get CommissionPayment records for a vendor (admin)
+// @route GET /api/admin/commission/vendor/:vendorId/payments
+const getVendorPaymentHistory = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const payments = await CommissionPayment.find({ vendorId })
+      .sort({ paidAt: -1 })
+      .lean();
+
+    const enriched = await Promise.all(payments.map(async (p) => {
+      const commission = p.vendorEarningId
+        ? await Commission.findById(p.vendorEarningId)
+            .select('due_date paidOnTime week').lean()
+        : null;
+
+      return {
+        ...p,
+        paidOnTime: commission?.paidOnTime ?? null,
+        weekKey:    commission?.week        ?? null
+      };
+    }));
+
+    return res.json({ success: true, payments: enriched });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 };
 
@@ -988,10 +1017,12 @@ module.exports = {
   getCommissionTiers,
   updateCommissionTiers,
   getCommissionVendors,
-  verifyCommissionPayment,
   getCommissionReportCSV,
   seedDefaultTiers,
-  verifyScreenshot
+  getVendorCommissionDetail,
+  downloadVendorCommissionReport,
+  getAdminVendorWeekOrders,
+  getVendorPaymentHistory
 };
 
 
