@@ -27,6 +27,7 @@ const CommissionHistory = () => {
   const [history, setHistory]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [paymentError, setPaymentError] = useState(null);
   const [selectedWeek, setSelectedWeek]         = useState(null);
   const [weekOrders, setWeekOrders]             = useState(null);
   const [loadingBreakdown, setLoadingBreakdown] = useState(false);
@@ -107,17 +108,28 @@ const CommissionHistory = () => {
       rzp.open();
     } catch (error) {
       setSubmitting(false);
-      alert('Payment failed: ' + error.message);
+      const code    = error?.code || error?.response?.data?.code;
+      const message = error?.response?.data?.message || error?.message;
+      if (code === 'WEEK_STILL_OPEN' || code === 'NOT_LOCKED' || code === 'ALREADY_PAID') {
+        setPaymentError(message);
+        return;
+      }
+      setPaymentError('Payment failed. Please try again or contact support.');
     }
   };
 
-  // Split history: most recent unpaid or current = currentWeek, rest = pastWeeks
-  const currentWeek = history[0] || null;
-  const pastWeeks   = history.slice(1);
+  // Use the API's rolling-week calculation as the authoritative current week.
+  // This prevents a stale future-week draft from appearing as "current".
+  const currentWeek = summary?.currentWeek || null;
 
-  // For banners: most urgent unpaid commission
-  const urgentCommission = history.find(c => c.status === 'overdue') ||
-                           history.find(c => c.status === 'pending');
+  // History table excludes the current week (it's shown in the prominent card above).
+  const pastWeeks = currentWeek?.week
+    ? history.filter(h => h.week !== currentWeek.week)
+    : history;
+
+  // For banners: most urgent unpaid locked commission
+  const urgentCommission = history.find(c => c.status === 'overdue' && c.isLocked) ||
+                           history.find(c => c.status === 'pending' && c.isLocked);
 
   const handleWeekClick = async (commission) => {
     if (!commission.weekStart || !commission.weekEnd) return;
@@ -234,22 +246,30 @@ const CommissionHistory = () => {
         </div>
       )}
 
-      {/* SUMMARY CARDS */}
+      {/* SUMMARY CARDS — current rolling week (from API) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className={`${styles.card} ${styles.cardGreen}`}>
           <h3>Total Earnings</h3>
           <div className="amount">₹{(summary?.currentWeek?.total_earning || 0).toLocaleString('en-IN')}</div>
-          <small>This Week</small>
+          <small>{summary?.currentWeek?.isWeekOpen ? 'Live estimate' : 'This week (closed)'}</small>
         </div>
         <div className={`${styles.card} ${styles.cardAmber}`}>
           <h3>Commission Rate</h3>
           <div className="amount">{summary?.currentWeek?.commission_rate || 0}%</div>
-          <small>{summary?.currentWeek?.tierSnapshot?.tierName}</small>
+          <small>{summary?.currentWeek?.tierSnapshot?.tierName || 'Starter tier'}</small>
         </div>
         <div className={`${styles.card} ${styles.cardRed}`}>
-          <h3>Commission Due</h3>
+          <h3>Commission {summary?.currentWeek?.status === 'paid' ? 'Paid' : 'Due'}</h3>
           <div className="amount">₹{(summary?.currentWeek?.commission_amount || 0).toLocaleString('en-IN')}</div>
-          <small>{summary?.currentWeek?.status === 'paid' ? 'Paid' : summary?.currentWeek?.status === 'overdue' ? 'Overdue' : 'Pending'}</small>
+          <small>
+            {summary?.currentWeek?.status === 'paid'
+              ? `Paid ${summary?.currentWeek?.payment_date ? shortDate(summary.currentWeek.payment_date) : ''}`
+              : summary?.currentWeek?.status === 'overdue'
+              ? 'Overdue — pay now'
+              : summary?.currentWeek?.isWeekOpen
+              ? 'Estimate (week open)'
+              : 'Pending payment'}
+          </small>
         </div>
         <div className={`${styles.card} ${styles.cardBlue}`}>
           <h3>Net Payout</h3>
@@ -262,15 +282,36 @@ const CommissionHistory = () => {
       {(summary?.lifetimeEarnings > 0) && (
         <div style={{
           display:             'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateColumns: 'repeat(4, 1fr)',
           gap:                 12,
           marginTop:           20,
           marginBottom:        4
         }}>
           {[
-            { label: 'LIFETIME EARNINGS',     value: `₹${(summary.lifetimeEarnings).toLocaleString('en-IN')}`,   color: '#374151', bg: '#f9fafb', border: '#e5e7eb' },
-            { label: 'TOTAL COMMISSION PAID', value: `₹${(summary.lifetimeCommission).toLocaleString('en-IN')}`, color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-            { label: 'NET EARNED (ALL TIME)', value: `₹${(summary.lifetimeNet).toLocaleString('en-IN')}`,        color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' }
+            {
+              label: 'LIFETIME EARNINGS',
+              value: `₹${(summary.lifetimeEarnings).toLocaleString('en-IN')}`,
+              sub: 'From all finalized weeks',
+              color: '#374151', bg: '#f9fafb', border: '#e5e7eb'
+            },
+            {
+              label: 'COMMISSION PAID',
+              value: `₹${(summary.lifetimeCommission).toLocaleString('en-IN')}`,
+              sub: 'Actually paid to MealSetu',
+              color: '#dc2626', bg: '#fef2f2', border: '#fecaca'
+            },
+            {
+              label: 'COMMISSION PENDING',
+              value: `₹${(summary.lifetimePending || 0).toLocaleString('en-IN')}`,
+              sub: 'Locked but not yet paid',
+              color: '#d97706', bg: '#fffbeb', border: '#fde68a'
+            },
+            {
+              label: 'NET EARNED (ALL TIME)',
+              value: `₹${(summary.lifetimeNet).toLocaleString('en-IN')}`,
+              sub: 'After deducting paid commission',
+              color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0'
+            }
           ].map(item => (
             <div key={item.label} style={{
               background:   item.bg,
@@ -280,6 +321,7 @@ const CommissionHistory = () => {
             }}>
               <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>{item.label}</p>
               <p style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 700, color: item.color }}>{item.value}</p>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>{item.sub}</p>
             </div>
           ))}
         </div>
@@ -358,21 +400,43 @@ const CommissionHistory = () => {
           </div>
 
           {currentWeek.status !== 'paid' && (
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>
-                Due by: <strong>{longDate(currentWeek.due_date)}</strong>
-              </p>
-              <button
-                onClick={() => handleRazorpayCommissionPayment(currentWeek)}
-                disabled={submitting}
-                style={{
-                  background: submitting ? '#9ca3af' : '#f97316', color: 'white',
-                  border: 'none', borderRadius: 8, padding: '10px 24px',
-                  fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 14
-                }}
-              >
-                {submitting ? 'Processing...' : `Pay ₹${currentWeek.commission_amount} via Razorpay`}
-              </button>
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f3f4f6' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>
+                  Due by: <strong>{longDate(currentWeek.due_date)}</strong>
+                </p>
+                {currentWeek.isLocked ? (
+                  <button
+                    onClick={() => { setPaymentError(null); handleRazorpayCommissionPayment(currentWeek); }}
+                    disabled={submitting}
+                    style={{
+                      background: submitting ? '#9ca3af' : '#f97316', color: 'white',
+                      border: 'none', borderRadius: 8, padding: '10px 24px',
+                      fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 14
+                    }}
+                  >
+                    {submitting ? 'Processing...' : `Pay ₹${currentWeek.commission_amount} via Razorpay`}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 13, color: '#9ca3af', fontStyle: 'italic' }}>
+                    Settlement finalizing — pay button activates after week closes
+                  </span>
+                )}
+              </div>
+              {paymentError && (
+                <div style={{
+                  background: '#fef2f2', border: '1px solid #fecaca',
+                  borderRadius: 8, padding: '10px 14px', marginTop: 10,
+                  fontSize: 13, color: '#dc2626', display: 'flex',
+                  justifyContent: 'space-between', alignItems: 'center'
+                }}>
+                  <span>⚠️ {paymentError}</span>
+                  <button
+                    onClick={() => setPaymentError(null)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}
+                  >✕</button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -382,7 +446,7 @@ const CommissionHistory = () => {
       {pastWeeks.length > 0 && (
         <div className={styles.sectionCard} style={{ marginTop: 24 }}>
           <div className={styles.sectionHeader}>
-            <h2>Commission History</h2>
+            <h2>Commission History ({pastWeeks.length})</h2>
             <button className={styles.refreshBtn} onClick={fetchCommissionData}>Refresh</button>
           </div>
           <div className="w-full overflow-x-auto">
@@ -454,7 +518,7 @@ const CommissionHistory = () => {
                             ? `✓ Paid${w.payment_date ? (paidOnTime ? ' on time' : ' late') + ' · ' + shortDate(w.payment_date) : ''}`
                             : w.status === 'overdue' ? 'Overdue' : 'Pending'}
                         </span>
-                        {(w.status === 'pending' || w.status === 'overdue') && (
+                        {(w.status === 'pending' || w.status === 'overdue') && w.isLocked && (
                           <button
                             onClick={() => handleRazorpayCommissionPayment(w)}
                             disabled={submitting}

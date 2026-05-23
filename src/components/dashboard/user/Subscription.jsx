@@ -662,40 +662,87 @@ const Subscription = ({
 
       {/* ── Leave / Pause Card ── */}
       <div className="subscription-card">
-        <h3>Schedule Leave / Pause</h3>
-        <div className="leave-form">
-          <div>
-            <label className="input-label">Start Date</label>
-            <input
-              type="date"
-              className="input-field date-input"
-              value={leaveStart}
-              onChange={(e) => onLeaveStartChange(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="input-label">End Date</label>
-            <input
-              type="date"
-              className="input-field date-input"
-              value={leaveEnd}
-              onChange={(e) => onLeaveEndChange(e.target.value)}
-            />
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0 }}>Schedule Leave / Pause</h3>
+          {currentSubscription && (
+            <span style={{
+              background: (currentSubscription.leavesUsed || 0) >= 2 ? '#fee2e2' : '#fef3c7',
+              color:      (currentSubscription.leavesUsed || 0) >= 2 ? '#dc2626' : '#92400e',
+              padding: '4px 10px',
+              borderRadius: '99px',
+              fontSize: '12px',
+              fontWeight: '600'
+            }}>
+              Leaves used: {currentSubscription.leavesUsed || 0} / 2
+            </span>
+          )}
         </div>
-        <label className="input-label">Which Meal to Skip?</label>
-        <select
-          className="input-field"
-          value={mealType}
-          onChange={(e) => onMealTypeChange(e.target.value)}
-        >
-          <option value="both">Both (Lunch &amp; Dinner)</option>
-          <option value="lunch">Lunch Only</option>
-          <option value="dinner">Dinner Only</option>
-        </select>
-        <button className="btn-primary apply-leave-btn" onClick={onApplyLeave}>
-          ⏸ Apply Leave &amp; Extend Plan
-        </button>
+
+        {currentSubscription && (currentSubscription.leavesUsed || 0) >= 2 ? (
+          <div style={{
+            background: '#fee2e2',
+            border: '1px solid #fca5a5',
+            borderRadius: '10px',
+            padding: '16px',
+            color: '#dc2626',
+            fontSize: '14px',
+            lineHeight: '1.6'
+          }}>
+            You have used all <strong>2 leaves</strong> for this subscription. Leave allowance resets when you start a new subscription plan.
+          </div>
+        ) : !currentSubscription ? (
+          <div style={{
+            background: '#fef3c7',
+            border: '1px solid #fcd34d',
+            borderRadius: '10px',
+            padding: '16px',
+            color: '#92400e',
+            fontSize: '14px'
+          }}>
+            You do not have an active or upcoming subscription. Please subscribe first to apply a leave.
+          </div>
+        ) : (
+          <>
+            <div className="leave-form">
+              <div>
+                <label className="input-label">Start Date</label>
+                <input
+                  type="date"
+                  className="input-field date-input"
+                  value={leaveStart}
+                  onChange={(e) => onLeaveStartChange(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div>
+                <label className="input-label">End Date</label>
+                <input
+                  type="date"
+                  className="input-field date-input"
+                  value={leaveEnd}
+                  onChange={(e) => onLeaveEndChange(e.target.value)}
+                  min={leaveStart || new Date().toISOString().split('T')[0]}
+                />
+              </div>
+            </div>
+            <label className="input-label">Which Meal to Skip?</label>
+            <select
+              className="input-field"
+              value={mealType}
+              onChange={(e) => onMealTypeChange(e.target.value)}
+            >
+              <option value="both">Both (Lunch &amp; Dinner)</option>
+              <option value="lunch">Lunch Only</option>
+              <option value="dinner">Dinner Only</option>
+            </select>
+            <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 12px' }}>
+              Leaves remaining: {2 - (currentSubscription.leavesUsed || 0)}. Your plan will be extended by the number of leave days.
+            </p>
+            <button className="btn-primary apply-leave-btn" onClick={onApplyLeave}>
+              Pause &amp; Extend Plan
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── Extend Plan Modal ── */}

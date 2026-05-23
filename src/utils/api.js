@@ -24,7 +24,10 @@ export const apiCall = async (endpoint, options = {}) => {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || data.error || 'API request failed');
+      const err = new Error(data.message || data.error || 'API request failed');
+      err.code = data.code || null;
+      err.data = data;
+      throw err;
     }
 
     return data;
@@ -504,13 +507,6 @@ export const updateAdminCommissionTiers = (tiers) => {
 export const getAdminCommissionVendors = (params = {}) => {
   const query = new URLSearchParams(params).toString();
   return apiCall(`/admin/commission/vendors?${query}`);
-};
-
-export const adminVerifyCommission = (paymentId, actionData) => {
-  return apiCall(`/admin/commission/verify/${paymentId}`, {
-    method: 'POST',
-    body: JSON.stringify(actionData),
-  });
 };
 
 export const downloadCommissionCSV = (month = '') => {

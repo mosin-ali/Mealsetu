@@ -93,7 +93,7 @@ export default function Login() {
       }
     } catch (error) {
       console.error("Login Error:", error);
-      setErrorMsg("Unable to connect to the server. Is the backend running?");
+      setErrorMsg("Unable to connect. Please check your internet connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -262,16 +262,14 @@ export default function Login() {
               disabled={loading}
             />
             
-            {role !== 'admin' && (
-              <div style={{ textAlign: 'right', marginTop: '8px' }}>
-                <span 
-                  onClick={() => setShowForgot(true)} 
-                  className="forgot-link-text"
-                >
-                  Forgot Password?
-                </span>
-              </div>
-            )}
+            <div style={{ textAlign: 'right', marginTop: '8px' }}>
+              <span
+                onClick={() => setShowForgot(true)}
+                className="forgot-link-text"
+              >
+                Forgot Password?
+              </span>
+            </div>
           </div>
 
           <button type="submit" className="btn-primary" disabled={loading}>

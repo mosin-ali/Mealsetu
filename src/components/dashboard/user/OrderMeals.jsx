@@ -18,10 +18,6 @@ const OrderMeals = ({
   const userTrialHistory = user?.trialHistory || [];
 
   const hasUsedTrial = (vendorId) => {
-  console.log("MenuType:", orderData.menuType);
-  console.log("Selected Day:", selectedMenuDay);
-  console.log("WeeklyPlan:", weeklyPlan?.[selectedMenuDay]);
-  console.log("JainPlan:", selectedTiffin?.jainWeeklyPlan?.[selectedMenuDay]);
     return userTrialHistory.some(trial =>
       trial.vendorId && trial.vendorId.toString() === vendorId.toString()
     );

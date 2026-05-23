@@ -380,9 +380,15 @@ export default function LandingPage() {
 
   useEffect(() => {
     fetch('/api/admin/public-contact')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to fetch contact info');
+        return r.json();
+      })
       .then(setAdminContact)
-      .catch(() => {});
+      .catch(() => {
+        // Use fallback contact — page still renders correctly
+        setAdminContact({ email: 'support@mealsetu.com', phone: '' });
+      });
   }, []);
 
   useEffect(() => {

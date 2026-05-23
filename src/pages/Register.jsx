@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { verifyRegisterOTP, resendRegisterOTP } from '../utils/api';
+import { useToast } from '../components/common/Toast';
 import './Register.css';
 
 export default function Register() {
+  const { showToast } = useToast();
   const [role, setRole] = useState('user');
   const [profilePic, setProfilePic] = useState(null);
   const [profilePicFile, setProfilePicFile] = useState(null);
@@ -100,10 +102,8 @@ export default function Register() {
       
       // Close modal
       setShowOTPModal(false);
-      
-      // Show success message and redirect to login page
-      alert('Email verified successfully! Please login with your credentials.');
-      navigate('/login');
+      showToast('Email verified successfully! Please login with your credentials.', 'success');
+      setTimeout(() => navigate('/login'), 1500);
     } catch (err) {
       setOtpError(err.message || 'Invalid OTP. Please try again.');
       // Shake animation
@@ -229,7 +229,7 @@ export default function Register() {
     // Password validation
     if (!formData.password) {
       newErrors.password = 'Password must be at least 8 characters and include 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character.';
-    } else if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#!!%^&*()]).{8,}$/.test(formData.password)) {
+    } else if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#!%^&*()\-_]).{8,}$/.test(formData.password)) {
       newErrors.password = 'Password must be at least 8 characters and include 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character.';
     }
 
