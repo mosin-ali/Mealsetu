@@ -61,100 +61,159 @@ const getUserSubscription = async (req, res) => {
   }
 };
 
-// @desc    Apply leave and extend subscription
+// @desc    Apply leave — max 2 leaves per subscription
+//          Active plan  → extend expiry by leave days
+//          Upcoming plan (pending) → shift start/end dates
+//          No plan      → return warning
 // @route   POST /api/users/apply-leave
+const MAX_LEAVES_PER_SUBSCRIPTION = 2;
+
 const applyLeave = async (req, res) => {
   try {
     const { leaveDate, leaveEndDate, mealType } = req.body;
     const userId = req.user._id;
 
     if (!leaveDate) {
-      return res.status(400).json({ message: 'Leave date is required' });
-    }
-
-    const subscription = await Subscription.findOne({
-      userId: userId,
-      status: 'active'
-    });
-
-    if (!subscription) {
-      return res.status(404).json({ message: 'No active subscription found' });
-    }
-
-    const now = new Date();
-    const expiryDate = new Date(subscription.expiryDate);
-
-    if (expiryDate < now) {
-      return res.status(400).json({ message: 'Cannot apply leave - your subscription has expired. Please renew your subscription first.' });
+      return res.status(400).json({ message: 'Leave start date is required' });
     }
 
     const startDate = new Date(leaveDate);
-    const endDate = leaveEndDate ? new Date(leaveEndDate) : startDate;
-    const diffTime = Math.abs(endDate - startDate);
-    const leaveDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = leaveEndDate ? new Date(leaveEndDate) : new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
 
-    const currentExpiry = new Date(subscription.expiryDate);
-    currentExpiry.setDate(currentExpiry.getDate() + leaveDays);
-
-    subscription.leaveDate = startDate;
-    subscription.expiryDate = currentExpiry;
-    await subscription.save();
-
-    const pendingOrders = await Order.find({
-      userId,
-      status: 'pending'
-    }).sort({ scheduledStartDate: 1 });
-
-    const DURATION_MAP = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
-    let chainEnd = new Date(currentExpiry);
-
-    for (const po of pendingOrders) {
-      const dur = DURATION_MAP[po.planType] ?? 7;
-      const newStart = new Date(chainEnd.getTime() + 86400000);
-      const newEnd   = new Date(newStart.getTime() + dur * 86400000);
-      po.scheduledStartDate = newStart;
-      po.scheduledEndDate   = newEnd;
-      po.startDate          = newStart;
-      po.endDate            = newEnd;
-      await po.save();
-      chainEnd = newEnd;
+    if (endDate < startDate) {
+      return res.status(400).json({ message: 'Leave end date cannot be before start date' });
     }
 
-    const user = await User.findById(userId);
-    if (user) {
-      user.expiryDate = currentExpiry;
-      await user.save();
+    const leaveDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const now = new Date();
+
+    // ── CASE 1: Active subscription ───────────────────────────────────────────
+    const activeSub = await Subscription.findOne({ userId, status: 'active' });
+
+    if (activeSub && new Date(activeSub.expiryDate) >= now) {
+      // Enforce 2-leave limit
+      if ((activeSub.leavesUsed || 0) >= MAX_LEAVES_PER_SUBSCRIPTION) {
+        return res.status(400).json({
+          message: `You have already used all ${MAX_LEAVES_PER_SUBSCRIPTION} leaves for this subscription. Leaves reset when you start a new subscription.`,
+          leavesUsed: activeSub.leavesUsed,
+          leavesAllowed: MAX_LEAVES_PER_SUBSCRIPTION
+        });
+      }
+
+      const originalExpiry = new Date(activeSub.expiryDate);
+      const newExpiry = new Date(originalExpiry);
+      newExpiry.setDate(newExpiry.getDate() + leaveDays);
+
+      activeSub.leaveDate = startDate;
+      activeSub.expiryDate = newExpiry;
+      activeSub.leavesUsed = (activeSub.leavesUsed || 0) + 1;
+      activeSub.leaveDates = activeSub.leaveDates || [];
+      activeSub.leaveDates.push({ startDate, endDate, days: leaveDays, appliedAt: now });
+      await activeSub.save();
+
+      // Shift any pending orders that come after this subscription
+      const pendingOrders = await Order.find({ userId, status: 'pending' }).sort({ scheduledStartDate: 1 });
+      const DURATION_MAP = { Weekly: 7, Monthly: 30, Trial: 1, Tiffin: 1 };
+      let chainEnd = new Date(newExpiry);
+      for (const po of pendingOrders) {
+        const dur = DURATION_MAP[po.planType] ?? 7;
+        const newStart = new Date(chainEnd.getTime() + 86400000);
+        const newEnd   = new Date(newStart.getTime() + dur * 86400000);
+        po.scheduledStartDate = newStart;
+        po.scheduledEndDate   = newEnd;
+        po.startDate          = newStart;
+        po.endDate            = newEnd;
+        await po.save();
+        chainEnd = newEnd;
+      }
+
+      // Sync expiry snapshot on User doc
+      await User.findByIdAndUpdate(userId, { expiryDate: newExpiry });
 
       try {
-        const emailSubject = 'MealSetu - Subscription Extended Successfully';
-        const emailHtml = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #333;">Subscription Extended Successfully!</h1>
-            <p>Dear ${user.name},</p>
-            <p>Your leave request has been processed successfully.</p>
-            <div style="background-color: #f5f5f5; padding: 20px; margin: 20px 0;">
-              <p><strong>Leave Period:</strong> ${startDate.toLocaleDateString()} ${leaveEndDate ? 'to ' + endDate.toLocaleDateString() : ''}</p>
-              <p><strong>Number of Days:</strong> ${leaveDays} day(s)</p>
-              <p><strong>Meals to Skip:</strong> ${mealType === 'both' ? 'Lunch & Dinner' : mealType === 'lunch' ? 'Lunch Only' : 'Dinner Only'}</p>
-              <p><strong>Previous Expiry:</strong> ${expiryDate.toLocaleDateString()}</p>
-              <p><strong>New Expiry Date:</strong> ${currentExpiry.toLocaleDateString()}</p>
+        const user = await User.findById(userId);
+        if (user) {
+          await sendEmail(user.email, 'MealSetu - Leave Applied & Subscription Extended', `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #EA580C;">Leave Applied Successfully!</h1>
+              <p>Dear ${user.name},</p>
+              <p>Your leave has been recorded and your subscription has been extended.</p>
+              <div style="background:#f5f5f5;padding:20px;margin:20px 0;border-radius:8px;">
+                <p><strong>Leave Period:</strong> ${startDate.toLocaleDateString('en-IN')} ${leaveEndDate ? '— ' + endDate.toLocaleDateString('en-IN') : ''}</p>
+                <p><strong>Days of Leave:</strong> ${leaveDays} day(s)</p>
+                <p><strong>Meals Skipped:</strong> ${mealType === 'both' ? 'Lunch & Dinner' : mealType === 'lunch' ? 'Lunch Only' : 'Dinner Only'}</p>
+                <p><strong>Old Expiry Date:</strong> ${originalExpiry.toLocaleDateString('en-IN')}</p>
+                <p><strong>New Expiry Date:</strong> ${newExpiry.toLocaleDateString('en-IN')}</p>
+                <p><strong>Leaves Used:</strong> ${activeSub.leavesUsed} / ${MAX_LEAVES_PER_SUBSCRIPTION}</p>
+              </div>
+              <p style="color:#999;font-size:12px;">Thank you for choosing MealSetu!</p>
             </div>
-            <p>Your subscription has been extended by ${leaveDays} day(s). Enjoy your break!</p>
-            <hr/>
-            <p style="color: #999; font-size: 12px;">Thank you for choosing MealSetu!</p>
-          </div>
-        `;
-        await sendEmail(user.email, emailSubject, emailHtml);
-      } catch (emailError) {
-        console.error('Failed to send confirmation email:', emailError);
+          `);
+        }
+      } catch (emailErr) {
+        console.error('Leave email failed:', emailErr);
       }
+
+      return res.status(200).json({
+        message: 'Leave applied successfully. Your active subscription has been extended.',
+        mode: 'active_extended',
+        newExpiryDate: newExpiry,
+        leaveDays,
+        leavesUsed: activeSub.leavesUsed,
+        leavesRemaining: MAX_LEAVES_PER_SUBSCRIPTION - activeSub.leavesUsed
+      });
     }
 
-    res.status(200).json({
-      message: 'Subscription extended successfully',
-      newExpiryDate: currentExpiry,
-      leaveDays: leaveDays
+    // ── CASE 2: No active plan — check for upcoming (pending) plan ────────────
+    const upcomingSub = await Subscription.findOne({
+      userId,
+      status: 'pending'
+    }).sort({ startDate: 1 });
+
+    if (upcomingSub) {
+      // Enforce 2-leave limit on upcoming subscription too
+      if ((upcomingSub.leavesUsed || 0) >= MAX_LEAVES_PER_SUBSCRIPTION) {
+        return res.status(400).json({
+          message: `You have already used all ${MAX_LEAVES_PER_SUBSCRIPTION} leaves for your upcoming subscription.`,
+          leavesUsed: upcomingSub.leavesUsed,
+          leavesAllowed: MAX_LEAVES_PER_SUBSCRIPTION
+        });
+      }
+
+      const originalStart = new Date(upcomingSub.startDate);
+      const originalEnd   = new Date(upcomingSub.expiryDate);
+
+      const newStart = new Date(originalStart);
+      newStart.setDate(newStart.getDate() + leaveDays);
+      const newEnd = new Date(originalEnd);
+      newEnd.setDate(newEnd.getDate() + leaveDays);
+
+      upcomingSub.startDate  = newStart;
+      upcomingSub.expiryDate = newEnd;
+      upcomingSub.leavesUsed = (upcomingSub.leavesUsed || 0) + 1;
+      upcomingSub.leaveDates = upcomingSub.leaveDates || [];
+      upcomingSub.leaveDates.push({ startDate, endDate, days: leaveDays, appliedAt: now });
+      await upcomingSub.save();
+
+      return res.status(200).json({
+        message: 'Leave applied. Your upcoming subscription start and end dates have been shifted forward.',
+        mode: 'upcoming_shifted',
+        newStartDate: newStart,
+        newExpiryDate: newEnd,
+        leaveDays,
+        leavesUsed: upcomingSub.leavesUsed,
+        leavesRemaining: MAX_LEAVES_PER_SUBSCRIPTION - upcomingSub.leavesUsed
+      });
+    }
+
+    // ── CASE 3: No plan at all ────────────────────────────────────────────────
+    return res.status(400).json({
+      message: 'You do not have any active or upcoming subscription. Please subscribe first before applying a leave.',
+      mode: 'no_plan'
     });
+
   } catch (error) {
     console.error('Apply leave error:', error);
     res.status(500).json({ message: 'Error processing leave request', error: error.message });
@@ -165,7 +224,12 @@ const applyLeave = async (req, res) => {
 // @route   POST /api/users/extend-subscription
 const extendSubscription = async (req, res) => {
   try {
-    const { plan, vendorId, paymentMethod = 'Cash' } = req.body;
+    const { plan, vendorId, paymentMethod = 'Cash', deliverySlot = 'Lunch', mealPreference = 'Regular' } = req.body;
+
+    // Enforce only Lunch or Dinner — no breakfast
+    if (!['Lunch', 'Dinner'].includes(deliverySlot)) {
+      return res.status(400).json({ message: 'Invalid delivery slot. Only Lunch and Dinner are available.' });
+    }
     const userId = req.user._id;
 
     if (!plan || !vendorId) {
@@ -278,8 +342,8 @@ const extendSubscription = async (req, res) => {
       userId: userId,
       vendorId,
       amount: amount,
-      deliverySlot: 'Lunch',
-      mealPreference: 'Regular',
+      deliverySlot: deliverySlot,
+      mealPreference: mealPreference,
       paymentStatus: paymentStatus,
       paymentMethod: paymentMethod,
       planType: planType
@@ -1616,6 +1680,13 @@ const getMySubscription = async (req, res) => {
 
     if (!activeOrder) return res.json(null);
 
+    // Fetch subscription record to get leavesUsed count
+    const activeSub = await Subscription.findOne({
+      userId,
+      status: { $in: ['active', 'pending'] }
+    }).sort({ createdAt: -1 });
+    const leavesUsed = activeSub?.leavesUsed || 0;
+
     // ✅ Fetch vendor pricing for frontend dynamic plan rendering
     const vendorPricingRecords = await VendorPricing.find({
       vendor_id: activeOrder.vendorId._id,
@@ -1648,7 +1719,9 @@ const getMySubscription = async (req, res) => {
       cashPaymentConfirmedAt: activeOrder.cashPaymentConfirmedAt || null,
       orderId: activeOrder._id,
       pricing,
-      startsTomorrow
+      startsTomorrow,
+      leavesUsed,
+      leavesAllowed: 2
     });
   } catch (error) {
     console.error('Get my subscription error:', error);

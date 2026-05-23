@@ -38,6 +38,9 @@ const userSchema = new mongoose.Schema({
   // --- Email Verification for Registration ---
   isVerified: { type: Boolean, default: false },
 
+  // --- Subscription snapshot (for quick dashboard reads) ---
+  expiryDate: { type: Date, default: null },
+
   // --- Trial History ---
   trialHistory: [{
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
@@ -46,5 +49,8 @@ const userSchema = new mongoose.Schema({
   lastActiveDate: { type: Date, default: null },
   isManualCustomer: { type: Boolean, default: false }
 });
+
+userSchema.index({ email: 1 });
+userSchema.index({ role: 1, isActive: 1 });
 
 module.exports = mongoose.model('User', userSchema);

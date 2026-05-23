@@ -586,6 +586,9 @@ const markCommissionPaid = async (req, res) => {
     commission.payment_date     = now;
     commission.paidOnTime       = now <= new Date(commission.due_date);
     commission.paymentReference = `ADMIN-MANUAL-${now.getTime()}`;
+    commission.isLocked         = true;
+    commission.lockedAt         = commission.lockedAt || now;
+    commission.lockedBy         = `admin:${req.user?._id || 'unknown'}`;
 
     if (!commission.auditLog) commission.auditLog = [];
     commission.auditLog.push({

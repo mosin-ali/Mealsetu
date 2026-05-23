@@ -115,6 +115,7 @@ const getAllCommissionWeeks = (onboardDate) => {
     weekEnd.setUTCHours(23, 59, 59, 999);
 
     const dueDate       = new Date(weekEnd);
+    dueDate.setUTCDate(dueDate.getUTCDate() + 7);
     const fyStart       = getFYStart(weekStart);
     const fyWeekNum     = Math.floor(
       (weekStart.getTime() - fyStart.getTime()) / (7 * 24 * 60 * 60 * 1000)

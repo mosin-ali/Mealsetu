@@ -120,7 +120,8 @@ rejectionReason: { type: String, default: null },
 }, { timestamps: true }
 );
 
-
+vendorSchema.index({ pincode: 1, isApproved: 1 });
+vendorSchema.index({ status: 1, isApproved: 1 });
 
 module.exports = mongoose.model('Vendor', vendorSchema);
 

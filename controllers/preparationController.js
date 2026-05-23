@@ -1,6 +1,6 @@
 const Order = require('../models/Order');
 const Vendor = require('../models/Vendor');
-const { LUNCH_CUTOFF_UTC_HOURS } = require('../utils/mealTimingUtils');
+const { LUNCH_CUTOFF_UTC_HOURS, DINNER_CUTOFF_UTC_HOURS } = require('../utils/mealTimingUtils');
 
 const getPreparationList = async (req, res) => {
   try {
@@ -39,10 +39,15 @@ const getPreparationList = async (req, res) => {
       return { total: group.length, regular: group.length - jain, jain };
     };
 
-    // Exclude from lunch any order whose startDate is today AND was
-    // placed after the lunch cutoff (10 AM IST / 04:30 UTC).
-    // These customers only receive dinner today; their endDate was already
-    // extended by +1 day in computeSubscriptionDates to compensate.
+    // Lunch eligibility rules (only matters when startDate === today):
+    //
+    //   'both'   slot: purchased before 10 AM IST (< 4.5 UTC)  → include lunch ✓
+    //   'dinner' slot: purchased 10 AM–5 PM IST (4.5–11.5 UTC) → skip lunch today ✗
+    //   'none'   slot: purchased after 5 PM IST  (≥ 11.5 UTC)  → startDate was deferred
+    //                  to today; user gets BOTH meals → include lunch ✓
+    //
+    // If startDate is NOT today the order has been active since a prior day — always
+    // include in lunch (its first-day slot has already passed).
     const lunchEligible = orders.filter(order => {
       const orderCreation = order.orderDate ? new Date(order.orderDate) : null;
       if (!orderCreation) return true;
@@ -54,6 +59,11 @@ const getPreparationList = async (req, res) => {
 
       const creationUTCHour =
         orderCreation.getUTCHours() + orderCreation.getUTCMinutes() / 60;
+
+      // 'none' slot: plan was deferred to today — full meals from day one.
+      if (creationUTCHour >= DINNER_CUTOFF_UTC_HOURS) return true;
+
+      // 'dinner' slot: only dinner was served on purchase day, skip lunch that same day.
       return creationUTCHour < LUNCH_CUTOFF_UTC_HOURS;
     });
 

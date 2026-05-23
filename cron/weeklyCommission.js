@@ -58,13 +58,13 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
         yesterdayDate.setUTCHours(0, 0, 0, 0);
         if (weekEndDate.getTime() !== yesterdayDate.getTime()) continue;
 
-        // Idempotency — skip if already generated
+        // Idempotency — skip only if already locked or paid (not unlocked drafts)
         const existing = await Commission.findOne({
           vendorId: vendor._id,
           week:     weekInfo.weekKey
         });
-        if (existing) {
-          console.log(`⏭️ Already exists: ${vendor.kitchenName} — ${weekInfo.weekKey}`);
+        if (existing?.isLocked || existing?.status === 'paid') {
+          console.log(`⏭️ [cron] ${vendor.kitchenName} — ${weekInfo.weekKey} already finalized, skip`);
           continue;
         }
 
@@ -89,43 +89,84 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
 
         const settlementNum = `MS-${weekInfo.financialYear}-W${String(weekInfo.fyWeekNumber).padStart(2,'0')}-${String(vendor._id).slice(-4).toUpperCase()}`;
 
-        const commission = await Commission.create({
-          vendorId:            vendor._id,
-          week:                weekInfo.weekKey,
-          month:               weekInfo.weekKey,
-          weekStart:           weekInfo.weekStart,
-          weekEnd:             weekInfo.weekEnd,
-          financialYear:       weekInfo.financialYear,
-          financialWeekNumber: weekInfo.fyWeekNumber,
-          total_orders:        weekOrders.length,
-          total_earning:       totalEarning,
-          commission_rate:     tier.ratePercent,
-          commission_amount:   commissionAmount,
-          status:              'pending',
-          due_date:            weekInfo.dueDate,
-          notes:               `Week: ${weekLabel}`,
-          isLocked:            true,
-          lockedAt:            new Date(),
-          lockedBy:            'cron',
-          settlementNumber:    settlementNum,
-          reminderCount:       0,
-          tierSnapshot: {
-            tierName:    tier.tierName    || 'Starter',
-            minEarning:  tier.minEarning  || 0,
-            maxEarning:  tier.maxEarning  || null,
-            ratePercent: tier.ratePercent || 3
-          },
-          auditLog: [{
-            action:      'created',
-            performedBy: 'cron',
-            at:          new Date(),
-            note:        `Week ${weekInfo.weekKey} locked by cron. Earnings: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
-            valueBefore: {},
-            valueAfter:  { isLocked: true, commission_amount: commissionAmount }
-          }]
-        });
+        const tierSnapshot = {
+          tierName:    tier.tierName    || 'Starter',
+          minEarning:  tier.minEarning  || 0,
+          maxEarning:  tier.maxEarning  || null,
+          ratePercent: tier.ratePercent || 3
+        };
 
-        console.log(`✅ Commission created: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
+        if (existing) {
+          // Update existing unlocked draft with final amounts and lock it
+          const updated = await Commission.findByIdAndUpdate(existing._id, {
+            $set: {
+              total_orders:        weekOrders.length,
+              total_earning:       totalEarning,
+              commission_rate:     tier.ratePercent,
+              commission_amount:   commissionAmount,
+              due_date:            weekInfo.dueDate,
+              isLocked:            true,
+              lockedAt:            now,
+              lockedBy:            'cron',
+              settlementNumber:    settlementNum,
+              tierSnapshot,
+              weekStart:           weekInfo.weekStart,
+              weekEnd:             weekInfo.weekEnd,
+              financialYear:       weekInfo.financialYear,
+              financialWeekNumber: weekInfo.fyWeekNumber
+            },
+            $push: {
+              auditLog: {
+                action:      'locked',
+                performedBy: 'cron',
+                at:          now,
+                note:        `Locked by cron. Orders: ${weekOrders.length}, Earning: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
+                valueBefore: { total_earning: existing.total_earning, commission_amount: existing.commission_amount },
+                valueAfter:  { total_earning: totalEarning, commission_amount: commissionAmount, isLocked: true }
+              }
+            }
+          }, { new: true });
+
+          if (!updated) {
+            console.error(`❌ [cron] Failed to lock commission for ${vendor.kitchenName} — ${weekInfo.weekKey}`);
+            continue;
+          }
+          console.log(`🔒 [cron] UPDATED+LOCKED draft: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
+
+        } else {
+          // Create new record (vendor never visited commission page)
+          await Commission.create({
+            vendorId:            vendor._id,
+            week:                weekInfo.weekKey,
+            month:               weekInfo.weekKey,
+            weekStart:           weekInfo.weekStart,
+            weekEnd:             weekInfo.weekEnd,
+            financialYear:       weekInfo.financialYear,
+            financialWeekNumber: weekInfo.fyWeekNumber,
+            total_orders:        weekOrders.length,
+            total_earning:       totalEarning,
+            commission_rate:     tier.ratePercent,
+            commission_amount:   commissionAmount,
+            status:              'pending',
+            due_date:            weekInfo.dueDate,
+            notes:               `Week: ${weekLabel}`,
+            isLocked:            true,
+            lockedAt:            now,
+            lockedBy:            'cron',
+            settlementNumber:    settlementNum,
+            reminderCount:       0,
+            tierSnapshot,
+            auditLog: [{
+              action:      'created',
+              performedBy: 'cron',
+              at:          now,
+              note:        `Created by cron. Orders: ${weekOrders.length}, Earning: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
+              valueBefore: {},
+              valueAfter:  { isLocked: true, commission_amount: commissionAmount }
+            }]
+          });
+          console.log(`🔒 [cron] CREATED+LOCKED: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
+        }
 
         // Email vendor
         try {
@@ -212,14 +253,20 @@ const markOverdueCommissions = cron.schedule('0 9 * * *', async () => {
 
     const overdueCommissions = await Commission.find({
       status:   { $in: ['pending', 'pending_verification'] },
+      isLocked: true,
       due_date: { $lt: now }
     }).populate('vendorId');
 
     console.log(`⚠️ Found ${overdueCommissions.length} overdue commissions`);
 
     for (const commission of overdueCommissions) {
-      commission.status = 'overdue';
-      await commission.save();
+      try {
+        commission.status = 'overdue';
+        await commission.save();
+      } catch (saveErr) {
+        console.error(`❌ Failed to mark overdue for commission ${commission._id}:`, saveErr.message);
+        continue;
+      }
 
       console.log(`🔴 Marked overdue: ${commission.vendorId?.kitchenName} — ${commission.week}`);
 

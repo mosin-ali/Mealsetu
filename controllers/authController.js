@@ -290,7 +290,7 @@ const sendOTP = async (req, res) => {
     await sendEmail(user.email, 'MealSetu - Password Reset OTP', message);
     console.log('OTP sent successfully to:', user.email);
 
-    res.status(200).json({ message: 'OTP sent successfully', email: user.email });
+    res.status(200).json({ message: 'If an account exists with this email, an OTP has been sent', maskedEmail: maskEmail(user.email) });
 
   } catch (error) {
     console.error('Send OTP error:', error);
@@ -341,10 +341,14 @@ const verifyOTP = async (req, res) => {
       return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
     }
 
-    // Hash the provided OTP and compare
+    // Hash the provided OTP and compare using timing-safe comparison
     const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
+    const storedOTP = user.resetOTP;
 
-    if (user.resetOTP !== hashedOTP) {
+    const hashMatch = storedOTP.length === hashedOTP.length &&
+      crypto.timingSafeEqual(Buffer.from(storedOTP), Buffer.from(hashedOTP));
+
+    if (!hashMatch) {
       return res.status(400).json({ message: 'Invalid OTP. Please try again.' });
     }
 
@@ -372,6 +376,14 @@ const resetPasswordWithOTP = async (req, res) => {
   try {
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters long' });
+    }
+
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#!%^&*()\-_]).{8,}$/.test(password)) {
+      return res.status(400).json({ message: 'Password must include uppercase, lowercase, a number, and a special character' });
     }
 
     const user = await User.findOne({ email });
@@ -456,10 +468,14 @@ const verifyRegisterOTP = async (req, res) => {
       return res.status(400).json({ message: 'Too many failed attempts. Please register again to get a new OTP.' });
     }
 
-    // 5. Hash the provided OTP and compare
+    // 5. Hash the provided OTP and compare using timing-safe comparison
     const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
+    const storedOTP = pendingUser.otp;
 
-    if (pendingUser.otp !== hashedOTP) {
+    const otpMatch = storedOTP.length === hashedOTP.length &&
+      crypto.timingSafeEqual(Buffer.from(storedOTP), Buffer.from(hashedOTP));
+
+    if (!otpMatch) {
       // Increment attempts
       pendingUser.otpAttempts = (pendingUser.otpAttempts || 0) + 1;
       await pendingUser.save();

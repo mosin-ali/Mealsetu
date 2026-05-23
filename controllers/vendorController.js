@@ -1324,21 +1324,36 @@ const getCommissionSummary = async (req, res) => {
     // Check if existing locked record
     let commission = await Commission.findOne({ vendorId, week: weekInfo.weekKey });
 
-    // Lifetime aggregation (always computed)
+    // Lifetime aggregation — earnings from all locked records; commission only from PAID ones.
+    // Unlocked drafts (created during page visits) are excluded from all totals.
     const lifetimeAgg = await Commission.aggregate([
-      { $match: { vendorId: vendorId } },
+      { $match: { vendorId: vendorId, isLocked: true } },
       { $group: {
-        _id:                null,
-        lifetimeEarnings:   { $sum: '$total_earning' },
-        lifetimeCommission: { $sum: '$commission_amount' }
+        _id:              null,
+        lifetimeEarnings: { $sum: '$total_earning' },
+        lifetimeCommission: {
+          $sum: { $cond: [{ $eq: ['$status', 'paid'] }, '$commission_amount', 0] }
+        },
+        lifetimePending: {
+          $sum: { $cond: [{ $in: ['$status', ['pending', 'overdue']] }, '$commission_amount', 0] }
+        }
       }}
     ]);
     const lifetimeEarnings   = lifetimeAgg[0]?.lifetimeEarnings   || 0;
     const lifetimeCommission = lifetimeAgg[0]?.lifetimeCommission || 0;
+    const lifetimePending    = lifetimeAgg[0]?.lifetimePending    || 0;
     const lifetimeNet        = lifetimeEarnings - lifetimeCommission;
 
-    // If locked — return frozen values, never recalculate
-    if (commission?.isLocked) {
+    // Remove stale unlocked drafts for weeks that haven't started yet.
+    // These were created by the old lockedAt-as-weekStart bug and confuse the history view.
+    await Commission.deleteMany({
+      vendorId,
+      isLocked: false,
+      weekStart: { $gt: weekInfo.weekEnd }
+    });
+
+    // If locked OR already paid — return frozen values, never recalculate
+    if (commission?.isLocked || commission?.status === 'paid') {
       const dueDate   = new Date(commission.due_date);
       const isOverdue = dueDate < now && commission.status !== 'paid';
       const canPay    = commission.status !== 'paid' && commission.isLocked;
@@ -1368,22 +1383,28 @@ const getCommissionSummary = async (req, res) => {
         },
         lifetimeEarnings,
         lifetimeCommission,
+        lifetimePending,
         lifetimeNet
       });
     }
 
-    // Not locked — calculate live, check both createdAt and orderDate
+    // Use canonical week boundaries from the rolling-week calculator.
+    // Never derive start from lockedAt (cron execution time) — that creates
+    // a gap between midnight and 8 AM on the first day of every new week.
+    const weekQueryStart = new Date(weekInfo.weekStart);
+    weekQueryStart.setUTCHours(0, 0, 0, 0);
+    const weekQueryEnd = new Date(weekInfo.weekEnd);
+
     const orders = await Order.find({
       vendorId,
-      status: { $in: ['active', 'completed', 'trial', 'pending'] },
+      status: { $in: ['active', 'completed'] },
       $or: [
-        { createdAt: { $gte: start, $lte: end } },
-        { orderDate: { $gte: start, $lte: end } }
+        { createdAt: { $gte: weekQueryStart, $lte: weekQueryEnd } },
+        { orderDate: { $gte: weekQueryStart, $lte: weekQueryEnd } }
       ]
     }).select('amount status createdAt orderDate').lean();
 
-    console.log('[getCommissionSummary] orders found:', orders.length,
-      'for week:', start.toISOString(), '→', end.toISOString());
+    console.log(`[commission] vendorId=${vendorId} weekStart=${weekQueryStart.toISOString()} weekEnd=${weekQueryEnd.toISOString()} orders=${orders.length}`);
 
     const totalEarning = orders.reduce((s, o) => s + (o.amount || 0), 0);
 
@@ -1455,6 +1476,7 @@ const getCommissionSummary = async (req, res) => {
       },
       lifetimeEarnings,
       lifetimeCommission,
+      lifetimePending,
       lifetimeNet
     });
 
@@ -1509,7 +1531,7 @@ const getMyCommissions = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const commissions = await Commission.find({ vendorId: vendor._id })
-      .sort({ month: -1 })
+      .sort({ weekStart: -1 })
       .skip(skip)
       .limit(limit);
 
@@ -2096,8 +2118,35 @@ async function createCommissionPaymentOrder(req, res) {
     const { commissionId } = req.body;
     const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id });
     if (!commission) return res.status(404).json({ message: 'Commission not found' });
+
+    if (!commission.weekEnd) {
+      console.warn('[payment] Commission missing weekEnd:', commission._id);
+    } else if (new Date(commission.weekEnd) >= new Date()) {
+      const closesOn = new Date(commission.weekEnd)
+        .toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+      const payFrom = new Date(new Date(commission.weekEnd).getTime() + 86400000)
+        .toLocaleDateString('en-IN', { day: 'numeric', month: 'long' });
+      return res.status(400).json({
+        success: false,
+        code:    'WEEK_STILL_OPEN',
+        message: `This week closes on ${closesOn}. Pay button activates from ${payFrom}.`
+      });
+    }
+
+    if (!commission.isLocked) {
+      return res.status(400).json({
+        success: false,
+        code:    'NOT_LOCKED',
+        message: 'Settlement not yet finalized by the system.'
+      });
+    }
+
     if (commission.status === 'paid') {
-      return res.status(400).json({ message: 'Commission already paid' });
+      return res.status(400).json({
+        success: false,
+        code:    'ALREADY_PAID',
+        message: 'This settlement is already paid.'
+      });
     }
 
     const razorpayOrder = await razorpay.orders.create({
@@ -2153,8 +2202,44 @@ async function verifyCommissionPaymentRazorpay(req, res) {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
-    const commission = await Commission.findOne({ _id: commissionId, vendorId: vendor._id });
-    if (!commission) return res.status(404).json({ message: 'Commission not found' });
+    // Read due_date before the atomic update so we can compute paidOnTime
+    const existing = await Commission.findOne(
+      { _id: commissionId, vendorId: vendor._id },
+      { due_date: 1, status: 1 }
+    ).lean();
+    if (!existing) return res.status(404).json({ message: 'Commission not found' });
+
+    const paymentTime  = new Date();
+    const isPaidOnTime = paymentTime <= new Date(existing.due_date);
+
+    // Atomic guard — if two requests race, only the first wins; second gets null
+    const commission = await Commission.findOneAndUpdate(
+      { _id: commissionId, vendorId: vendor._id, status: { $ne: 'paid' } },
+      {
+        $set: {
+          status:            'paid',
+          payment_date:      paymentTime,
+          paidOnTime:        isPaidOnTime,
+          paymentReference:  razorpay_payment_id,
+          admin_verified_at: paymentTime,
+          rejectionReason:   null
+        },
+        $push: {
+          auditLog: {
+            action:      'paid',
+            performedBy: 'vendor',
+            at:          paymentTime,
+            note:        `Paid via Razorpay. On time: ${isPaidOnTime}`,
+            valueBefore: { status: existing.status },
+            valueAfter:  { status: 'paid', paymentReference: razorpay_payment_id }
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!commission) {
+      return res.status(409).json({ success: false, message: 'Settlement already paid.' });
+    }
 
     await CommissionPayment.create({
       vendorEarningId:   commission._id,
@@ -2164,31 +2249,10 @@ async function verifyCommissionPaymentRazorpay(req, res) {
       utrNumber:         razorpay_payment_id,
       razorpayOrderId:   razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
-      paidAt:            new Date(),
+      paidAt:            paymentTime,
       status:            'confirmed',
-      verifiedAt:        new Date()
+      verifiedAt:        paymentTime
     });
-
-    const paymentTime = new Date();
-    const isPaidOnTime = paymentTime <= new Date(commission.due_date);
-
-    if (!commission.auditLog) commission.auditLog = [];
-    commission.auditLog.push({
-      action:      'paid',
-      performedBy: 'vendor',
-      at:          paymentTime,
-      note:        `Paid via Razorpay. On time: ${isPaidOnTime}`,
-      valueBefore: { status: commission.status },
-      valueAfter:  { status: 'paid', paymentReference: razorpay_payment_id }
-    });
-
-    commission.status            = 'paid';
-    commission.payment_date      = paymentTime;
-    commission.paidOnTime        = isPaidOnTime;
-    commission.paymentReference  = razorpay_payment_id;
-    commission.admin_verified_at = paymentTime;
-    commission.rejectionReason   = null;
-    await commission.save();
 
     try {
       const vendorWithOwner = await Vendor.findById(vendor._id).populate('ownerId', 'email name');
@@ -2200,7 +2264,9 @@ async function verifyCommissionPaymentRazorpay(req, res) {
             <h2 style="color:#16a34a">Commission Payment Received</h2>
             <p>Dear ${vendorWithOwner.ownerId.name},</p>
             <div style="background:#f0fdf4;padding:20px;border-radius:10px;margin:16px 0">
-              <p><strong>Week:</strong> ${commission.month}</p>
+              <p><strong>Week:</strong> ${commission.weekStart && commission.weekEnd
+                ? `${new Date(commission.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(commission.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                : commission.month}</p>
               <p><strong>Amount Paid:</strong> ₹${commission.commission_amount}</p>
               <p><strong>Transaction ID:</strong> ${razorpay_payment_id}</p>
               <p><strong>Status:</strong> Confirmed ✓</p>

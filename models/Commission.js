@@ -21,7 +21,7 @@ month: {
   type: String,
   default: null
 },
-  totalOrders: {
+  total_orders: {
     type: Number,
     default: 0
   },
