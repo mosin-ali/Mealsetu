@@ -51,7 +51,21 @@ const Subscription = ({
     setMealSlotToast(null);
   };
 
+  const [leaveOverlapError, setLeaveOverlapError] = useState('');
   const isSubmittingRef = useRef(false);
+
+  // ── Checks if [start, end] overlaps any already-taken leave ─────────────────
+  const hasLeaveOverlap = (start, end) => {
+    const leaves = currentSubscription?.leaveDates;
+    if (!leaves || leaves.length === 0) return false;
+    const s = new Date(start);
+    const e = new Date(end || start);
+    return leaves.some(l => {
+      const ls = new Date(l.startDate);
+      const le = new Date(l.endDate);
+      return s <= le && e >= ls;
+    });
+  };
 
   const [plans, setPlans] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState('MONTHLY');
@@ -247,6 +261,16 @@ const Subscription = ({
       offEvent('subscription_updated', handleSubscriptionUpdate);
       offEvent('payment_confirmed',    handlePaymentConfirmed);
     };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Polling fallback — re-fetches every 30 s while the page is open.
+  // Catches cases where the socket event was emitted before the client joined
+  // its room (race condition), ensuring the UI is never permanently stale.
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      fetchSubscriptionData();
+    }, 30000); // 30 seconds
+    return () => clearInterval(pollInterval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePaymentMethodSelect = (method) => {
@@ -710,7 +734,15 @@ const Subscription = ({
                   type="date"
                   className="input-field date-input"
                   value={leaveStart}
-                  onChange={(e) => onLeaveStartChange(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onLeaveStartChange(val);
+                    setLeaveOverlapError(
+                      hasLeaveOverlap(val, leaveEnd || val)
+                        ? 'These dates overlap with a leave you already took. Please choose different dates.'
+                        : ''
+                    );
+                  }}
                   min={new Date().toISOString().split('T')[0]}
                 />
               </div>
@@ -720,11 +752,64 @@ const Subscription = ({
                   type="date"
                   className="input-field date-input"
                   value={leaveEnd}
-                  onChange={(e) => onLeaveEndChange(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onLeaveEndChange(val);
+                    setLeaveOverlapError(
+                      hasLeaveOverlap(leaveStart || val, val)
+                        ? 'These dates overlap with a leave you already took. Please choose different dates.'
+                        : ''
+                    );
+                  }}
                   min={leaveStart || new Date().toISOString().split('T')[0]}
                 />
               </div>
             </div>
+
+            {/* ── Already-taken leave tags ───────────────────────── */}
+            {currentSubscription?.leaveDates?.length > 0 && (
+              <div style={{ marginBottom: '10px' }}>
+                <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '6px', fontWeight: '600' }}>
+                  Already on leave:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {currentSubscription.leaveDates.map((l, i) => (
+                    <span key={i} style={{
+                      background: '#fee2e2',
+                      color: '#b91c1c',
+                      border: '1px solid #fca5a5',
+                      borderRadius: '99px',
+                      padding: '3px 10px',
+                      fontSize: '12px',
+                      fontWeight: '500'
+                    }}>
+                      🚫 {new Date(l.startDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                      {' — '}
+                      {new Date(l.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Overlap error ─────────────────────────────────── */}
+            {leaveOverlapError && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fca5a5',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#b91c1c',
+                fontSize: '13px',
+                marginBottom: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                ⚠️ {leaveOverlapError}
+              </div>
+            )}
+
             <label className="input-label">Which Meal to Skip?</label>
             <select
               className="input-field"
@@ -738,7 +823,17 @@ const Subscription = ({
             <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 12px' }}>
               Leaves remaining: {2 - (currentSubscription.leavesUsed || 0)}. Your plan will be extended by the number of leave days.
             </p>
-            <button className="btn-primary apply-leave-btn" onClick={onApplyLeave}>
+            <button
+              className="btn-primary apply-leave-btn"
+              disabled={!!leaveOverlapError || !leaveStart || !leaveEnd}
+              style={{ opacity: (leaveOverlapError || !leaveStart || !leaveEnd) ? 0.5 : 1, cursor: (leaveOverlapError || !leaveStart || !leaveEnd) ? 'not-allowed' : 'pointer' }}
+              onClick={async () => {
+                if (leaveOverlapError) return;
+                await onApplyLeave();
+                setLeaveOverlapError('');
+                await fetchSubscriptionData();
+              }}
+            >
               Pause &amp; Extend Plan
             </button>
           </>

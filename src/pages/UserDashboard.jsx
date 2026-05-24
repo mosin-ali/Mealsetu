@@ -49,7 +49,7 @@ export default function UserDashboard() {
     pincode: "",
     profilePic: "",
     autoRenew: false,
-    expiryDate: "2026-03-15",
+    expiryDate: "",
     pausedDays: []
   });
 
@@ -1040,7 +1040,7 @@ const handleDownloadInvoice = async (historyItem) => {
 
         const newLeaveRecord = { from: leaveStart, to: leaveEnd, type: mealType, days: diffDays };
 
-        const updatedPausedDays = [...user.pausedDays, newLeaveRecord];
+        const updatedPausedDays = [...(user.pausedDays || []), newLeaveRecord];
 
 
 
