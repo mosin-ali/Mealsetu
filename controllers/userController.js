@@ -20,14 +20,14 @@ const transformProfilePic = (profilePic, protocol, host) => {
   return `${protocol}://${host}${profilePic.startsWith('/') ? '' : '/'}${profilePic}`;
 };
 
-// Helper function to count user's pending plans
+// Helper function to count user's pending plans.
+// Counts by status:'pending' only — this covers both regular and offer orders,
+// since all pending orders (regardless of type) carry status:'pending'.
+// Using offerStatus alongside would double-count offer orders that have both fields set.
 const getPendingPlansCount = async (userId) => {
   return await Order.countDocuments({
     userId: userId,
-    $or: [
-      { status: 'pending' },
-      { offerStatus: 'pending' }
-    ]
+    status: 'pending'
   });
 };
 
@@ -86,11 +86,25 @@ const applyLeave = async (req, res) => {
       return res.status(400).json({ message: 'Leave end date cannot be before start date' });
     }
 
-    const leaveDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const leaveDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
     const now = new Date();
 
     // ── CASE 1: Active subscription ───────────────────────────────────────────
     const activeSub = await Subscription.findOne({ userId, status: 'active' });
+
+    // ── Reject if the requested dates overlap any existing leave ──────────────
+    if (activeSub && Array.isArray(activeSub.leaveDates) && activeSub.leaveDates.length > 0) {
+      const overlap = activeSub.leaveDates.some(existing => {
+        const eStart = new Date(existing.startDate);
+        const eEnd   = new Date(existing.endDate);
+        return startDate <= eEnd && endDate >= eStart;
+      });
+      if (overlap) {
+        return res.status(400).json({
+          message: 'The selected dates overlap with an existing leave. Please choose different dates.'
+        });
+      }
+    }
 
     if (activeSub && new Date(activeSub.expiryDate) >= now) {
       // Enforce 2-leave limit
@@ -112,6 +126,12 @@ const applyLeave = async (req, res) => {
       activeSub.leaveDates = activeSub.leaveDates || [];
       activeSub.leaveDates.push({ startDate, endDate, days: leaveDays, appliedAt: now });
       await activeSub.save();
+
+      // ── Sync the active Order's endDate so getMySubscription returns the new date ──
+      await Order.findOneAndUpdate(
+        { userId, status: { $in: ['active', 'trial'] }, endDate: { $gte: now } },
+        { $set: { endDate: newExpiry } }
+      );
 
       // Shift any pending orders that come after this subscription
       const pendingOrders = await Order.find({ userId, status: 'pending' }).sort({ scheduledStartDate: 1 });
@@ -261,7 +281,8 @@ const extendSubscription = async (req, res) => {
         break;
     }
 
-    // Dynamic pricing from VendorPricing collection
+    // Dynamic pricing — single source of truth: VendorPricing collection only.
+      // Vendor.pricing array fallback removed to prevent price inconsistencies.
       const vendorPricingRecord = await VendorPricing.findOne({
         vendor_id: vendorId,
         plan_type: planType.toLowerCase(),
@@ -270,19 +291,11 @@ const extendSubscription = async (req, res) => {
 
       if (vendorPricingRecord && vendorPricingRecord.price > 0) {
         amount = vendorPricingRecord.price;
-      } else {
-        // Fallback to vendor.pricing array
-        const vendorForPricing = await Vendor.findById(vendorId);
-        const pricingArray = Array.isArray(vendorForPricing?.pricing) ? vendorForPricing.pricing : [];
-        const matchedPlan = pricingArray.find(
-          p => (p.planType === planType.toLowerCase() || p.type === planType.toLowerCase()) && p.active
-        );
-        amount = matchedPlan?.price;
       }
 
       if (!amount || amount <= 0) {
         return res.status(400).json({
-          message: 'This vendor has not configured pricing yet. Please contact support.'
+          message: 'This vendor has not configured pricing yet. Please contact the vendor or support.'
         });
       }
 
@@ -346,7 +359,12 @@ const extendSubscription = async (req, res) => {
       mealPreference: mealPreference,
       paymentStatus: paymentStatus,
       paymentMethod: paymentMethod,
-      planType: planType
+      planType: planType,
+      status: 'active',
+      startDate: subscriptionStartDate,
+      endDate: newExpiryDate,
+      scheduledStartDate: subscriptionStartDate,
+      scheduledEndDate: newExpiryDate
     });
 
     try {
@@ -826,7 +844,7 @@ const placeOrder = async (req, res) => {
       // Find existing pending orders to chain after
       const existingPendingOrders = await Order.find({
         userId: req.user._id,
-        $or: [{ status: 'pending' }, { offerStatus: 'pending' }]
+        status: 'pending'
       }).sort({ scheduledEndDate: -1 });
 
       if (existingPendingOrders && existingPendingOrders.length > 0) {
@@ -939,22 +957,24 @@ user.expiryDate = subscriptionExpiryDate;
 
     // ===== REAL-TIME: Emit socket events for new order =====
     if (io) {
-      // Notify vendor about new order
-      io.to(`vendor_${vendorId}`).emit('newOrder', {
-        order: order,
-        message: 'New order received!'
-      });
-      // Notify admin about new order
-      io.to('admin_room').emit('orderUpdate', {
-        order: order,
-        message: 'New order placed'
-      });
-      // Notify user their subscription is now active
-      io.to(req.user._id.toString()).emit('subscription_updated', {
-        type: 'order_placed',
-        planType: order.planType
-      });
-      console.log('📡 Socket events emitted for new order');
+      // Delay 1.5 s before emitting — gives the frontend time to connect and
+      // join its socket room, preventing the race condition where the event
+      // fires before the client has joined (which would silently drop the event).
+      setTimeout(() => {
+        io.to(`vendor_${vendorId}`).emit('newOrder', {
+          order: order,
+          message: 'New order received!'
+        });
+        io.to('admin_room').emit('orderUpdate', {
+          order: order,
+          message: 'New order placed'
+        });
+        io.to(req.user._id.toString()).emit('subscription_updated', {
+          type: 'order_placed',
+          planType: order.planType
+        });
+        console.log('📡 Socket events emitted for new order');
+      }, 1500);
     }
 
     try {
@@ -1680,12 +1700,18 @@ const getMySubscription = async (req, res) => {
 
     if (!activeOrder) return res.json(null);
 
-    // Fetch subscription record to get leavesUsed count
+    // Fetch subscription record — also the source-of-truth for expiryDate after leaves
     const activeSub = await Subscription.findOne({
       userId,
       status: { $in: ['active', 'pending'] }
     }).sort({ createdAt: -1 });
     const leavesUsed = activeSub?.leavesUsed || 0;
+
+    // If the subscription has a later expiryDate (due to leaves), use that.
+    // This keeps Order.endDate and Subscription.expiryDate in sync on the response.
+    const effectiveEndDate = (activeSub?.expiryDate && new Date(activeSub.expiryDate) > new Date(activeOrder.endDate))
+      ? activeSub.expiryDate
+      : activeOrder.endDate;
 
     // ✅ Fetch vendor pricing for frontend dynamic plan rendering
     const vendorPricingRecords = await VendorPricing.find({
@@ -1708,7 +1734,7 @@ const getMySubscription = async (req, res) => {
     res.json({
       planType: activeOrder.planType,
       startDate: activeOrder.startDate,
-      endDate: activeOrder.endDate,
+      endDate: effectiveEndDate,
       orderDate: activeOrder.orderDate,
       status: 'active',
       vendorId: activeOrder.vendorId?._id,
@@ -1721,7 +1747,11 @@ const getMySubscription = async (req, res) => {
       pricing,
       startsTomorrow,
       leavesUsed,
-      leavesAllowed: 2
+      leavesAllowed: 2,
+      leaveDates: (activeSub?.leaveDates || []).map(l => ({
+        startDate: l.startDate,
+        endDate: l.endDate
+      }))
     });
   } catch (error) {
     console.error('Get my subscription error:', error);
@@ -1905,7 +1935,7 @@ const extendSubscriptionOrder = async (req, res) => {
       userId: userId,
       vendorId: vendorId,
       planType: planType,
-      $or: [{ status: 'pending' }, { offerStatus: 'pending' }],
+      status: 'pending',
       createdAt: { $gte: thirtySecondsAgo }
     });
 
@@ -1915,7 +1945,7 @@ const extendSubscriptionOrder = async (req, res) => {
 
     const existingPendingOrders = await Order.find({
       userId: userId,
-      $or: [{ status: 'pending' }, { offerStatus: 'pending' }]
+      status: 'pending'
     }).sort({ scheduledEndDate: -1 });
 
     let scheduledStartDate;
@@ -1934,7 +1964,11 @@ const extendSubscriptionOrder = async (req, res) => {
       });
 
       if (activeOrder && activeOrder.endDate) {
-        const activeEnd = new Date(activeOrder.endDate);
+        // Use the later of Order.endDate or Subscription.expiryDate (leaves extend Subscription)
+        const activeSub = await Subscription.findOne({ userId: userId, status: 'active' });
+        const orderEnd = new Date(activeOrder.endDate);
+        const subEnd   = activeSub?.expiryDate ? new Date(activeSub.expiryDate) : orderEnd;
+        const activeEnd = subEnd > orderEnd ? subEnd : orderEnd;
         activeEnd.setUTCHours(0, 0, 0, 0);
         scheduledStartDate = new Date(activeEnd.getTime() + 86400000);
       } else {
@@ -2292,17 +2326,20 @@ const verifyUserPayment = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.to(req.user._id.toString()).emit('subscription_updated', {
-        type: 'payment_success',
-        planType,
-        message: orderStatus === 'pending'
-          ? `${planType} plan queued after your current subscription.`
-          : `Your ${planType} subscription is now active!`
-      });
-      io.to(`vendor_${vendorId}`).emit('new_order', {
-        type: 'new_subscription',
-        message: 'New subscription order received'
-      });
+      // Delay 1.5 s — same race-condition guard as placeOrder
+      setTimeout(() => {
+        io.to(req.user._id.toString()).emit('subscription_updated', {
+          type: 'payment_success',
+          planType,
+          message: orderStatus === 'pending'
+            ? `${planType} plan queued after your current subscription.`
+            : `Your ${planType} subscription is now active!`
+        });
+        io.to(`vendor_${vendorId}`).emit('new_order', {
+          type: 'new_subscription',
+          message: 'New subscription order received'
+        });
+      }, 1500);
     }
 
     res.json({
@@ -2339,7 +2376,7 @@ const checkCanAddPlan = async (req, res) => {
 
     const pendingCount = await Order.countDocuments({
       userId,
-      $or: [{ status: 'pending' }, { offerStatus: 'pending' }]
+      status: 'pending'
     });
 
     if (pendingCount >= 3) {
