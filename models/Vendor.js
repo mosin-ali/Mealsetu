@@ -5,7 +5,7 @@ const vendorSchema = new mongoose.Schema({
   
   // --- Profile Info ---
   kitchenName: { type: String, required: true },
-  address: { type: String, required: true },
+  address: { type: mongoose.Schema.Types.Mixed, required: true },
 pincode: { type: String },
   latitude: { type: Number, default: null },
   longitude: { type: Number, default: null },
@@ -70,13 +70,29 @@ rejectionReason: { type: String, default: null },
   // Optional display fields
   menuPrice: { type: Number, default: 80 },
   upiId: { type: String, default: null },
-  rating: { type: Number, default: 4.5 },
+  rating:      { type: Number, default: 0 },
+  reviewCount: { type: Number, default: 0 },
   workingDays: { type: String, default: 'Mon - Sat' },
   timings: { type: String, default: '11:00 AM - 09:00 PM' },
 
+  // --- Loyalty / Wallet Discount Settings ---
+  loyaltyDiscountsEnabled: { type: Boolean, default: true },  // vendor can opt-out of wallet deductions
+  walletCapPercent: { type: Number, default: 20 },            // max wallet discount as % of order (default 20%)
+
   // --- Trial Settings ---
-  trialEnabled: { type: Boolean, default: false }, // Vendor must explicitly enable trials
-  trialFee: { type: Number, default: 0 }, // 0 = completely free, >0 = small charge for trial
+  trialEnabled: { type: Boolean, default: false },
+  trialFee: { type: Number, default: 0 },
+
+  // --- Delivery Settings ---
+  deliveryEnabled: { type: Boolean, default: false },
+  deliverySettings: {
+    autoGroupByArea:      { type: Boolean, default: true },
+    lunchDeliveryTime:    { type: String,  default: '12:00' },
+    dinnerDeliveryTime:   { type: String,  default: '20:00' },
+    maxDeliveriesPerBatch: { type: Number, default: 20 },
+    deliveryRadius:       { type: Number, default: 10 }  // km
+  },
+  monthlyDeliveryExpenses: { type: Number, default: 0 },
 
   // --- Jain Menu & Pricing ---
   offersJainMenu: { type: Boolean, default: false },
@@ -116,7 +132,14 @@ rejectionReason: { type: String, default: null },
   fssaiDocument: { type: String },
   gstNumber: { type: String },
   ownerName: { type: String },
-  phone: { type: String }
+  phone: { type: String },
+
+  // --- Expense Budgets (category → monthly budget amount) ---
+  expenseBudgets: {
+    type:    Map,
+    of:      Number,
+    default: {}
+  }
 }, { timestamps: true }
 );
 

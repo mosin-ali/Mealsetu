@@ -68,14 +68,20 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
           continue;
         }
 
-        // Sum orders in this rolling week window
+        // Commission counts every order where money was actually received.
+        // 'pending' orders = extended/scheduled subscriptions paid via UPI — must be included.
+        // Only exclude cancelled / on-hold + unconfirmed cash (paymentStatus != Paid).
         const weekOrders = await Order.find({
-          vendorId:  vendor._id,
-          createdAt: { $gte: weekInfo.weekStart, $lte: weekInfo.weekEnd },
-          status:    { $in: ['active', 'completed'] }
+          vendorId:      vendor._id,
+          createdAt:     { $gte: weekInfo.weekStart, $lte: weekInfo.weekEnd },
+          status:        { $nin: ['cancelled', 'on-hold'] },
+          paymentStatus: 'Paid'
         });
 
-        const totalEarning = weekOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+        const totalGross           = weekOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+        const totalWalletDeductions = weekOrders.reduce((sum, o) => sum + (o.walletDeduction || 0), 0);
+        // Commission base = gross − wallet deductions (vendor actually received less)
+        const totalEarning = totalGross - totalWalletDeductions;
 
         if (totalEarning === 0) {
           console.log(`⏭️ No earnings: ${vendor.kitchenName} — ${weekInfo.weekKey}`);
@@ -100,29 +106,30 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
           // Update existing unlocked draft with final amounts and lock it
           const updated = await Commission.findByIdAndUpdate(existing._id, {
             $set: {
-              total_orders:        weekOrders.length,
-              total_earning:       totalEarning,
-              commission_rate:     tier.ratePercent,
-              commission_amount:   commissionAmount,
-              due_date:            weekInfo.dueDate,
-              isLocked:            true,
-              lockedAt:            now,
-              lockedBy:            'cron',
-              settlementNumber:    settlementNum,
+              total_orders:            weekOrders.length,
+              total_earning:           totalGross,
+              total_wallet_deductions: totalWalletDeductions,
+              commission_rate:         tier.ratePercent,
+              commission_amount:       commissionAmount,
+              due_date:                weekInfo.dueDate,
+              isLocked:                true,
+              lockedAt:                now,
+              lockedBy:                'cron',
+              settlementNumber:        settlementNum,
               tierSnapshot,
-              weekStart:           weekInfo.weekStart,
-              weekEnd:             weekInfo.weekEnd,
-              financialYear:       weekInfo.financialYear,
-              financialWeekNumber: weekInfo.fyWeekNumber
+              weekStart:               weekInfo.weekStart,
+              weekEnd:                 weekInfo.weekEnd,
+              financialYear:           weekInfo.financialYear,
+              financialWeekNumber:     weekInfo.fyWeekNumber
             },
             $push: {
               auditLog: {
                 action:      'locked',
                 performedBy: 'cron',
                 at:          now,
-                note:        `Locked by cron. Orders: ${weekOrders.length}, Earning: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
+                note:        `Locked by cron. Orders: ${weekOrders.length}, Gross: ₹${totalGross}, Wallet: ₹${totalWalletDeductions}, CommBase: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
                 valueBefore: { total_earning: existing.total_earning, commission_amount: existing.commission_amount },
-                valueAfter:  { total_earning: totalEarning, commission_amount: commissionAmount, isLocked: true }
+                valueAfter:  { total_earning: totalGross, total_wallet_deductions: totalWalletDeductions, commission_amount: commissionAmount, isLocked: true }
               }
             }
           }, { new: true });
@@ -136,17 +143,18 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
         } else {
           // Create new record (vendor never visited commission page)
           await Commission.create({
-            vendorId:            vendor._id,
-            week:                weekInfo.weekKey,
-            month:               weekInfo.weekKey,
-            weekStart:           weekInfo.weekStart,
-            weekEnd:             weekInfo.weekEnd,
-            financialYear:       weekInfo.financialYear,
-            financialWeekNumber: weekInfo.fyWeekNumber,
-            total_orders:        weekOrders.length,
-            total_earning:       totalEarning,
-            commission_rate:     tier.ratePercent,
-            commission_amount:   commissionAmount,
+            vendorId:                vendor._id,
+            week:                    weekInfo.weekKey,
+            month:                   weekInfo.weekKey,
+            weekStart:               weekInfo.weekStart,
+            weekEnd:                 weekInfo.weekEnd,
+            financialYear:           weekInfo.financialYear,
+            financialWeekNumber:     weekInfo.fyWeekNumber,
+            total_orders:            weekOrders.length,
+            total_earning:           totalGross,
+            total_wallet_deductions: totalWalletDeductions,
+            commission_rate:         tier.ratePercent,
+            commission_amount:       commissionAmount,
             status:              'pending',
             due_date:            weekInfo.dueDate,
             notes:               `Week: ${weekLabel}`,
@@ -160,18 +168,20 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
               action:      'created',
               performedBy: 'cron',
               at:          now,
-              note:        `Created by cron. Orders: ${weekOrders.length}, Earning: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
+              note:        `Created by cron. Orders: ${weekOrders.length}, Gross: ₹${totalGross}, Wallet: ₹${totalWalletDeductions}, CommBase: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
               valueBefore: {},
-              valueAfter:  { isLocked: true, commission_amount: commissionAmount }
+              valueAfter:  { isLocked: true, total_earning: totalGross, total_wallet_deductions: totalWalletDeductions, commission_amount: commissionAmount }
             }]
           });
           console.log(`🔒 [cron] CREATED+LOCKED: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
         }
 
-        // Email vendor
-        try {
-          const vendorEmail = vendor.ownerId?.email;
-          if (vendorEmail) {
+        // Email vendor — track delivery status in DB
+        const vendorEmail = vendor.ownerId?.email;
+        let emailDelivered = null;
+        let emailFailedAt  = null;
+        if (vendorEmail) {
+          try {
             await sendEmail(
               vendorEmail,
               `MealSetu — Weekly Commission Due for ${weekLabel}`,
@@ -202,12 +212,20 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
                         <td style="padding:8px 0;font-weight:600;text-align:right">${weekOrders.length}</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#64748b">Total Earnings</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">₹${totalEarning.toLocaleString('en-IN')}</td>
+                        <td style="padding:8px 0;color:#64748b">Gross Earnings</td>
+                        <td style="padding:8px 0;font-weight:600;text-align:right">₹${totalGross.toLocaleString('en-IN')}</td>
+                      </tr>
+                      ${totalWalletDeductions > 0 ? `<tr>
+                        <td style="padding:8px 0;color:#64748b">Wallet Deductions</td>
+                        <td style="padding:8px 0;font-weight:600;text-align:right;color:#f59e0b">-₹${totalWalletDeductions.toLocaleString('en-IN')}</td>
                       </tr>
                       <tr>
+                        <td style="padding:8px 0;color:#64748b">Commission Base</td>
+                        <td style="padding:8px 0;font-weight:600;text-align:right">₹${totalEarning.toLocaleString('en-IN')}</td>
+                      </tr>` : ''}
+                      <tr>
                         <td style="padding:8px 0;color:#64748b">Commission Rate</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${tier.ratePercent}% (${tier.tierName})</td>
+                        <td style="padding:8px 0;font-weight:600;text-align:right">${tier.ratePercent}% (${tier.tierName || 'Starter'})</td>
                       </tr>
                       <tr style="border-top:2px solid #e5e7eb">
                         <td style="padding:12px 0;color:#dc2626;font-weight:700;font-size:18px">Commission Due</td>
@@ -225,15 +243,39 @@ const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
                 </div>
               </div>`
             );
+            emailDelivered = true;
             console.log(`📧 Email sent to ${vendorEmail}`);
+          } catch (emailErr) {
+            emailDelivered = false;
+            emailFailedAt  = now;
+            console.error(`❌ Email failed for ${vendor.kitchenName}:`, emailErr.message);
           }
-        } catch (emailErr) {
-          console.error(`❌ Email failed for ${vendor.kitchenName}:`, emailErr.message);
+
+          // Persist email delivery status on the commission record
+          const commRecord = existing || await Commission.findOne({ vendorId: vendor._id, week: weekInfo.weekKey });
+          if (commRecord) {
+            await Commission.findByIdAndUpdate(commRecord._id, {
+              $set: { emailDelivered, emailFailedAt }
+            });
+          }
         }
 
       } catch (vendorErr) {
         console.error(`❌ Error processing ${vendor.kitchenName}:`, vendorErr.message);
       }
+    }
+
+    // Stale draft cleanup — remove unlocked (never-locked) drafts older than 30 days.
+    // These are created when a vendor visits the commission page but the week never closes
+    // (e.g. zero-order weeks, or weeks left open by a bug).
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const staleResult = await Commission.deleteMany({
+      isLocked: false,
+      status:   { $ne: 'paid' },
+      createdAt: { $lt: thirtyDaysAgo }
+    });
+    if (staleResult.deletedCount > 0) {
+      console.log(`🗑️ Deleted ${staleResult.deletedCount} stale unlocked commission drafts`);
     }
 
     console.log('✅ Commission Generation Cron Completed');
@@ -315,13 +357,51 @@ const markOverdueCommissions = cron.schedule('0 9 * * *', async () => {
   scheduled: false
 });
 
+// ===== JOB 3: Every day 7AM — Notify users whose plans expire in 1 or 3 days =====
+const notifyExpiringPlans = cron.schedule('0 7 * * *', async () => {
+  console.log('🔔 Plan Expiry Notification Cron Started:', new Date().toLocaleString());
+  try {
+    const { notifyPlanExpiring } = require('../utils/fcmService');
+
+    const startOfDay = (d) => { const x = new Date(d); x.setUTCHours(0,  0,  0,   0); return x; };
+    const endOfDay   = (d) => { const x = new Date(d); x.setUTCHours(23, 59, 59, 999); return x; };
+
+    for (const daysLeft of [1, 3]) {
+      const target = new Date();
+      target.setDate(target.getDate() + daysLeft);
+
+      const expiringOrders = await Order.find({
+        status:  'active',
+        endDate: { $gte: startOfDay(target), $lte: endOfDay(target) }
+      }).populate('userId',   'fcmToken name')
+        .populate('vendorId', 'kitchenName');
+
+      console.log(`⏰ ${expiringOrders.length} plans expiring in ${daysLeft} day(s)`);
+
+      for (const order of expiringOrders) {
+        if (!order.userId?._id) continue;
+        notifyPlanExpiring(
+          order.userId._id,
+          order.vendorId?.kitchenName || 'your vendor',
+          daysLeft
+        ).catch(console.error);
+      }
+    }
+    console.log('✅ Plan Expiry Notification Cron Completed');
+  } catch (err) {
+    console.error('❌ Plan Expiry Notification Cron Error:', err);
+  }
+}, { scheduled: false });
+
 // ===== START BOTH CRON JOBS =====
 const startWeeklyCommissionCron = () => {
   generateWeeklyCommissions.start();
   markOverdueCommissions.start();
+  notifyExpiringPlans.start();
   console.log('✅ Commission Cron Jobs Started');
   console.log('   → Commission generation: Every day at 8:00 AM (rolling weeks)');
   console.log('   → Overdue check: Every day at 9:00 AM');
+  console.log('   → Plan expiry notifications: Every day at 7:00 AM');
 };
 
 module.exports = { startWeeklyCommissionCron };

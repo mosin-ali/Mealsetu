@@ -10,6 +10,7 @@ const Commission = require('../models/Commission');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
+const { geocodeAddress } = require('../utils/geocode');
 const { calculateMissedMeals, calculatePlannedClosureMeals } = require('../utils/mealSlotCalculator');
 
 const VendorPricing = require('../models/VendorPricing');
@@ -67,49 +68,78 @@ const getVendorProfile = async (req, res) => {
 // @route   PUT /api/vendor/me
 const updateVendorProfile = async (req, res) => {
   try {
-    const { kitchenName, address, pincode, phone, upiId } = req.body;
+    const { kitchenName, address, pincode, phone, upiId, name } = req.body;
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
     }
+
+    // Support structured address object {street, area, landmark, city, pincode, latitude, longitude}
+    // as well as the old plain string format.
+    let addressStr;
+    let pincodeStr = pincode;
+    let newAddressValue = address;
+
+    if (typeof address === 'object' && address !== null) {
+      addressStr = [address.shopNo, address.street, address.area, address.landmark, address.city]
+        .filter(Boolean).join(', ');
+      pincodeStr = address.pincode || pincode;
+      // Use coordinates supplied by the frontend GPS detector if present
+      if (address.latitude)  vendor.latitude  = parseFloat(address.latitude);
+      if (address.longitude) vendor.longitude = parseFloat(address.longitude);
+    } else if (typeof address === 'string') {
+      addressStr = address;
+    }
+
+    // Detect address change BEFORE updating fields so we know whether to re-geocode
+    const prevAddrStr = typeof vendor.address === 'object'
+      ? vendor.address?.fullAddress || ''
+      : (vendor.address || '');
+    const addressChanged = (addressStr && addressStr !== prevAddrStr) ||
+                           (pincodeStr && pincodeStr !== vendor.pincode);
+
     vendor.kitchenName = kitchenName || vendor.kitchenName;
-    vendor.address = address || vendor.address;
-    vendor.pincode = pincode || vendor.pincode;
-    vendor.upiId = upiId || vendor.upiId;
-    
-    // Auto-geocode address to lat/lng using Nominatim
-    if (address && pincode) {
+    // Store structured object when provided, otherwise keep flat string for legacy compat
+    if (newAddressValue !== undefined) {
+      vendor.address = newAddressValue;
+      vendor.markModified('address');
+    }
+    if (pincodeStr) vendor.pincode = pincodeStr;
+    if (upiId !== undefined) vendor.upiId = upiId;
+
+    // Re-geocode whenever address changed OR when coordinates are still missing.
+    // Skip only when the frontend GPS detector already supplied coordinates.
+    const hasFrontendCoords = typeof address === 'object' && address !== null &&
+                              (address.latitude || address.longitude);
+    if (addressStr && pincodeStr && !hasFrontendCoords &&
+        (addressChanged || !vendor.latitude || !vendor.longitude)) {
       try {
-        const fullAddress = `${address}, ${pincode}, India`;
-        const geoRes = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
-          {
-            headers: { 
-              'User-Agent': 'MealSetu/1.0'
-            }
-          }
-        );
-        const geoData = await geoRes.json();
-        if (geoData && geoData[0]) {
-          vendor.latitude = parseFloat(geoData[0].lat);
-          vendor.longitude = parseFloat(geoData[0].lon);
+        const coords = await geocodeAddress(`${addressStr}, ${pincodeStr}, India`);
+        if (coords) {
+          vendor.latitude  = coords.lat;
+          vendor.longitude = coords.lng;
         }
       } catch (geoError) {
         console.log('Geocoding failed, continuing without coordinates:', geoError.message);
-        // Silently fail - set null (default)
       }
     }
-    
+
     await vendor.save();
-    if (phone) {
-      await User.findByIdAndUpdate(req.user._id, { phone });
+    const userUpdates = {};
+    if (phone) userUpdates.phone = phone;
+    if (name)  userUpdates.name  = name;
+    if (Object.keys(userUpdates).length) {
+      await User.findByIdAndUpdate(req.user._id, userUpdates);
     }
+    const updatedUser = await User.findById(req.user._id).select('-password');
     const vendorObj = vendor.toObject();
-    vendorObj.profileImage = transformProfilePic(vendor.profileImage, req);
+    vendorObj.ownerId = updatedUser ? updatedUser.toObject() : { _id: req.user._id };
+    vendorObj.profileImage  = transformProfilePic(vendor.profileImage, req);
     vendorObj.kitchenPoster = transformKitchenPoster(vendor.kitchenPoster, req);
     res.json(vendorObj);
   } catch (error) {
-    res.status(500).json({ message: 'Server Error' });
+    console.error('updateVendorProfile error:', error);
+    res.status(500).json({ message: 'Server Error', detail: error.message });
   }
 };
 
@@ -207,6 +237,63 @@ const getVendorCustomers = async (req, res) => {
   }
 };
 
+// @desc    Get all plans for a specific customer of this vendor
+// @route   GET /api/vendor/customer/:customerId/plans
+const getCustomerPlans = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { customerId } = req.params;
+    const isManual = customerId.startsWith('manual_');
+
+    let orders;
+    if (isManual) {
+      // Manual customer — match by phone
+      const phone = customerId.replace('manual_', '');
+      orders = await Order.find({
+        vendorId: vendor._id,
+        isManualOrder: true,
+        manualCustomerPhone: phone
+      }).sort({ orderDate: -1 });
+    } else {
+      orders = await Order.find({
+        vendorId: vendor._id,
+        userId: customerId
+      }).sort({ orderDate: -1 });
+    }
+
+    const now = new Date();
+    const plans = orders.map((o, idx) => {
+      const end = o.endDate ? new Date(o.endDate) : null;
+      const start = o.startDate ? new Date(o.startDate) : null;
+      const daysLeft = end ? Math.ceil((end - now) / (1000 * 60 * 60 * 24)) : null;
+
+      let displayStatus = o.status;
+      if (o.status === 'active' && end && end < now) displayStatus = 'expired';
+
+      return {
+        planNo:        orders.length - idx,
+        planType:      o.planType || '—',
+        startDate:     o.startDate || null,
+        endDate:       o.endDate   || null,
+        amount:        o.amount    || 0,
+        paymentMethod: o.paymentMethod || '—',
+        paymentStatus: o.paymentStatus || '—',
+        status:        displayStatus,
+        daysLeft:      daysLeft,
+        mealPreference: o.mealPreference || '—',
+        isManualOrder: o.isManualOrder || false,
+      };
+    });
+
+    res.json(plans);
+  } catch (err) {
+    console.error('getCustomerPlans error:', err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
 // @desc    Get vendor complaints
 // @route   GET /api/vendor/complaints
 const getVendorComplaints = async (req, res) => {
@@ -215,6 +302,7 @@ const getVendorComplaints = async (req, res) => {
     if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
     const complaints = await Complaint.find({ vendorId: vendor._id })
       .populate('userId', 'name email')
+      .populate('orderId', 'planType orderDate')
       .sort({ createdAt: -1 });
     res.json(complaints);
   } catch (error) {
@@ -226,8 +314,17 @@ const getVendorComplaints = async (req, res) => {
 // @route   PUT /api/vendor/complaints/:id
 const resolveComplaint = async (req, res) => {
   try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
+
     const complaint = await Complaint.findById(req.params.id);
     if (!complaint) return res.status(404).json({ message: 'Complaint not found' });
+
+    // Security: ensure the complaint belongs to this vendor
+    if (complaint.vendorId.toString() !== vendor._id.toString()) {
+      return res.status(403).json({ message: 'Not authorised to update this complaint' });
+    }
+
     complaint.status = req.body.status || complaint.status;
     if (req.body.response) complaint.response = req.body.response;
     await complaint.save();
@@ -267,37 +364,49 @@ const getVendorReports = async (req, res) => {
   }
 };
 
-// @desc    Get Vendor Reviews
+// @desc    Get Vendor Reviews (vendor's own dashboard view — all reviews including hidden)
 // @route   GET /api/vendor/reviews
 const getVendorReviews = async (req, res) => {
   try {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
     const reviews = await Review.find({ vendorId: vendor._id })
       .populate('userId', 'name')
-      .sort({ rating: -1, createdAt: -1 });
+      .sort({ createdAt: -1 });
 
     const formattedReviews = reviews.map(review => ({
-      _id: review._id,
-      user: review.customerName || review.userId?.name || 'Anonymous',
-      rating: review.rating,
-      stars: review.rating,
-      comment: review.comment,
-      date: new Date(review.createdAt).toLocaleDateString('en-IN', {
-        day: 'numeric', month: 'short', year: 'numeric'
+      _id:                review._id,
+      user:               review.customerName || review.userId?.name || 'Anonymous',
+      rating:             review.rating,
+      stars:              review.rating,
+      comment:            review.comment,
+      isVerifiedPurchase: review.isVerifiedPurchase,
+      planType:           review.planType,
+      helpfulCount:       review.helpfulCount || 0,
+      isEdited:           review.isEdited,
+      isHidden:           review.isHidden,
+      isFlagged:          review.isFlagged,
+      flagReason:         review.flagReason,
+      date: new Date(review.createdAt).toLocaleDateString('en-GB', {
+        day: 'numeric', month: 'short', year: 'numeric',
       }),
       createdAt: review.createdAt,
-      orderId: review.orderId
+      orderId:   review.orderId,
     }));
 
-    const totalRating = reviews.reduce((sum, r) => sum + r.rating, 0);
-    const avgRating = reviews.length > 0
-      ? Math.round((totalRating / reviews.length) * 10) / 10
+    const visibleReviews = reviews.filter(r => !r.isHidden);
+    const totalRating    = visibleReviews.reduce((s, r) => s + r.rating, 0);
+    const avgRating      = visibleReviews.length
+      ? Math.round((totalRating / visibleReviews.length) * 10) / 10
       : 0;
 
     res.json({
-      reviews: formattedReviews,
+      reviews:       formattedReviews,
       averageRating: avgRating,
-      totalReviews: reviews.length
+      totalReviews:  reviews.length,
+      visibleCount:  visibleReviews.length,
+      flaggedCount:  reviews.filter(r => r.isFlagged).length,
     });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching reviews' });
@@ -339,9 +448,13 @@ const getVendorOrders = async (req, res) => {
         || 'N/A',
       mealPreference: order.mealPreference,
       orderDate: order.orderDate,
+      createdAt: order.createdAt,
       planType: order.planType,
       amount: order.amount,
       paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus || 'Pending',
+      status: order.status,
+      endDate: order.endDate,
       isManualOrder: order.isManualOrder || false
     }));
     
@@ -595,7 +708,11 @@ const addManualCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    const { name, phone, planType, startDate, paymentMethod, amount, deliveryPincode, mealPreference, deliverySlot } = req.body;
+    const { name, phone, planType, startDate, paymentMethod, amount, deliveryPincode, mealPreference, deliverySlot, address: addressObj } = req.body;
+
+    // Build structured address — prefer new addressObj, fallback to legacy deliveryPincode
+    const structuredAddress = (addressObj && typeof addressObj === 'object') ? addressObj : null;
+    const pincode = structuredAddress?.pincode || deliveryPincode || '';
 
     const planTypeMapped = planType === 'trial' ? 'Trial' : planType === 'weekly' ? 'Weekly' : planType === 'monthly' ? 'Monthly' : 'Tiffin';
 
@@ -605,24 +722,46 @@ const addManualCustomer = async (req, res) => {
     const todayMidnight = new Date();
     todayMidnight.setUTCHours(0, 0, 0, 0);
 
-    let startDateObj, endDateObj;
+    let startDateObj, endDateObj, firstDayMealSlot;
     if (requestedStart.getTime() === todayMidnight.getTime()) {
-      // Starting today — apply smart meal timing
+      // Starting today — apply smart meal timing (same as online users)
       const computed = computeSubscriptionDates(getPlanDurationDays(planTypeMapped));
-      startDateObj = computed.startDate;
-      endDateObj   = computed.endDate;
+      startDateObj     = computed.startDate;
+      endDateObj       = computed.endDate;
+      firstDayMealSlot = computed.mealSlotToday; // 'both' | 'dinner' | 'none'
     } else {
-      // Future date — use exactly as requested, normal duration
-      startDateObj = requestedStart;
-      endDateObj = new Date(startDateObj);
+      // Future date — full plan from day 1, both meals
+      startDateObj     = requestedStart;
+      endDateObj       = new Date(startDateObj);
       endDateObj.setUTCDate(endDateObj.getUTCDate() + getPlanDurationDays(planTypeMapped));
+      firstDayMealSlot = 'both';
     }
 
-    // STEP 1 — Find or create a real User for this manual customer
+    // STEP 1 — Geocode address via Google Maps if lat/lng not provided
+    let geocodedAddress = structuredAddress ? { ...structuredAddress } : null;
+    if (geocodedAddress && (!geocodedAddress.latitude || !geocodedAddress.longitude)) {
+      try {
+        const q = [geocodedAddress.area, geocodedAddress.city, geocodedAddress.pincode, 'India'].filter(Boolean).join(', ');
+        let coords = await geocodeAddress(q);
+        if (!coords && geocodedAddress.pincode) {
+          coords = await geocodeAddress(`${geocodedAddress.pincode}, India`);
+        }
+        if (coords) {
+          geocodedAddress.latitude  = coords.lat;
+          geocodedAddress.longitude = coords.lng;
+        }
+      } catch (_) { /* geocoding failure is non-fatal */ }
+    }
+
+    // STEP 2 — Find or create a real User for this manual customer
     let customerId;
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
       customerId = existingUser._id;
+      // Update address if better data is now available and user is a manual customer
+      if (existingUser.isManualCustomer && geocodedAddress) {
+        await User.updateOne({ _id: existingUser._id }, { $set: { address: geocodedAddress, pincode: pincode } });
+      }
     } else {
       const newUser = await User.create({
         name,
@@ -630,21 +769,22 @@ const addManualCustomer = async (req, res) => {
         email: `offline_${phone}@mealsetu.internal`,
         password: await bcrypt.hash(Math.random().toString(36).slice(2), 10),
         role: 'user',
-        address: deliveryPincode ? `Pincode: ${deliveryPincode}` : 'Offline Customer',
-        pincode: deliveryPincode || '',
+        address: geocodedAddress || (pincode ? { pincode } : {}),
+        pincode,
         isManualCustomer: true
       });
       customerId = newUser._id;
     }
 
-    // STEP 2 — Create Order using the real userId
+    // STEP 3 — Create Order using the real userId
     const newOrder = new Order({
       userId: customerId,
       vendorId: vendor._id,
       customerName: name,
       manualCustomerName: name,
       manualCustomerPhone: phone,
-      manualCustomerPincode: deliveryPincode,
+      manualCustomerAddress: geocodedAddress || undefined,
+      manualCustomerPincode: pincode,
       planType: planTypeMapped,
       startDate: startDateObj,
       endDate: endDateObj,
@@ -654,16 +794,36 @@ const addManualCustomer = async (req, res) => {
       paymentMethod: paymentMethod || 'Cash',
       orderStatus: 'Delivered',
       mealPreference: mealPreference || 'Regular',
-      deliverySlot: 'Lunch', // stored for schema compliance only; full-day plan
+      deliverySlot: firstDayMealSlot === 'dinner' ? 'Dinner' : 'Lunch',
+      firstDayMealSlot,
       source: 'manual',
       isManualOrder: true
     });
 
     await newOrder.save();
 
+    // Notify vendor analytics dashboard in real-time
+    try {
+      const _io = req.app.get('io') || global.io;
+      if (_io) _io.to(`vendor_${vendor._id}`).emit('analytics_update');
+      if (_io) _io.to(`vendor_${vendor._id}`).emit('new_order_placed');
+    } catch (_) {}
+
+    // Build human-readable meal slot summary for vendor confirmation
+    const slotSummary =
+      firstDayMealSlot === 'both'   ? { label: '☀️🌙 Lunch + Dinner today',     color: '#16a34a', note: 'Gets both meals from today.' } :
+      firstDayMealSlot === 'dinner' ? { label: '🌙 Dinner only today',           color: '#d97706', note: 'Lunch time has passed. Gets dinner today + both meals from tomorrow. One extra day added to plan.' } :
+                                      { label: '🌄 Starts tomorrow',             color: '#7c3aed', note: 'Dinner time has passed. Plan starts from tomorrow with both meals.' };
+
     res.status(201).json({
       message: 'Manual customer added successfully',
-      order: newOrder
+      order: newOrder,
+      mealSlotInfo: {
+        firstDayMealSlot,
+        ...slotSummary,
+        startDate: startDateObj,
+        endDate:   endDateObj,
+      }
     });
   } catch (error) {
     console.error('Add manual customer error:', error);
@@ -1040,6 +1200,13 @@ const toggleShopStatus = async (req, res) => {
         console.error('Failed to send closure emails:', emailError);
       }
 
+      // FCM push to all affected users
+      const closedUserIds = [...userEmails.keys()];
+      if (closedUserIds.length > 0) {
+        const { notifyAllUsers: _nau } = require('../utils/fcmService');
+        _nau(closedUserIds, `🔒 ${vendor.kitchenName} Temporarily Closed`, 'Your subscription is paused and will be extended when the kitchen reopens.', { type: 'kitchen_closed', screen: 'subscription' }).catch(console.error);
+      }
+
       return res.json({
         message: 'Kitchen closed successfully',
         isOpen: vendor.isOpen,
@@ -1112,6 +1279,13 @@ const toggleShopStatus = async (req, res) => {
           }
         } catch (emailError) {
           console.error('Failed to send reopening emails:', emailError);
+        }
+
+        // FCM push to all extended users
+        const reopenedUserIds = extendedSubscriptions.map(s => s.user._id?.toString()).filter(Boolean);
+        if (reopenedUserIds.length > 0) {
+          const { notifyAllUsers: _nau } = require('../utils/fcmService');
+          _nau(reopenedUserIds, `🔓 ${vendor.kitchenName} is Back!`, `Kitchen reopened! Your subscription has been extended by ${closureDays} day(s).`, { type: 'kitchen_reopened', screen: 'subscription' }).catch(console.error);
         }
       }
 
@@ -1395,18 +1569,26 @@ const getCommissionSummary = async (req, res) => {
     weekQueryStart.setUTCHours(0, 0, 0, 0);
     const weekQueryEnd = new Date(weekInfo.weekEnd);
 
+    // Commission counts every order where money was actually received:
+    // - status NOT cancelled / on-hold (active, completed, pending-extension, trial, expired all count)
+    // - paymentStatus = 'Paid'  (excludes unconfirmed cash orders)
     const orders = await Order.find({
       vendorId,
-      status: { $in: ['active', 'completed'] },
+      status:        { $nin: ['cancelled', 'on-hold'] },
+      paymentStatus: 'Paid',
       $or: [
         { createdAt: { $gte: weekQueryStart, $lte: weekQueryEnd } },
         { orderDate: { $gte: weekQueryStart, $lte: weekQueryEnd } }
       ]
-    }).select('amount status createdAt orderDate').lean();
+    }).select('amount walletDeduction status paymentStatus createdAt orderDate').lean();
 
     console.log(`[commission] vendorId=${vendorId} weekStart=${weekQueryStart.toISOString()} weekEnd=${weekQueryEnd.toISOString()} orders=${orders.length}`);
 
-    const totalEarning = orders.reduce((s, o) => s + (o.amount || 0), 0);
+    // Separate gross earnings from wallet deductions for transparency
+    const totalGross           = orders.reduce((s, o) => s + (o.amount || 0), 0);
+    const totalWalletDeductions = orders.reduce((s, o) => s + (o.walletDeduction || 0), 0);
+    // Commission base = gross − wallet (vendor actually received less cash)
+    const totalEarning = totalGross - totalWalletDeductions;
 
     // Tier lookup
     const tier = await CommissionSetting.findOne({
@@ -1432,15 +1614,16 @@ const getCommissionSummary = async (req, res) => {
       { vendorId, week: weekInfo.weekKey, isLocked: { $ne: true } },
       {
         $set: {
-          total_orders:        orders.length,
-          total_earning:       totalEarning,
-          commission_rate:     rate,
-          commission_amount:   commissionAmount,
-          due_date:            dueDate,
-          weekStart:           weekInfo.weekStart,
-          weekEnd:             weekInfo.weekEnd,
-          financialYear:       weekInfo.financialYear,
-          financialWeekNumber: weekInfo.fyWeekNumber,
+          total_orders:            orders.length,
+          total_earning:           totalGross,           // gross (before wallet)
+          total_wallet_deductions: totalWalletDeductions,
+          commission_rate:         rate,
+          commission_amount:       commissionAmount,     // on base (gross - wallet)
+          due_date:                dueDate,
+          weekStart:               weekInfo.weekStart,
+          weekEnd:                 weekInfo.weekEnd,
+          financialYear:           weekInfo.financialYear,
+          financialWeekNumber:     weekInfo.fyWeekNumber,
           settlementNumber
         },
         $setOnInsert: {
@@ -1702,6 +1885,11 @@ const markCashPaymentPaid = async (req, res) => {
       console.error('Failed to send cash payment confirmation email:', emailError);
     }
 
+    if (order.userId?._id) {
+      const { notifyCashPaymentConfirmed } = require('../utils/fcmService');
+      notifyCashPaymentConfirmed(order.userId._id, vendor.kitchenName, order.planType || 'subscription').catch(console.error);
+    }
+
     res.json({ message: 'Payment marked as paid', order });
   } catch (error) {
     console.error('markCashPaymentPaid error:', error);
@@ -1875,6 +2063,13 @@ const closeKitchenWithClosure = async (req, res) => {
         }
       }
 
+      // FCM push for emergency closure
+      const emergencyUserIds = activeOrders.map(o => o.userId?._id?.toString()).filter(Boolean);
+      if (emergencyUserIds.length > 0) {
+        const { notifyAllUsers: _nau } = require('../utils/fcmService');
+        _nau(emergencyUserIds, `🚨 ${vendor.kitchenName} Emergency Closure`, `${vendor.kitchenName} has had to close temporarily. Your plan will be extended when they reopen.`, { type: 'emergency_closure', screen: 'subscription' }).catch(console.error);
+      }
+
       return res.json({
         success:       true,
         message:       `Kitchen closed (emergency). ${activeOrders.length} subscribers notified.`,
@@ -1951,6 +2146,13 @@ const closeKitchenWithClosure = async (req, res) => {
           });
         }
       }
+    }
+
+    // FCM push for planned closure
+    const plannedUserIds = activeOrders.map(o => o.userId?._id?.toString()).filter(Boolean);
+    if (plannedUserIds.length > 0) {
+      const { notifyAllUsers: _nau } = require('../utils/fcmService');
+      _nau(plannedUserIds, `📅 ${vendor.kitchenName} Planned Closure`, `Closed ${startFormatted}–${endFormatted}. Your plan extended by ${plannedExtensionDays} day(s).`, { type: 'planned_closure', screen: 'subscription' }).catch(console.error);
     }
 
     res.json({
@@ -2057,6 +2259,261 @@ const reopenKitchen = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// @desc  Get all customers of this vendor with loyalty data
+// @route GET /api/vendor/customer-loyalty
+// ─────────────────────────────────────────────────────────────────────────────
+const getVendorCustomerLoyalty = async (req, res) => {
+  try {
+    const LoyaltyPoints = require('../models/LoyaltyPoints');
+    const { getUserLevel } = require('./loyaltyController');
+
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const orders = await Order.find({ vendorId: vendor._id })
+      .populate('userId', 'name email phone')
+      .sort({ createdAt: -1 });
+
+    const customerMap = {};
+    orders.forEach(order => {
+      const uid = order.userId?._id?.toString();
+      if (!uid) return;
+      if (!customerMap[uid]) {
+        customerMap[uid] = {
+          userId:             uid,
+          name:               order.userId.name,
+          email:              order.userId.email,
+          phone:              order.userId.phone,
+          totalOrders:        0,
+          totalSpent:         0,
+          firstOrder:         order.createdAt,
+          lastOrder:          order.createdAt,
+          planTypes:          [],
+          loyaltyPoints:      0,
+          loyaltyLevel:       getUserLevel(0),
+          totalSubscriptions: 0
+        };
+      }
+      customerMap[uid].totalOrders++;
+      customerMap[uid].totalSpent += order.amount || 0;
+      if (new Date(order.createdAt) > new Date(customerMap[uid].lastOrder))
+        customerMap[uid].lastOrder = order.createdAt;
+      if (order.planType && !customerMap[uid].planTypes.includes(order.planType))
+        customerMap[uid].planTypes.push(order.planType);
+    });
+
+    const customerIds = Object.keys(customerMap);
+    const loyaltyRecords = await LoyaltyPoints.find({ userId: { $in: customerIds } });
+    loyaltyRecords.forEach(record => {
+      const uid = record.userId.toString();
+      if (customerMap[uid]) {
+        customerMap[uid].loyaltyPoints      = record.points;
+        customerMap[uid].loyaltyLevel       = getUserLevel(record.points);
+        customerMap[uid].totalSubscriptions = record.totalSubscriptions;
+      }
+    });
+
+    const customers = Object.values(customerMap).sort((a, b) => b.totalSpent - a.totalSpent);
+    res.json({ totalCustomers: customers.length, customers });
+  } catch (error) {
+    console.error('getVendorCustomerLoyalty error:', error);
+    res.status(500).json({ message: 'Error fetching customer loyalty data', error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @desc  Get vendor's loyalty discount settings
+// @route GET /api/vendor/loyalty-settings
+// ─────────────────────────────────────────────────────────────────────────────
+const getLoyaltySettings = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id })
+      .select('loyaltyDiscountsEnabled walletCapPercent');
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    res.json({
+      loyaltyDiscountsEnabled: vendor.loyaltyDiscountsEnabled ?? true,
+      walletCapPercent:        vendor.walletCapPercent        ?? 20
+    });
+  } catch (err) {
+    console.error('[getLoyaltySettings]', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @desc  Update vendor's loyalty discount settings
+// @route PUT /api/vendor/loyalty-settings
+// Body: { loyaltyDiscountsEnabled: Boolean, walletCapPercent: Number (1–100) }
+// ─────────────────────────────────────────────────────────────────────────────
+const updateLoyaltySettings = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id })
+      .select('loyaltyDiscountsEnabled walletCapPercent kitchenName _id');
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const { loyaltyDiscountsEnabled, walletCapPercent } = req.body;
+
+    // Read current state BEFORE making any changes (for turningOff detection below)
+    const wasEnabled = vendor.loyaltyDiscountsEnabled ?? true;
+
+    // Validate + apply loyaltyDiscountsEnabled FIRST, then compute turningOff
+    if (loyaltyDiscountsEnabled !== undefined) {
+      if (typeof loyaltyDiscountsEnabled !== 'boolean') {
+        return res.status(400).json({ message: 'loyaltyDiscountsEnabled must be a boolean' });
+      }
+      vendor.loyaltyDiscountsEnabled = loyaltyDiscountsEnabled;
+    }
+
+    // Safe to compute now — loyaltyDiscountsEnabled is guaranteed boolean if provided
+    const turningOff = loyaltyDiscountsEnabled === false && wasEnabled === true;
+
+    if (walletCapPercent !== undefined) {
+      const cap = Number(walletCapPercent);
+      if (isNaN(cap) || cap < 1 || cap > 100) {
+        return res.status(400).json({ message: 'walletCapPercent must be between 1 and 100' });
+      }
+      vendor.walletCapPercent = cap;
+    }
+
+    await vendor.save();
+
+    // ── Notify affected active subscribers when vendor turns OFF loyalty ─────
+    if (turningOff) {
+      try {
+        const Order  = require('../models/Order');
+        const User   = require('../models/User');
+        const { sendEmail } = require('../utils/emailUtils');
+
+        // Find all users who currently have an active subscription at this vendor
+        const activeOrders = await Order.find({
+          vendorId: vendor._id,
+          status:   'active'
+        }).distinct('userId');
+
+        const affectedUsers = await User.find({
+          _id: { $in: activeOrders }
+        }).select('name email wallet');
+
+        console.log(`[loyaltySettings] Notifying ${affectedUsers.length} active subscribers that ${vendor.kitchenName} turned off loyalty`);
+
+        // FCM push to all affected users
+        const loyaltyUserIds = affectedUsers.map(u => u._id?.toString()).filter(Boolean);
+        if (loyaltyUserIds.length > 0) {
+          const { notifyAllUsers: _nau } = require('../utils/fcmService');
+          _nau(loyaltyUserIds, `Update from ${vendor.kitchenName}`, 'Loyalty wallet discounts are no longer accepted at this kitchen for new orders.', { type: 'loyalty_discount_off', screen: 'subscription' }).catch(console.error);
+        }
+
+        for (const u of affectedUsers) {
+          if (!u.email) continue;
+          try {
+            await sendEmail(
+              u.email,
+              `Update from ${vendor.kitchenName} — Loyalty Wallet Discounts`,
+              `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+                <div style="background:#f97316;padding:20px;text-align:center;border-radius:10px 10px 0 0">
+                  <h1 style="color:white;margin:0;font-size:20px">MealSetu Loyalty Update</h1>
+                </div>
+                <div style="background:white;padding:28px;border-radius:0 0 10px 10px;border:1px solid #e5e7eb">
+                  <p>Dear <strong>${u.name}</strong>,</p>
+                  <p>We wanted to let you know that <strong>${vendor.kitchenName}</strong> has updated their loyalty discount policy.</p>
+
+                  <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:16px;border-radius:8px;margin:20px 0">
+                    <p style="margin:0;color:#92400e;font-weight:600">ℹ️ Wallet discounts are no longer accepted at ${vendor.kitchenName} for new subscribers.</p>
+                  </div>
+
+                  <p><strong>What this means for you (existing subscriber):</strong></p>
+                  <ul style="color:#374151;line-height:1.8">
+                    <li>✅ Your current subscription continues normally — no changes.</li>
+                    <li>✅ As an existing loyal subscriber, you can <strong>still use your wallet credit</strong> when renewing at ${vendor.kitchenName}.</li>
+                    ${u.wallet > 0 ? `<li>💰 Your current wallet balance is <strong>₹${u.wallet}</strong>.</li>` : ''}
+                    <li>⏸️ Earning new loyalty points is <strong>paused</strong> at ${vendor.kitchenName} while loyalty discounts are off. Your existing points balance is safe and will resume earning when they re-enable loyalty.</li>
+                  </ul>
+
+                  <p style="color:#64748b;font-size:13px;margin-top:24px">
+                    Thank you for being a loyal MealSetu customer!
+                  </p>
+                </div>
+              </div>`
+            );
+          } catch (emailErr) {
+            console.error(`[loyaltySettings] Email failed for user ${u.email}:`, emailErr.message);
+          }
+        }
+      } catch (notifyErr) {
+        // Non-fatal — settings are already saved, just log the error
+        console.error('[loyaltySettings] Notification error:', notifyErr.message);
+      }
+    }
+
+    res.json({
+      message:                 'Loyalty settings updated successfully',
+      loyaltyDiscountsEnabled: vendor.loyaltyDiscountsEnabled,
+      walletCapPercent:        vendor.walletCapPercent,
+      notifiedSubscribers:     turningOff ? true : false
+    });
+  } catch (err) {
+    console.error('[updateLoyaltySettings]', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// @desc   Vendor resolves a final-failed delivery — compensate (+1 meal) or no action
+// @route  PATCH /api/vendor/delivery/failed/:orderId/resolve
+const resolveFailedDelivery = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { action }  = req.body; // 'compensated' | 'no_action'
+
+    if (!['compensated', 'no_action'].includes(action)) {
+      return res.status(400).json({ message: 'action must be "compensated" or "no_action"' });
+    }
+
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const order = await Order.findOne({ _id: orderId, vendorId: vendor._id });
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.failureResolution?.action) {
+      return res.status(400).json({ message: 'This delivery has already been resolved' });
+    }
+
+    order.failureResolution = { action, resolvedAt: new Date(), resolvedBy: req.user._id };
+    await order.save();
+
+    // Compensate: extend the customer's active subscription by +1 day
+    if (action === 'compensated') {
+      const sub = await Subscription.findOne({
+        userId:   order.userId,
+        vendorId: vendor._id,
+        status:   { $in: ['active', 'trial'] },
+      }).sort({ expiryDate: -1 });
+
+      if (sub) {
+        const current = new Date(sub.expiryDate);
+        current.setDate(current.getDate() + 1);
+        sub.expiryDate = current;
+        await sub.save();
+      }
+
+      // Notify customer about the free meal
+      const { notifyFreeMealAdded } = require('../utils/fcmService');
+      notifyFreeMealAdded(order.userId, vendor.kitchenName).catch(console.error);
+    }
+
+    return res.json({
+      message: action === 'compensated'
+        ? '+1 meal added to customer subscription'
+        : 'Marked as no compensation — customer was absent',
+      action,
+    });
+  } catch (err) {
+    console.error('resolveFailedDelivery:', err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getVendorProfile,
   updateVendorProfile,
@@ -2100,7 +2557,11 @@ module.exports = {
   extendAllPlansOnClosure,
   getWeekOrderBreakdown,
   downloadSettlementInvoice,
-  raiseCommissionDispute
+  raiseCommissionDispute,
+  getVendorCustomerLoyalty,
+  getLoyaltySettings,
+  updateLoyaltySettings,
+  resolveFailedDelivery,
 };
 
 // ===== RAZORPAY COMMISSION PAYMENT =====
@@ -2149,15 +2610,23 @@ async function createCommissionPaymentOrder(req, res) {
       });
     }
 
+    const amountPaise = Math.round(commission.commission_amount * 100);
+
     const razorpayOrder = await razorpay.orders.create({
-      amount:   Math.round(commission.commission_amount * 100),
+      amount:   amountPaise,
       currency: 'INR',
       receipt:  `c_${Date.now()}`,
       notes: {
         vendorId:     vendor._id.toString(),
         commissionId: commissionId,
-        type:         'commission_payment'
+        type:         'commission_payment',
+        expectedAmt:  String(commission.commission_amount)
       }
+    });
+
+    // Persist the expected Razorpay amount so verify-payment can cross-check
+    await Commission.findByIdAndUpdate(commissionId, {
+      $set: { expectedRazorpayAmount: commission.commission_amount }
     });
 
     res.json({
@@ -2178,8 +2647,9 @@ async function createCommissionPaymentOrder(req, res) {
 // @route POST /api/vendor/commission/verify-payment
 async function verifyCommissionPaymentRazorpay(req, res) {
   try {
-    const crypto          = require('crypto');
-    const Commission      = require('../models/Commission');
+    const crypto            = require('crypto');
+    const razorpay          = require('../utils/razorpayUtils');
+    const Commission        = require('../models/Commission');
     const CommissionPayment = require('../models/CommissionPayment');
 
     const {
@@ -2202,12 +2672,32 @@ async function verifyCommissionPaymentRazorpay(req, res) {
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
-    // Read due_date before the atomic update so we can compute paidOnTime
+    // Read commission before the atomic update — check status, due_date, and verify amount
     const existing = await Commission.findOne(
       { _id: commissionId, vendorId: vendor._id },
-      { due_date: 1, status: 1 }
+      { due_date: 1, status: 1, expectedRazorpayAmount: 1, commission_amount: 1 }
     ).lean();
     if (!existing) return res.status(404).json({ message: 'Commission not found' });
+
+    // Amount verification: if expectedRazorpayAmount was set, the Razorpay order amount must match.
+    // Fetch the actual Razorpay order to verify it wasn't tampered.
+    if (existing.expectedRazorpayAmount != null) {
+      try {
+        const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
+        const paidAmt  = Math.round(rzpOrder.amount / 100); // paise → rupees
+        if (paidAmt !== existing.expectedRazorpayAmount) {
+          console.error(`[verify-commission] Amount mismatch: expected ₹${existing.expectedRazorpayAmount}, got ₹${paidAmt} (orderId: ${razorpay_order_id})`);
+          return res.status(400).json({
+            success: false,
+            code:    'AMOUNT_MISMATCH',
+            message: `Payment amount ₹${paidAmt} does not match expected ₹${existing.expectedRazorpayAmount}. Please contact support.`
+          });
+        }
+      } catch (fetchErr) {
+        // If Razorpay order fetch fails, log and continue (don't block legitimate payments)
+        console.error('[verify-commission] Could not fetch Razorpay order for amount check:', fetchErr.message);
+      }
+    }
 
     const paymentTime  = new Date();
     const isPaidOnTime = paymentTime <= new Date(existing.due_date);
@@ -2254,6 +2744,30 @@ async function verifyCommissionPaymentRazorpay(req, res) {
       verifiedAt:        paymentTime
     });
 
+    // Auto-record commission as an expense entry
+    try {
+      const Expense = require('../models/Expense');
+      const weekLabel = commission.weekStart && commission.weekEnd
+        ? `${new Date(commission.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(commission.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+        : (commission.week || commission.month || 'this week');
+      const toMonthStr = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        return `${y}-${m}`;
+      };
+      await Expense.create({
+        vendorId:       vendor._id,
+        amount:         commission.commission_amount,
+        category:       'Platform Commission',
+        customCategory: '',
+        description:    `MealSetu platform commission — ${weekLabel}`,
+        date:           paymentTime,
+        month:          toMonthStr(paymentTime),
+      });
+    } catch (expErr) {
+      console.error('[auto-expense] Failed to record commission expense:', expErr.message);
+    }
+
     try {
       const vendorWithOwner = await Vendor.findById(vendor._id).populate('ownerId', 'email name');
       if (vendorWithOwner?.ownerId?.email) {
@@ -2277,6 +2791,14 @@ async function verifyCommissionPaymentRazorpay(req, res) {
       }
     } catch (emailErr) {
       console.error('Email failed:', emailErr.message);
+    }
+
+    if (vendor?.ownerId) {
+      const { notifyCommissionPaid } = require('../utils/fcmService');
+      const wLabel = commission.weekStart && commission.weekEnd
+        ? `${new Date(commission.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(commission.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+        : commission.month || 'this period';
+      notifyCommissionPaid(vendor.ownerId, wLabel, commission.commission_amount).catch(console.error);
     }
 
     res.json({
@@ -2351,9 +2873,10 @@ async function getWeekOrderBreakdown(req, res) {
     end.setUTCHours(23, 59, 59, 999);
 
     const orders = await Order.find({
-      vendorId: vendor._id,
-      status:   { $in: ['active', 'completed', 'trial'] },
-      createdAt: { $gte: start, $lte: end }
+      vendorId:      vendor._id,
+      status:        { $nin: ['cancelled', 'on-hold'] },
+      paymentStatus: 'Paid',
+      createdAt:     { $gte: start, $lte: end }
     })
       .populate('userId', 'name phone')
       .sort({ createdAt: 1 })
@@ -2365,40 +2888,53 @@ async function getWeekOrderBreakdown(req, res) {
       weekEnd:   { $lte: end }
     }).lean();
 
-    const commissionRate = commission?.commission_rate || 5;
-    const grossEarnings  = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
-    const commissionAmt  = commission?.commission_amount ||
-                           Math.round(grossEarnings * commissionRate / 100);
-    const netEarnings    = grossEarnings - commissionAmt;
+    const commissionRate       = commission?.commission_rate || 5;
+    const grossEarnings        = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
+    const totalWalletDeductions = orders.reduce((sum, o) => sum + (o.walletDeduction || 0), 0);
+    // Commission base = gross - wallet deductions (vendor already received less cash)
+    const commissionBase       = grossEarnings - totalWalletDeductions;
+    const commissionAmt        = commission?.commission_amount ||
+                                 Math.round(commissionBase * commissionRate / 100);
+    const netEarnings          = commissionBase - commissionAmt;
 
-    const orderBreakdown = orders.map(order => ({
-      orderId:       order._id,
-      orderDate:     order.createdAt,
-      customerName:  order.userId?.name || 'Customer',
-      customerPhone: order.userId?.phone || '',
-      planType:      order.planType,
-      grossAmount:   order.amount || 0,
-      commissionRate,
-      commissionCut: Math.round((order.amount || 0) * commissionRate / 100),
-      netAmount:     (order.amount || 0) - Math.round((order.amount || 0) * commissionRate / 100),
-      paymentMethod: order.paymentMethod,
-      paymentStatus: order.paymentStatus
-    }));
+    const orderBreakdown = orders.map(order => {
+      const gross     = order.amount || 0;
+      const wallet    = order.walletDeduction || 0;
+      const base      = gross - wallet;
+      const commCut   = Math.round(base * commissionRate / 100);
+      return {
+        orderId:          order._id,
+        orderDate:        order.createdAt,
+        customerName:     order.userId?.name || 'Customer',
+        customerPhone:    order.userId?.phone || '',
+        planType:         order.planType,
+        grossAmount:      gross,
+        walletDeduction:  wallet,
+        commissionBase:   base,
+        commissionRate,
+        commissionCut:    commCut,
+        netAmount:        base - commCut,
+        paymentMethod:    order.paymentMethod,
+        paymentStatus:    order.paymentStatus
+      };
+    });
 
     return res.json({
-      success:          true,
-      weekStart:        start,
-      weekEnd:          end,
-      weekKey:          commission?.week || '',
-      totalOrders:      orders.length,
+      success:               true,
+      weekStart:             start,
+      weekEnd:               end,
+      weekKey:               commission?.week || '',
+      totalOrders:           orders.length,
       grossEarnings,
+      totalWalletDeductions,
+      commissionBase,
       commissionRate,
-      commissionAmount: commissionAmt,
+      commissionAmount:      commissionAmt,
       netEarnings,
-      commissionStatus: commission?.status || 'pending',
-      dueDate:          commission?.due_date || null,
-      settlementId:     commission?._id || null,
-      orders:           orderBreakdown
+      commissionStatus:      commission?.status || 'pending',
+      dueDate:               commission?.due_date || null,
+      settlementId:          commission?._id || null,
+      orders:                orderBreakdown
     });
   } catch (err) {
     console.error('[getWeekOrderBreakdown]', err);
@@ -2424,9 +2960,10 @@ async function downloadSettlementInvoice(req, res) {
     end.setUTCHours(23, 59, 59, 999);
 
     const orders = await Order.find({
-      vendorId: vendor._id,
-      status:   { $in: ['active', 'completed', 'trial'] },
-      createdAt: { $gte: start, $lte: end }
+      vendorId:      vendor._id,
+      status:        { $nin: ['cancelled', 'on-hold'] },
+      paymentStatus: 'Paid',
+      createdAt:     { $gte: start, $lte: end }
     })
       .populate('userId', 'name')
       .lean();
@@ -2461,3 +2998,218 @@ async function downloadSettlementInvoice(req, res) {
     return res.status(500).json({ message: err.message });
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @desc   Subscription Analytics — subscriber behaviour & growth trends
+// @route  GET /api/vendor/subscription-analytics
+// @access Vendor (protected)
+// ─────────────────────────────────────────────────────────────────────────────
+const getSubscriptionAnalytics = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ ownerId: req.user._id });
+    if (!vendor) return res.status(404).json({ message: 'Vendor profile not found' });
+    const vendorId = vendor._id;
+    const now      = new Date();
+
+    // ── Date ranges ────────────────────────────────────────────────────────
+    const last30Days = new Date(now - 30 * 24 * 60 * 60 * 1000);
+    const last90Days = new Date(now - 90 * 24 * 60 * 60 * 1000); // eslint-disable-line no-unused-vars
+
+    // ── All orders for this vendor ─────────────────────────────────────────
+    const allOrders = await Order.find({ vendorId })
+      .populate('userId', 'name email phone')
+      .sort({ orderDate: -1 });
+
+    // ── 1. Status breakdown ────────────────────────────────────────────────
+    const activeOrders    = allOrders.filter(o =>
+      o.status === 'active' && new Date(o.endDate) >= now);
+    const pendingOrders   = allOrders.filter(o => o.status === 'pending');
+    const completedOrders = allOrders.filter(o =>
+      o.status === 'completed' ||
+      (o.status === 'active' && new Date(o.endDate) < now));
+    const trialOrders     = allOrders.filter(o => o.planType === 'Trial');
+
+    // Unique subscribers = users who have a currently running plan
+    // OR an upcoming pending plan (they already committed, they ARE subscribers)
+    const activeSubscriberIds = new Set([
+      ...activeOrders.map(o => o.userId?._id?.toString()).filter(Boolean),
+      ...pendingOrders.map(o => o.userId?._id?.toString()).filter(Boolean),
+    ]);
+
+    // ── 2. Churn rate ──────────────────────────────────────────────────────
+    const endedLast30 = allOrders.filter(o => {
+      const ended = new Date(o.endDate);
+      return ended >= last30Days && ended < now && o.status !== 'active';
+    });
+    const churnedUsers = [];
+    for (const order of endedLast30) {
+      const uid = order.userId?._id?.toString();
+      const hasNewOrder = allOrders.some(o =>
+        o.userId?._id?.toString() === uid &&
+        (o.status === 'active' || o.status === 'pending') &&
+        new Date(o.orderDate) > new Date(order.endDate)
+      );
+      if (!hasNewOrder) churnedUsers.push(order);
+    }
+    const churnRate   = endedLast30.length > 0
+      ? Math.round((churnedUsers.length / endedLast30.length) * 100) : 0;
+
+    // ── 3. Renewal rate ────────────────────────────────────────────────────
+    const renewedUsers  = endedLast30.length - churnedUsers.length;
+    const renewalRate   = endedLast30.length > 0
+      ? Math.round((renewedUsers / endedLast30.length) * 100) : 0;
+
+    // ── 4. Plan popularity ─────────────────────────────────────────────────
+    const planCounts  = { Trial: 0, Weekly: 0, Monthly: 0 };
+    const planRevenue = { Trial: 0, Weekly: 0, Monthly: 0 };
+    allOrders.forEach(o => {
+      if (planCounts[o.planType] !== undefined) {
+        planCounts[o.planType]++;
+        planRevenue[o.planType] += o.amount || 0;
+      }
+    });
+    const totalOrders     = allOrders.length;
+    const mostPopularPlan = Object.entries(planCounts)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || 'Weekly';
+
+    // ── 5. Weekly trend (last 8 weeks) ─────────────────────────────────────
+    const weeklyTrend = [];
+    for (let i = 7; i >= 0; i--) {
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - (i * 7) - 7);
+      const weekEnd = new Date(now);
+      weekEnd.setDate(now.getDate() - (i * 7));
+
+      const weekOrders = allOrders.filter(o => {
+        const d = new Date(o.orderDate || o.startDate);
+        return d >= weekStart && d < weekEnd;
+      });
+      weeklyTrend.push({
+        week:             `Week ${8 - i}`,
+        weekLabel:        weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+        newSubscriptions: weekOrders.length,
+        revenue:          weekOrders.reduce((s, o) => s + (o.amount || 0), 0),
+      });
+    }
+
+    // ── 6. Monthly trend (last 6 months) ───────────────────────────────────
+    const monthlyTrend = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthStart     = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const nextMonthStart = new Date(now.getFullYear(), now.getMonth() - i + 1, 1); // exclusive upper bound
+
+      const monthOrders = allOrders.filter(o => {
+        const d = new Date(o.orderDate || o.startDate);
+        return d >= monthStart && d < nextMonthStart;
+      });
+      monthlyTrend.push({
+        month:              monthStart.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+        newSubscriptions:   monthOrders.length,
+        revenue:            monthOrders.reduce((s, o) => s + (o.amount || 0), 0),
+        activeAtEndOfMonth: monthOrders.filter(o => new Date(o.endDate) >= nextMonthStart).length,
+      });
+    }
+
+    // ── 7. Expiring soon (next 7 days) — only users with NO upcoming plan ──
+    const next7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const expiringSoon = activeOrders
+      .filter(o => {
+        // Must expire within next 7 days
+        if (new Date(o.endDate) > next7Days) return false;
+
+        // Exclude if this user already has another active or pending order
+        // that starts after this order's end date (i.e. they already renewed)
+        const uid = o.userId?._id?.toString();
+        const hasUpcoming = allOrders.some(other =>
+          other._id.toString() !== o._id.toString() &&
+          other.userId?._id?.toString() === uid &&
+          (other.status === 'active' || other.status === 'pending') &&
+          new Date(other.startDate || other.createdAt) >= new Date(o.endDate)
+        );
+        return !hasUpcoming;
+      })
+      .map(o => ({
+        customerName:  o.userId?.name,
+        customerPhone: o.userId?.phone,
+        customerEmail: o.userId?.email,
+        planType:      o.planType,
+        expiryDate:    o.endDate,
+        daysLeft:      Math.ceil((new Date(o.endDate) - now) / (1000 * 60 * 60 * 24)),
+      }))
+      .sort((a, b) => a.daysLeft - b.daysLeft);
+
+    // ── 8. Payment method breakdown ────────────────────────────────────────
+    const paymentBreakdown = {};
+    allOrders.forEach(o => {
+      const method = o.paymentMethod || 'Cash';
+      paymentBreakdown[method] = (paymentBreakdown[method] || 0) + 1;
+    });
+
+    // ── 9. Trial conversion rate ───────────────────────────────────────────
+    const trialUserIds = [...new Set(
+      trialOrders.map(o => o.userId?._id?.toString()).filter(Boolean)
+    )];
+    let convertedFromTrial = 0;
+    for (const uid of trialUserIds) {
+      const trialDate = trialOrders.find(t =>
+        t.userId?._id?.toString() === uid)?.createdAt || 0;
+      const hasPaidPlan = allOrders.some(o =>
+        o.userId?._id?.toString() === uid &&
+        o.planType !== 'Trial' &&
+        new Date(o.orderDate || o.startDate) > new Date(trialDate)
+      );
+      if (hasPaidPlan) convertedFromTrial++;
+    }
+    const trialConversionRate = trialUserIds.length > 0
+      ? Math.round((convertedFromTrial / trialUserIds.length) * 100) : 0;
+
+    // ── Response ───────────────────────────────────────────────────────────
+    res.json({
+      summary: {
+        totalSubscriptions: allOrders.length,
+        activeNow:          activeSubscriberIds.size,
+        pendingUpcoming:    pendingOrders.length,
+        completedTotal:     completedOrders.length,
+        totalTrials:        trialOrders.length,
+        churnRate,
+        renewalRate,
+        mostPopularPlan,
+        trialConversionRate,
+      },
+      planBreakdown: {
+        Trial: {
+          count:      planCounts.Trial,
+          revenue:    planRevenue.Trial,
+          percentage: totalOrders > 0 ? Math.round((planCounts.Trial / totalOrders) * 100) : 0,
+        },
+        Weekly: {
+          count:      planCounts.Weekly,
+          revenue:    planRevenue.Weekly,
+          percentage: totalOrders > 0 ? Math.round((planCounts.Weekly / totalOrders) * 100) : 0,
+        },
+        Monthly: {
+          count:      planCounts.Monthly,
+          revenue:    planRevenue.Monthly,
+          percentage: totalOrders > 0 ? Math.round((planCounts.Monthly / totalOrders) * 100) : 0,
+        },
+      },
+      weeklyTrend,
+      monthlyTrend,
+      expiringSoon,
+      paymentBreakdown,
+      trialConversion: {
+        totalTrialUsers: trialUserIds.length,
+        converted:       convertedFromTrial,
+        notConverted:    trialUserIds.length - convertedFromTrial,
+        conversionRate:  trialConversionRate,
+      },
+    });
+  } catch (err) {
+    console.error('[getSubscriptionAnalytics]', err);
+    res.status(500).json({ message: 'Server Error', error: err.message });
+  }
+};
+
+// Export after definition (functions are consts declared after module.exports)
+module.exports.getSubscriptionAnalytics = getSubscriptionAnalytics;
+module.exports.getCustomerPlans = getCustomerPlans;

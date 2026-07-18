@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Subscription = require('../models/Subscription');
 const { sendEmail } = require('../utils/emailUtils');
+const { notifyAllUsers, notifyOfferRedeemed } = require('../utils/fcmService');
 const { computeSubscriptionDates, getPlanDurationDays } = require('../utils/mealTimingUtils');
 
 // Helper function to transform image path to full URL
@@ -138,8 +139,22 @@ const createOffer = async (req, res) => {
           }
           console.log(`Promotional emails sent to ${users.length} users for offer ${offer._id}`);
         }
+
+        // FCM push to all users
+        const userIds = users.map(u => u._id);
+        if (userIds.length > 0) {
+          const discountText = populatedOffer.planDiscounts
+            .map(pd => `${pd.planName}: ${pd.discountPercentage}% OFF`)
+            .join(', ');
+          notifyAllUsers(
+            userIds,
+            `🎁 New Offer from ${populatedOffer.vendorId.kitchenName}!`,
+            discountText,
+            { type: 'new_offer', offerId: String(offer._id), screen: 'offers' }
+          ).catch(console.error);
+        }
       } catch (emailError) {
-        console.error('Failed to send promotional emails:', emailError);
+        console.error('Failed to send promotional emails/FCM:', emailError);
       }
     });
 
@@ -636,6 +651,8 @@ const redeemOffer = async (req, res) => {
       } catch (e) { console.error('Offer email error:', e.message); }
     };
     if (isQueued) setImmediate(sendOfferEmail); else await sendOfferEmail();
+
+    notifyOfferRedeemed(userId, offer.vendorId.kitchenName, planType, discountedPrice).catch(console.error);
 
     return res.status(201).json({
       message: isQueued ? 'Offer redeemed successfully!' : 'Offer redeemed and activated successfully!',

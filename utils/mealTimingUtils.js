@@ -29,22 +29,35 @@ const computeSubscriptionDates = (planDurationDays, purchaseTime = new Date()) =
   let extraDays = 0;
   let mealSlotToday;
 
+  let lastDayMealSlot;
+
   if (utcHour < LUNCH_CUTOFF_UTC_HOURS) {
-    startDate     = todayMidnight;
-    mealSlotToday = 'both';
+    startDate      = todayMidnight;
+    mealSlotToday  = 'both';
+    lastDayMealSlot = 'both';   // no missed meals → last day is normal
   } else if (utcHour < DINNER_CUTOFF_UTC_HOURS) {
-    startDate     = todayMidnight;
-    extraDays     = 1;
-    mealSlotToday = 'dinner';
+    startDate      = todayMidnight;
+    extraDays      = 1;
+    mealSlotToday  = 'dinner';
+    lastDayMealSlot = 'lunch';  // missed lunch on day 1 → compensate on last day
   } else {
-    startDate     = tomorrowMidnight;
-    mealSlotToday = 'none';
+    startDate      = tomorrowMidnight;
+    mealSlotToday  = 'none';
+    lastDayMealSlot = 'both';   // starts tomorrow with full day → last day normal
   }
 
   const endDate = new Date(startDate);
-  endDate.setUTCDate(endDate.getUTCDate() + planDurationDays + extraDays);
+  // -1 makes endDate the INCLUSIVE last meal day (e.g. June 18 = last delivery)
+  // rather than exclusive (June 19 = day after, which caused an extra free day)
+  endDate.setUTCDate(endDate.getUTCDate() + planDurationDays + extraDays - 1);
 
-  return { startDate, endDate, mealSlotToday };
+  // firstDayMealSlot is what gets stored on the Order for batch filtering.
+  // 'none' means "no meals on purchase day" — but since startDate = tomorrow,
+  // the actual first delivery day is tomorrow and the user gets both meals.
+  // Storing 'none' would cause the batch filter to wrongly exclude them on day 1.
+  const firstDayMealSlot = mealSlotToday === 'none' ? 'both' : mealSlotToday;
+
+  return { startDate, endDate, mealSlotToday, firstDayMealSlot, lastDayMealSlot };
 };
 
 /**

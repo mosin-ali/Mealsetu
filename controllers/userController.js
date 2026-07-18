@@ -5,11 +5,14 @@ const Vendor = require('../models/Vendor');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const Transaction = require('../models/Transaction');
+const Complaint = require('../models/Complaint');
 const bcrypt = require('bcryptjs');
 const { sendEmail } = require('../utils/emailUtils');
 const { computeSubscriptionDates, getPlanDurationDays, getMealSlotInfo } = require('../utils/mealTimingUtils');
+const { geocodeAddress } = require('../utils/geocode');
 const VendorPricing = require('../models/VendorPricing');
-const JainMenu = require('../models/JainMenu');
+const JainMenu      = require('../models/JainMenu');
+const { awardSubscriptionPoints, awardReviewPoints } = require('./loyaltyController');
 
 // Helper function to transform profilePic path to full URL
 const transformProfilePic = (profilePic, protocol, host) => {
@@ -175,6 +178,8 @@ const applyLeave = async (req, res) => {
       } catch (emailErr) {
         console.error('Leave email failed:', emailErr);
       }
+      const { notifyLeaveApplied } = require('../utils/fcmService');
+      notifyLeaveApplied(userId, leaveDays, newExpiry).catch(console.error);
 
       return res.status(200).json({
         message: 'Leave applied successfully. Your active subscription has been extended.',
@@ -367,6 +372,14 @@ const extendSubscription = async (req, res) => {
       scheduledEndDate: newExpiryDate
     });
 
+    // Notify vendor analytics dashboard in real-time
+    try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
+
+    // Award loyalty points — isRenewal=true when extending an existing active subscription
+    // skipPoints if offer order; vendorId so vendor loyalty-off check runs inside
+    awardSubscriptionPoints(userId, planType, order._id, !!existingSubscription, { skipPoints: !!order.isOfferOrder, vendorId })
+      .catch(err => console.error('Loyalty points error (extendSubscription):', err));
+
     try {
       const emailSubject = `MealSetu - ${planType} Subscription ${existingSubscription ? 'Extended' : 'Activated'}`;
       const emailHtml = `
@@ -389,6 +402,8 @@ const extendSubscription = async (req, res) => {
     } catch (emailError) {
       console.error('Failed to send confirmation email:', emailError);
     }
+    const { notifySubscriptionExtended } = require('../utils/fcmService');
+    notifySubscriptionExtended(userId, vendor.kitchenName, planType, newExpiryDate).catch(console.error);
 
     res.status(200).json({
       message: existingSubscription ? 'Subscription extended successfully' : 'Subscription activated successfully',
@@ -420,6 +435,16 @@ const getCurrentUser = async (req, res) => {
     const userObj = user.toObject();
     userObj.profilePic = transformProfilePic(user.profilePic, req.protocol, req.get('host'));
 
+    // Compute display string from either new object or old string address
+    const addr = userObj.address;
+    if (addr && typeof addr === 'object') {
+      userObj.addressString = addr.fullAddress ||
+        [addr.flatHouseNo, addr.street, addr.area, addr.city, addr.pincode]
+          .filter(Boolean).join(', ');
+    } else {
+      userObj.addressString = typeof addr === 'string' ? addr : '';
+    }
+
     res.json(userObj);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -430,15 +455,77 @@ const getCurrentUser = async (req, res) => {
 // @route   PUT /api/users/:id
 const updateUserProfile = async (req, res) => {
   try {
-    const { name, phone, address, pincode, gender } = req.body;
-    const user = await User.findByIdAndUpdate(
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const { name, phone, pincode, gender } = req.body;
+
+    // Accept address fields as a nested object OR as flat top-level keys.
+    // Flutter sends { address: { flatHouseNo, street, … } }; some callers
+    // may send the fields at the top level — both are handled below.
+    const bodyAddr = req.body.address;
+    const src = (typeof bodyAddr === 'object' && bodyAddr !== null) ? bodyAddr : req.body;
+    const {
+      flatHouseNo, street, area, landmark, city,
+      latitude, longitude,
+      pincode: addrPincode,
+    } = src;
+
+    // Existing address (may be an object from the new schema or a legacy string).
+    const existingAddr =
+      (typeof user.address === 'object' && user.address !== null) ? user.address : {};
+
+    // Merge: undefined ⇒ keep existing; any other value (incl. '') ⇒ overwrite.
+    const newAddr = {
+      flatHouseNo: flatHouseNo ?? existingAddr.flatHouseNo ?? '',
+      street:      street      ?? existingAddr.street      ?? '',
+      area:        area        ?? existingAddr.area        ?? '',
+      landmark:    landmark    ?? existingAddr.landmark    ?? '',
+      city:        city        ?? existingAddr.city        ?? '',
+      pincode:     addrPincode ?? pincode ?? existingAddr.pincode ?? '',
+      latitude:    latitude    ?? existingAddr.latitude    ?? null,
+      longitude:   longitude   ?? existingAddr.longitude   ?? null,
+    };
+    newAddr.fullAddress = [
+      newAddr.flatHouseNo, newAddr.street,
+      newAddr.area, newAddr.landmark,
+      newAddr.city, newAddr.pincode,
+    ].filter(Boolean).join(', ');
+
+    // Re-geocode when address changed but no GPS coords provided by the client.
+    // Detect address change by comparing key fields against the existing address.
+    const addrChanged =
+      (area     !== undefined && area     !== existingAddr.area)     ||
+      (city     !== undefined && city     !== existingAddr.city)     ||
+      (street   !== undefined && street   !== existingAddr.street)   ||
+      ((addrPincode || pincode) !== undefined && (addrPincode || pincode) !== existingAddr.pincode);
+
+    const frontendSentCoords = latitude != null && longitude != null;
+
+    if (!frontendSentCoords && addrChanged && (newAddr.city || newAddr.pincode)) {
+      try {
+        const geoQuery = [newAddr.area, newAddr.city, newAddr.pincode].filter(Boolean).join(', ');
+        const coords = await geocodeAddress(`${geoQuery}, India`);
+        if (coords) {
+          newAddr.latitude  = coords.lat;
+          newAddr.longitude = coords.lng;
+        }
+      } catch (_) {}
+    }
+
+    const updateFields = { address: newAddr, pincode: newAddr.pincode || user.pincode || '' };
+    if (name  !== undefined) updateFields.name  = name;
+    if (phone !== undefined) updateFields.phone = phone;
+    updateFields.gender = (gender && gender.trim() !== '') ? gender.trim() : null;
+
+    const updated = await User.findByIdAndUpdate(
       req.params.id,
-      { name, phone, address, pincode, gender },
+      updateFields,
       { new: true }
     ).select('-password');
 
-    const userObj = user.toObject();
-    userObj.profilePic = transformProfilePic(user.profilePic, req.protocol, req.get('host'));
+    const userObj = updated.toObject();
+    userObj.profilePic = transformProfilePic(updated.profilePic, req.protocol, req.get('host'));
 
     res.json(userObj);
   } catch (error) {
@@ -510,13 +597,96 @@ const changePassword = async (req, res) => {
   }
 };
 
+// ── Auto-heal helper ──────────────────────────────────────────────────────────
+// If a race condition left multiple active/trial orders, keep the most recently
+// created one as active and reschedule the rest as pending (chained after it).
+// Also re-chains any pre-existing pending orders so dates stay consecutive.
+const healDuplicateActiveOrders = async (userId) => {
+  const now = new Date();
+  now.setUTCHours(0, 0, 0, 0);
+
+  const activeOrders = await Order.find({
+    userId,
+    status: { $in: ['active', 'trial'] },
+    endDate: { $gte: now },
+  }).sort({ createdAt: -1 }); // newest first → primary = activeOrders[0]
+
+  if (activeOrders.length <= 1) return; // nothing to fix
+
+  const primary = activeOrders[0];
+
+  // Chain starts the day after the primary plan ends
+  let cursor = new Date(primary.endDate);
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+  cursor.setUTCHours(0, 0, 0, 0);
+
+  const rescheduledIds = [];
+
+  // Step 1: reschedule each duplicate active order as pending
+  for (let i = 1; i < activeOrders.length; i++) {
+    const dup = activeOrders[i];
+    const days = Math.round(
+      (new Date(dup.endDate) - new Date(dup.startDate)) / 86400000
+    );
+    const newEnd = new Date(cursor);
+    newEnd.setUTCDate(newEnd.getUTCDate() + days);
+    newEnd.setUTCHours(0, 0, 0, 0);
+
+    await Order.findByIdAndUpdate(dup._id, {
+      $set: {
+        status:             'pending',
+        startDate:          cursor,
+        endDate:            newEnd,
+        scheduledStartDate: cursor,
+        scheduledEndDate:   newEnd,
+      },
+    });
+
+    rescheduledIds.push(dup._id.toString());
+    cursor = new Date(newEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  // Step 2: re-chain any pre-existing pending orders so they follow cleanly
+  const existingPending = await Order.find({
+    userId,
+    status: 'pending',
+    _id: { $nin: rescheduledIds },
+  }).sort({ startDate: 1 });
+
+  for (const p of existingPending) {
+    const days = Math.round(
+      (new Date(p.endDate) - new Date(p.startDate)) / 86400000
+    );
+    const newEnd = new Date(cursor);
+    newEnd.setUTCDate(newEnd.getUTCDate() + days);
+    newEnd.setUTCHours(0, 0, 0, 0);
+
+    await Order.findByIdAndUpdate(p._id, {
+      $set: {
+        startDate:          cursor,
+        endDate:            newEnd,
+        scheduledStartDate: cursor,
+        scheduledEndDate:   newEnd,
+      },
+    });
+
+    cursor = new Date(newEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+};
+
 // @desc    Get user orders
 // @route   GET /api/users/orders
 const getUserOrders = async (req, res) => {
   try {
+    // Fix any race-condition duplicates before returning data
+    await healDuplicateActiveOrders(req.user._id);
+
     const orders = await Order.find({ userId: req.user._id })
       .populate('vendorId', 'kitchenName address')
       .sort({ orderDate: -1 });
+
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
@@ -820,9 +990,9 @@ const placeOrder = async (req, res) => {
 
     const activeOrder = await Order.findOne({
       userId: req.user._id,
-      status: 'active',
+      status: { $in: ['active', 'trial'] },
       endDate: { $gte: now }
-    });
+    }).sort({ orderDate: -1 });
 
     console.log('=== CHECKING FOR ACTIVE ORDER ===');
     console.log('activeOrder found:', activeOrder ? activeOrder._id : null);
@@ -859,7 +1029,8 @@ const placeOrder = async (req, res) => {
         }
       }
 
-      subscriptionExpiryDate = new Date(subscriptionStartDate.getTime() + durationDays * 86400000);
+      // -1: endDate is inclusive last meal day (matches computeSubscriptionDates fix)
+      subscriptionExpiryDate = new Date(subscriptionStartDate.getTime() + (durationDays - 1) * 86400000);
 
       console.log('=== CREATING PENDING ORDER ===');
       console.log('scheduledStartDate:', subscriptionStartDate);
@@ -887,6 +1058,9 @@ const placeOrder = async (req, res) => {
       console.log('status:', order.status);
       console.log('===========================');
 
+      // Notify vendor analytics dashboard in real-time
+      try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
+
       try {
         const emailSubject = `MealSetu - ${planType} Subscription Queued!`;
         const emailHtml = `
@@ -911,6 +1085,21 @@ const placeOrder = async (req, res) => {
         console.error('Failed to send confirmation email:', emailError);
       }
 
+      // Award loyalty points (fire-and-forget — never blocks the response)
+      // skipPoints if offer order; vendorId so vendor loyalty-off check runs inside
+      awardSubscriptionPoints(req.user._id, planType, order._id, false, { skipPoints: !!order.isOfferOrder, vendorId })
+        .catch(err => console.error('Loyalty points error (placeOrder pending):', err));
+
+      // FCM notifications (fire-and-forget)
+      const { notifyOrderConfirmed, notifyVendorNewOrder } = require('../utils/fcmService');
+      notifyOrderConfirmed(req.user._id, {
+        planType, vendorName: vendor.kitchenName,
+        startDate: subscriptionStartDate, orderId: order._id,
+      }).catch(console.error);
+      if (vendor.ownerId) {
+        notifyVendorNewOrder(vendor.ownerId, user.name, planType, numericAmount).catch(console.error);
+      }
+
       return res.status(201).json({
         order,
         message: 'Order queued successfully. It will activate after your current plan ends.'
@@ -918,7 +1107,10 @@ const placeOrder = async (req, res) => {
     }
 
     // No active order — create active order immediately with smart meal timing
-    ({ startDate: subscriptionStartDate, endDate: subscriptionExpiryDate } =
+    ({ startDate: subscriptionStartDate, endDate: subscriptionExpiryDate,
+       mealSlotToday: subscriptionFirstDaySlot,
+       firstDayMealSlot: subscriptionFirstDayMealSlot,
+       lastDayMealSlot: subscriptionLastDaySlot } =
       computeSubscriptionDates(durationDays));
 
     const order = await Order.create({
@@ -932,13 +1124,18 @@ const placeOrder = async (req, res) => {
       planType,
       status: 'active',
       startDate: subscriptionStartDate,
-      endDate: subscriptionExpiryDate
+      endDate: subscriptionExpiryDate,
+      firstDayMealSlot: subscriptionFirstDayMealSlot || 'both',
+      lastDayMealSlot:  subscriptionLastDaySlot     || 'both',
     });
 
     console.log('=== ACTIVE ORDER SAVED ===');
     console.log('orderId:', order._id);
     console.log('status:', order.status);
     console.log('==========================');
+
+    // Notify vendor analytics dashboard in real-time
+    try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
 
     const subscription = await Subscription.create({
       userId: req.user._id,
@@ -954,6 +1151,21 @@ const placeOrder = async (req, res) => {
 
 user.expiryDate = subscriptionExpiryDate;
     await user.save();
+
+    // Award loyalty points for new active subscription (fire-and-forget)
+    // skipPoints if offer order; vendorId so vendor loyalty-off check runs inside
+    awardSubscriptionPoints(req.user._id, planType, order._id, false, { skipPoints: !!order.isOfferOrder, vendorId })
+      .catch(err => console.error('Loyalty points error (placeOrder active):', err));
+
+    // FCM notifications (fire-and-forget)
+    const { notifyOrderConfirmed: _notifyOC, notifyVendorNewOrder: _notifyVO } = require('../utils/fcmService');
+    _notifyOC(req.user._id, {
+      planType, vendorName: vendor.kitchenName,
+      startDate: subscriptionStartDate, orderId: order._id,
+    }).catch(console.error);
+    if (vendor.ownerId) {
+      _notifyVO(vendor.ownerId, user.name, planType, numericAmount).catch(console.error);
+    }
 
     // ===== REAL-TIME: Emit socket events for new order =====
     if (io) {
@@ -1039,69 +1251,190 @@ user.expiryDate = subscriptionExpiryDate;
   }
 };
 
-// @desc    Add Review
+// ── Helper: recalculate and persist Vendor.rating + Vendor.reviewCount ──────
+const updateVendorRating = async (vendorId) => {
+  const agg = await Review.aggregate([
+    { $match: { vendorId: new (require('mongoose').Types.ObjectId)(vendorId), isHidden: { $ne: true } } },
+    { $group: { _id: null, avg: { $avg: '$rating' }, total: { $sum: 1 } } },
+  ]);
+  const avg   = agg.length ? Math.round(agg[0].avg * 10) / 10 : 0;
+  const count = agg.length ? agg[0].total : 0;
+  await Vendor.findByIdAndUpdate(vendorId, { rating: avg, reviewCount: count });
+};
+
+// @desc    Add or update review (one review per user per vendor)
 // @route   POST /api/users/review
 const addReview = async (req, res) => {
   try {
-    const { vendorId, rating, comment, orderId } = req.body;
+    const { vendorId, rating, comment, images } = req.body;
 
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    // Validate rating
+    const r = Number(rating);
+    if (!r || r < 1 || r > 5) {
+      return res.status(400).json({ message: 'Rating must be between 1 and 5' });
     }
 
-    const hasOrderedFromVendor = await Order.findOne({
-      userId: req.user._id,
-      vendorId: vendorId
-    });
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
-    if (!hasOrderedFromVendor) {
+    // Must have at least one order from this vendor (any status)
+    const qualifyingOrder = await Order.findOne({
+      userId:   req.user._id,
+      vendorId: vendorId,
+      status:   { $in: ['active', 'trial', 'completed', 'expired', 'pending'] },
+    }).sort({ orderDate: -1 });
+
+    if (!qualifyingOrder) {
       return res.status(403).json({
-        message: 'You must have placed an order from this vendor to leave a review'
+        message: 'You must have placed an order from this vendor to leave a review',
       });
     }
 
-    const review = await Review.create({
-      userId: req.user._id,
-      vendorId,
-      orderId: hasOrderedFromVendor._id,
-      rating,
-      comment,
-      customerName: user.name || 'Anonymous'
-    });
+    // Determine if verified purchase (completed / expired plan)
+    const isVerifiedPurchase = ['completed', 'expired', 'active'].includes(qualifyingOrder.status);
 
-    res.status(201).json(review);
+    // Upsert — one review per userId+vendorId
+    const existing = await Review.findOne({ userId: req.user._id, vendorId });
+    let review;
+    let isNew = false;
+
+    if (existing) {
+      existing.rating             = r;
+      existing.comment            = comment || existing.comment;
+      existing.images             = images  || existing.images;
+      existing.isEdited           = true;
+      existing.editedAt           = new Date();
+      existing.isVerifiedPurchase = isVerifiedPurchase;
+      existing.planType           = qualifyingOrder.planType || existing.planType;
+      existing.mealDate           = qualifyingOrder.orderDate || existing.mealDate;
+      await existing.save();
+      review = existing;
+    } else {
+      review = await Review.create({
+        userId:             req.user._id,
+        vendorId,
+        orderId:            qualifyingOrder._id,
+        rating:             r,
+        comment:            comment || '',
+        images:             images  || [],
+        customerName:       user.name || 'Anonymous',
+        isVerifiedPurchase,
+        planType:           qualifyingOrder.planType || '',
+        mealDate:           qualifyingOrder.orderDate,
+      });
+      isNew = true;
+    }
+
+    // Recalculate vendor rating
+    await updateVendorRating(vendorId);
+
+    // Award loyalty points (fire-and-forget, only for new reviews)
+    if (isNew) {
+      awardReviewPoints(req.user._id)
+        .catch(err => console.error('Loyalty points error (addReview):', err));
+    }
+
+    // Notify vendor about new review (fire-and-forget, only for new reviews)
+    if (isNew) {
+      const vendorDoc = await (require('../models/Vendor')).findById(vendorId).select('ownerId').lean();
+      if (vendorDoc?.ownerId) {
+        const { notifyVendorNewReview } = require('../utils/fcmService');
+        notifyVendorNewReview(vendorDoc.ownerId, user.name, r).catch(console.error);
+      }
+    }
+
+    res.status(isNew ? 201 : 200).json({ review, isNew });
   } catch (error) {
     console.error('Add review error:', error);
     res.status(500).json({ message: 'Error adding review' });
   }
 };
 
-// @desc    Get Vendor Reviews
+// @desc    Get Vendor Reviews (Amazon-style with analytics)
 // @route   GET /api/users/vendor-reviews/:vendorId
 const getVendorReviews = async (req, res) => {
   try {
     const { vendorId } = req.params;
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(50, parseInt(req.query.limit) || 20);
+    const skip  = (page - 1) * limit;
 
-    const reviews = await Review.find({ vendorId })
-      .populate('userId', 'name')
-      .sort({ rating: -1, createdAt: -1 });
+    // Only visible reviews for public view
+    const baseFilter = { vendorId, isHidden: { $ne: true } };
 
-    const formattedReviews = reviews.map(review => ({
-      _id: review._id,
-      user: review.customerName || review.userId?.name || 'Anonymous',
-      rating: review.rating,
-      stars: review.rating,
-      comment: review.comment,
-      date: new Date(review.createdAt).toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric'
+    // ── Analytics aggregation ─────────────────────────────────────────────
+    const agg = await Review.aggregate([
+      { $match: { vendorId: new (require('mongoose').Types.ObjectId)(vendorId), isHidden: { $ne: true } } },
+      {
+        $group: {
+          _id:           null,
+          avgRating:     { $avg: '$rating' },
+          totalReviews:  { $sum: 1 },
+          // Count as verified if isVerifiedPurchase=true OR orderId is set (backward compat with old reviews)
+          verifiedCount: { $sum: { $cond: [
+            { $or: [
+              { $eq: ['$isVerifiedPurchase', true] },
+              { $gt: ['$orderId', null] }
+            ]},
+            1, 0
+          ]}},
+          r1: { $sum: { $cond: [{ $eq: ['$rating', 1] }, 1, 0] } },
+          r2: { $sum: { $cond: [{ $eq: ['$rating', 2] }, 1, 0] } },
+          r3: { $sum: { $cond: [{ $eq: ['$rating', 3] }, 1, 0] } },
+          r4: { $sum: { $cond: [{ $eq: ['$rating', 4] }, 1, 0] } },
+          r5: { $sum: { $cond: [{ $eq: ['$rating', 5] }, 1, 0] } },
+        },
+      },
+    ]);
+
+    const g     = agg[0] || {};
+    const total = g.totalReviews || 0;
+    const avg   = total ? Math.round((g.avgRating || 0) * 10) / 10 : 0;
+
+    const ratingLabel = avg >= 4.5 ? 'Excellent' : avg >= 4.0 ? 'Very Good'
+      : avg >= 3.5 ? 'Good' : avg >= 3.0 ? 'Average' : avg > 0 ? 'Poor' : 'No Reviews';
+
+    const breakdown = { 5: g.r5 || 0, 4: g.r4 || 0, 3: g.r3 || 0, 2: g.r2 || 0, 1: g.r1 || 0 };
+    const breakdownPercent = {};
+    [5,4,3,2,1].forEach(s => {
+      breakdownPercent[s] = total ? Math.round((breakdown[s] / total) * 100) : 0;
+    });
+
+    // ── Reviews list ──────────────────────────────────────────────────────
+    const reviews = await Review.find(baseFilter)
+      .sort({ helpfulCount: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const formattedReviews = reviews.map(rv => ({
+      _id:                rv._id,
+      user:               rv.customerName || 'Anonymous',
+      rating:             rv.rating,
+      comment:            rv.comment,
+      images:             rv.images || [],
+      isVerifiedPurchase: rv.isVerifiedPurchase,
+      planType:           rv.planType,
+      helpfulCount:       rv.helpfulCount || 0,
+      isEdited:           rv.isEdited,
+      date: new Date(rv.createdAt).toLocaleDateString('en-GB', {
+        day: 'numeric', month: 'short', year: 'numeric',
       }),
-      createdAt: review.createdAt
+      createdAt: rv.createdAt,
     }));
 
-    res.json(formattedReviews);
+    res.json({
+      analytics: {
+        avgRating:        avg,
+        totalReviews:     total,
+        verifiedCount:    g.verifiedCount || 0,
+        ratingLabel,
+        breakdown,
+        breakdownPercent,
+      },
+      reviews:    formattedReviews,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
   } catch (error) {
     console.error('Get vendor reviews error:', error);
     res.status(500).json({ message: 'Error fetching reviews' });
@@ -1163,12 +1496,20 @@ const getApprovedVendors = async (req, res) => {
   try {
     const vendors = await Vendor.find({
       isApproved: true
-    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan _id jainWeeklyPlan offersJainMenu');
+    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan deliveryEnabled _id');
 
     const vendorIds = vendors.map(v => v._id);
 
-    // ✅ PRICING - Single query
-    const pricingRecords = await VendorPricing.find({ vendor_id: { $in: vendorIds } });
+    // ✅ PRICING + JAIN MENU + REVIEW STATS — all in parallel
+    const [pricingRecords, jainMenuRecords, reviewAgg] = await Promise.all([
+      VendorPricing.find({ vendor_id: { $in: vendorIds } }),
+      JainMenu.find({ vendor_id: { $in: vendorIds } }),
+      Review.aggregate([
+        { $match: { vendorId: { $in: vendorIds }, isHidden: { $ne: true } } },
+        { $group: { _id: '$vendorId', count: { $sum: 1 }, avg: { $avg: '$rating' } } },
+      ]),
+    ]);
+
     const pricingByVendor = {};
     pricingRecords.forEach(record => {
       if (!pricingByVendor[record.vendor_id.toString()]) pricingByVendor[record.vendor_id.toString()] = [];
@@ -1179,18 +1520,25 @@ const getApprovedVendors = async (req, res) => {
       });
     });
 
-    // ✅ JAIN MENU - Single query for all vendors
-    const jainMenuRecords = await JainMenu.find({ vendor_id: { $in: vendorIds } });
     const jainMenuByVendor = {};
     jainMenuRecords.forEach(record => {
       if (!jainMenuByVendor[record.vendor_id.toString()]) jainMenuByVendor[record.vendor_id.toString()] = [];
       jainMenuByVendor[record.vendor_id.toString()].push(record);
     });
 
+    // Live review stats lookup
+    const reviewStats = {};
+    reviewAgg.forEach(r => {
+      reviewStats[r._id.toString()] = {
+        count: r.count,
+        avg:   Math.round(r.avg * 10) / 10,
+      };
+    });
+
     const transformedVendors = vendors.map(vendor => {
       const activePricing = (pricingByVendor[vendor._id.toString()] || []).filter(p => p.active && p.price > 0);
-      const jainMenu = jainMenuByVendor[vendor._id.toString()] || [];
-      
+      const rv = reviewStats[vendor._id.toString()];
+
       return {
         _id: vendor._id,
         vendorId: vendor._id,
@@ -1198,7 +1546,8 @@ const getApprovedVendors = async (req, res) => {
         address: vendor.address,
         pincode: vendor.pincode || '',
         price: vendor.menuPrice || 80,
-        rating: vendor.rating || 4.5,
+        rating:      rv ? rv.avg   : 0,   // 0 = no reviews yet
+        reviewCount: rv ? rv.count : 0,   // live count from Review collection
         type: 'Regular',
         fssai: vendor.fssaiNumber || '',
         workingDays: vendor.workingDays || 'Mon - Sat',
@@ -1249,7 +1598,7 @@ const getVendorsByPincode = async (req, res) => {
     let vendors = await Vendor.find({
       isApproved: true,
       pincode: pincode
-    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan _id jainWeeklyPlan offersJainMenu');
+    }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan deliveryEnabled _id');
 
     let locationNote = '';
 
@@ -1258,11 +1607,11 @@ const getVendorsByPincode = async (req, res) => {
     vendors = await Vendor.find({
         isApproved: true,
         $expr: { $regexMatch: { input: '$pincode', regex: `^${prefix3}` } }
-      }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan _id jainWeeklyPlan offersJainMenu');
+      }).select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan deliveryEnabled _id');
 
       if (vendors.length === 0) {
     vendors = await Vendor.find({ isApproved: true })
-      .select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan _id jainWeeklyPlan offersJainMenu');
+      .select('kitchenName address pincode menuPrice rating workingDays timings profileImage kitchenPoster weeklyPlan trialEnabled trialFee latitude longitude upiId offersJainMenu jainWeeklyPlan deliveryEnabled _id');
         locationNote = 'Showing all available vendors — no vendors found in your exact area yet';
       } else {
         locationNote = `Found ${vendors.length} vendors near ${pincode} (area match)`;
@@ -1273,7 +1622,15 @@ const getVendorsByPincode = async (req, res) => {
 
     // ✅ OPTIMIZED pricing fetch (same as getMenus/getApprovedVendors)
     const vendorIds = vendors.map(v => v._id);
-    const pricingRecords = await VendorPricing.find({ vendor_id: { $in: vendorIds } });
+    const [pricingRecords, reviewAgg] = await Promise.all([
+      VendorPricing.find({ vendor_id: { $in: vendorIds } }),
+      // Live review count + avg rating — single aggregation for all vendors at once
+      Review.aggregate([
+        { $match: { vendorId: { $in: vendorIds }, isHidden: { $ne: true } } },
+        { $group: { _id: '$vendorId', count: { $sum: 1 }, avg: { $avg: '$rating' } } },
+      ]),
+    ]);
+
     const pricingByVendor = {};
     pricingRecords.forEach(record => {
       if (!pricingByVendor[record.vendor_id.toString()]) {
@@ -1286,8 +1643,18 @@ const getVendorsByPincode = async (req, res) => {
       });
     });
 
+    // Build lookup: vendorId → { count, avg }
+    const reviewStats = {};
+    reviewAgg.forEach(r => {
+      reviewStats[r._id.toString()] = {
+        count: r.count,
+        avg:   Math.round(r.avg * 10) / 10,
+      };
+    });
+
     const transformedVendors = vendors.map(vendor => {
       const activePricing = (pricingByVendor[vendor._id.toString()] || []).filter(p => p.active && p.price > 0);
+      const rv = reviewStats[vendor._id.toString()];
       let distanceKm = null;
       if (userLatitude && userLongitude && vendor.latitude && vendor.longitude) {
         distanceKm = haversineDistance(userLatitude, userLongitude, vendor.latitude, vendor.longitude);
@@ -1300,7 +1667,8 @@ const getVendorsByPincode = async (req, res) => {
         address: vendor.address,
         pincode: vendor.pincode || '',
         price: vendor.menuPrice || 80,
-        rating: vendor.rating || 4.5,
+        rating:      rv ? rv.avg   : 0,   // 0 = no reviews (shows "New" badge in app)
+        reviewCount: rv ? rv.count : 0,   // live count from Review collection
         type: 'Regular',
         fssai: vendor.fssaiNumber || '',
         workingDays: vendor.workingDays || 'Mon - Sat',
@@ -1311,9 +1679,10 @@ const getVendorsByPincode = async (req, res) => {
         weeklyPlan: vendor.weeklyPlan,
         trialEnabled: vendor.trialEnabled === true,
         trialFee: vendor.trialFee || 0,
-        offersJainMenu: vendor.offersJainMenu || false,
-        jainWeeklyPlan: vendor.jainWeeklyPlan || {},
-        pricing: activePricing,  // ✅ From VendorPricing collection
+        offersJainMenu:  vendor.offersJainMenu  || false,
+        jainWeeklyPlan:  vendor.jainWeeklyPlan  || {},
+        deliveryEnabled: vendor.deliveryEnabled  === true,
+        pricing: activePricing,
         distanceKm,
         latitude: vendor.latitude,
         longitude: vendor.longitude
@@ -1349,7 +1718,7 @@ const checkReviewEligibility = async (req, res) => {
         canReview: true,
         hasOrdered: true,
         orderId: anyOrder._id,
-        orderStatus: anyOrder.orderStatus,
+        orderStatus: anyOrder.status,
         message: 'You can review this vendor!'
       });
     }
@@ -1364,6 +1733,90 @@ const checkReviewEligibility = async (req, res) => {
   } catch (error) {
     console.error('Check review eligibility error:', error);
     res.status(500).json({ message: 'Error checking review eligibility' });
+  }
+};
+
+// @desc    Mark a review as helpful (+1)
+// @route   POST /api/users/review/:id/helpful
+const markReviewHelpful = async (req, res) => {
+  try {
+    const review = await Review.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { helpfulCount: 1 } },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+    res.json({ helpfulCount: review.helpfulCount });
+  } catch (error) {
+    console.error('Mark helpful error:', error);
+    res.status(500).json({ message: 'Error marking review helpful' });
+  }
+};
+
+// @desc    Flag a review (report inappropriate content)
+// @route   POST /api/users/review/:id/flag
+const flagReview = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const review = await Review.findByIdAndUpdate(
+      req.params.id,
+      { isFlagged: true, flagReason: reason || 'Inappropriate content' },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+    res.json({ message: 'Review flagged for moderation', reviewId: review._id });
+  } catch (error) {
+    console.error('Flag review error:', error);
+    res.status(500).json({ message: 'Error flagging review' });
+  }
+};
+
+// @desc    Get vendors where user has a recently-ended plan but hasn't reviewed yet
+// @route   GET /api/users/pending-rating
+const getPendingRating = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    // Orders that ended in the last 7 days
+    const recentOrders = await Order.find({
+      userId,
+      status:    { $in: ['completed', 'expired'] },
+      endDate:   { $gte: sevenDaysAgo },
+    }).sort({ endDate: -1 }).lean();
+
+    if (!recentOrders.length) return res.json([]);
+
+    // Vendors the user has already reviewed
+    const reviewedVendorIds = (await Review.find({ userId }, 'vendorId').lean())
+      .map(r => r.vendorId.toString());
+
+    // Unique vendor IDs not yet reviewed
+    const seen = new Set();
+    const pending = recentOrders.filter(o => {
+      const vid = o.vendorId.toString();
+      if (seen.has(vid) || reviewedVendorIds.includes(vid)) return false;
+      seen.add(vid);
+      return true;
+    });
+
+    const vendorIds  = pending.map(o => o.vendorId);
+    const vendorDocs = await Vendor.find({ _id: { $in: vendorIds } }, 'kitchenName profileImage').lean();
+    const vendorMap  = Object.fromEntries(vendorDocs.map(v => [v._id.toString(), v]));
+
+    const result = pending.map(o => ({
+      orderId:     o._id,
+      vendorId:    o.vendorId,
+      kitchenName: vendorMap[o.vendorId.toString()]?.kitchenName || 'Unknown',
+      profileImage: vendorMap[o.vendorId.toString()]?.profileImage || null,
+      planType:    o.planType,
+      endDate:     o.endDate,
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Get pending rating error:', error);
+    res.status(500).json({ message: 'Error fetching pending ratings' });
   }
 };
 
@@ -1388,11 +1841,21 @@ const getTrialEligibility = async (req, res) => {
       });
     }
 
-    const hasUsedTrial = user.trialHistory && user.trialHistory.some(
+    // Check trialHistory array on User document.
+    const hasUsedTrialHistory = user.trialHistory && user.trialHistory.some(
       trial => trial.vendorId && trial.vendorId.toString() === vendorId
     );
 
-    if (hasUsedTrial) {
+    // Belt-and-braces: also check the Order table.
+    // If user.save() ever failed while creating the trial, trialHistory may be
+    // empty even though an Order record exists — this covers that edge case.
+    const existingTrialOrder = await Order.findOne({
+      userId,
+      vendorId,
+      planType: 'Trial'
+    }).lean();
+
+    if (hasUsedTrialHistory || existingTrialOrder) {
       return res.json({
         eligible: false,
         reason: 'trial_already_used',
@@ -1485,17 +1948,27 @@ const createTrialOrder = async (req, res) => {
       return res.status(400).json({ message: 'This vendor does not offer trials' });
     }
 
-    const hasUsedTrial = user.trialHistory && user.trialHistory.some(
+    // ── Duplicate trial check — trialHistory + Order table (belt-and-braces) ──
+    // user.save() can fail when the User document has a field with an invalid
+    // enum value (e.g. gender: ''), which would skip saving trialHistory even
+    // after a successful order creation.  Checking the Order table as a fallback
+    // ensures the button goes grey even if trialHistory was never persisted.
+    const hasUsedTrialHistory = user.trialHistory && user.trialHistory.some(
       trial => trial.vendorId && trial.vendorId.toString() === vendorId
     );
+    const existingTrialOrder = await Order.findOne({
+      userId: req.user._id,
+      vendorId,
+      planType: 'Trial'
+    }).lean();
 
-    if (hasUsedTrial) {
+    if (hasUsedTrialHistory || existingTrialOrder) {
       return res.status(403).json({ message: 'You have already used a trial for this vendor' });
     }
 
     const trialFee = vendor.trialFee || 0;
     const { startDate, endDate, mealSlotToday } = computeSubscriptionDates(
-      getPlanDurationDays('Trial')   // 2 days
+      getPlanDurationDays('Trial')
     );
 
     let paymentStatus = 'Pending';
@@ -1519,9 +1992,12 @@ const createTrialOrder = async (req, res) => {
         paymentMethod: trialFee > 0 ? paymentMethod : 'Free',
         startDate,
         endDate,
+        firstDayMealSlot: mealSlotToday || 'both',
         orderStatus: 'Preparing'
       });
       console.log('Trial order created successfully:', order._id);
+      // Notify vendor analytics dashboard in real-time
+      try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
     } catch (orderError) {
       console.error('Error creating trial order:', orderError.message);
       return res.status(500).json({ message: 'Error creating trial order: ' + orderError.message });
@@ -1544,9 +2020,18 @@ const createTrialOrder = async (req, res) => {
       console.error('Error creating trial subscription:', subError.message);
     }
 
-    if (!user.trialHistory) user.trialHistory = [];
-    user.trialHistory.push({ vendorId, trialTakenAt: new Date() });
-    await user.save();
+    // ── Persist trialHistory with $push to bypass Mongoose document-level
+    // validators (e.g. enum on gender: '').  Using findByIdAndUpdate with $push
+    // is atomic and does NOT run schema validators on unrelated fields.
+    try {
+      await User.findByIdAndUpdate(
+        req.user._id,
+        { $push: { trialHistory: { vendorId, trialTakenAt: new Date() } } }
+      );
+    } catch (histErr) {
+      // Non-fatal — order was already created; log and continue.
+      console.error('trialHistory update failed (non-fatal):', histErr.message);
+    }
 
     try {
       const slotInfo = getMealSlotInfo(startDate, new Date());
@@ -1589,17 +2074,27 @@ const createTrialOrder = async (req, res) => {
     } catch (emailError) {
       console.error('Failed to send trial confirmation email:', emailError);
     }
+    const { notifyTrialConfirmed } = require('../utils/fcmService');
+    notifyTrialConfirmed(req.user._id, vendor.kitchenName, order._id).catch(console.error);
 
-    const io = req.app.get('io');
-    if (io) {
-      io.to(req.user._id.toString()).emit('subscription_updated', {
-        type: 'trial_started',
-        message: 'Your trial is now active!'
-      });
-      io.to(`vendor_${vendorId}`).emit('new_order', {
-        type: 'trial_order',
-        message: 'New trial order received'
-      });
+    // Socket.IO is fire-and-forget — any emit error must NOT reach the outer
+    // catch block, because by this point the order, subscription, and
+    // trialHistory have all been saved successfully.
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        io.to(req.user._id.toString()).emit('subscription_updated', {
+          type: 'trial_started',
+          message: 'Your trial is now active!'
+        });
+        io.to(`vendor_${vendorId}`).emit('new_order', {
+          type: 'trial_order',
+          message: 'New trial order received'
+        });
+      }
+    } catch (ioError) {
+      // Non-fatal — order was already persisted; just log and continue.
+      console.error('Socket.IO emit error (non-fatal):', ioError.message);
     }
 
     res.status(201).json({
@@ -1656,6 +2151,10 @@ const getMyCashPayments = async (req, res) => {
 const getMySubscription = async (req, res) => {
   try {
     const userId = req.user._id;
+
+    // Fix any race-condition duplicate active orders first
+    await healDuplicateActiveOrders(userId);
+
     const now = new Date();
     now.setUTCHours(0, 0, 0, 0);
     const tomorrowMidnight = new Date(now);
@@ -1744,6 +2243,8 @@ const getMySubscription = async (req, res) => {
       paymentStatus: activeOrder.paymentStatus,
       cashPaymentConfirmedAt: activeOrder.cashPaymentConfirmedAt || null,
       orderId: activeOrder._id,
+      firstDayMealSlot: activeOrder.firstDayMealSlot || 'both',
+      lastDayMealSlot:  activeOrder.lastDayMealSlot  || 'both',
       pricing,
       startsTomorrow,
       leavesUsed,
@@ -1881,7 +2382,7 @@ const extendSubscriptionOrder = async (req, res) => {
       });
     }
 
-    const { plan, vendorId, paymentMethod = 'Cash' } = req.body;
+    const { plan, vendorId, paymentMethod = 'Cash', walletDeduction = 0 } = req.body;
 
     if (!plan || !vendorId) {
       return res.status(400).json({ message: 'Plan and vendorId are required' });
@@ -1987,11 +2488,52 @@ const extendSubscriptionOrder = async (req, res) => {
 
     const paymentStatus = paymentMethod === 'UPI' ? 'Paid' : 'Pending';
 
+    // ── Wallet guard (before order creation to store walletDeduction on order) ──
+    const VendorModel = require('../models/Vendor');
+    let walletApplied = Number(walletDeduction) || 0;
+    if (walletApplied > 0 && paymentMethod === 'UPI') {
+      const vendorForWallet = await VendorModel.findById(vendorId)
+        .select('loyaltyDiscountsEnabled walletCapPercent');
+
+      // Check if user already has an active sub at this vendor (before any opt-out check)
+      const activeSubCheck = await Order.findOne({
+        userId:   userId,
+        vendorId: vendorId,
+        status:   'active'
+      });
+
+      if (vendorForWallet && vendorForWallet.loyaltyDiscountsEnabled === false) {
+        // Vendor opted out — but protect existing active loyal subscribers
+        if (!activeSubCheck) {
+          walletApplied = 0; // new subscriber → vendor's opt-out applies
+          console.log(`Wallet blocked — vendor opted out and no active sub for user ${userId}`);
+        }
+        // else: existing loyal subscriber — wallet is honoured even though vendor opted out
+      }
+
+      if (walletApplied > 0) {
+        const capPct = vendorForWallet?.walletCapPercent ?? 20;
+        const maxCap = Math.floor(amount * capPct / 100);
+        walletApplied = Math.min(walletApplied, amount, maxCap);
+
+        if (walletApplied > 0) {
+          if (activeSubCheck) {
+            await User.findByIdAndUpdate(userId, { $inc: { wallet: -walletApplied } });
+            console.log(`Wallet deducted ₹${walletApplied} for user ${userId} (vendor: ${vendorId})`);
+          } else {
+            walletApplied = 0; // no active sub with vendor — skip
+            console.log(`Wallet deduction skipped — no active sub with vendor ${vendorId}`);
+          }
+        }
+      }
+    }
+
     const order = await Order.create({
       userId: userId,
       vendorId,
       customerName: user.name,
       amount: amount,
+      walletDeduction: walletApplied,
       deliverySlot: 'Lunch',
       mealPreference: 'Regular',
       paymentStatus: paymentStatus,
@@ -2004,12 +2546,22 @@ const extendSubscriptionOrder = async (req, res) => {
       endDate: scheduledEndDate
     });
 
+    // Notify vendor analytics dashboard in real-time
+    try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
+
     console.log('=== EXTEND SUBSCRIPTION ORDER SAVED ===');
     console.log('orderId:', order._id);
     console.log('status:', order.status);
+    console.log('walletDeduction:', walletApplied);
     console.log('scheduledStartDate:', order.scheduledStartDate);
     console.log('scheduledEndDate:', order.scheduledEndDate);
     console.log('=========================================');
+
+    // ── Award loyalty points for subscription renewal (fire-and-forget) ──────
+    // isRenewal = true (this is always an extension of an existing subscription)
+    // vendorId is passed so awardSubscriptionPoints can skip if vendor has loyalty OFF
+    awardSubscriptionPoints(userId, planType, order._id, true, { skipPoints: false, vendorId })
+      .catch(err => console.error('[extendSubscriptionOrder] Loyalty points error:', err.message));
 
     try {
       const emailSubject = 'MealSetu - Subscription Extended Successfully!';
@@ -2035,6 +2587,8 @@ const extendSubscriptionOrder = async (req, res) => {
     }
 
     const populatedOrder = await Order.findById(order._id).populate('vendorId', 'kitchenName');
+    const { notifySubscriptionExtended: _notifySE } = require('../utils/fcmService');
+    _notifySE(userId, populatedOrder.vendorId?.kitchenName || 'MealSetu', planType, scheduledEndDate).catch(console.error);
 
     res.status(201).json({
       message: 'Subscription extended successfully',
@@ -2135,29 +2689,81 @@ const getVendorPricingForUser = async (req, res) => {
 const createRazorpayOrder = async (req, res) => {
   try {
     const razorpay = require('../utils/razorpayUtils');
-    const { amount, vendorId, plan, mealPreference } = req.body;
+    const { amount, vendorId, plan, mealPreference, walletDeduction = 0 } = req.body;
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
+    // ── Wallet guard: vendor opt-out + same-vendor renewal check + per-order cap ──
+    let walletApplied = Number(walletDeduction) || 0;
+    let walletBlockedReason = null; // surfaced back to client for UI message
+    if (walletApplied > 0 && vendorId) {
+      const VendorModel = require('../models/Vendor');
+      const vendor = await VendorModel.findById(vendorId)
+        .select('loyaltyDiscountsEnabled walletCapPercent');
+
+      if (vendor && vendor.loyaltyDiscountsEnabled === false) {
+        // Vendor opted out — BUT protect existing active loyal subscribers.
+        // If user already has an active subscription at this vendor they earned these
+        // credits here, so we honour the wallet for renewals.
+        const hasActiveSub = await Order.findOne({
+          userId:   req.user._id,
+          vendorId: vendorId,
+          status:   'active'
+        });
+        if (!hasActiveSub) {
+          // New subscriber at this vendor — vendor's opt-out applies
+          walletApplied = 0;
+          walletBlockedReason = 'vendor_opted_out';
+        }
+        // else: existing loyal subscriber — wallet allowed despite opt-out
+        // (still apply cap below)
+      }
+
+      if (walletApplied > 0) {
+        // Cap: max walletCapPercent% of order value (default 20%)
+        const capPct = vendor?.walletCapPercent ?? 20;
+        const maxCap = Math.floor(amount * capPct / 100);
+        walletApplied = Math.min(walletApplied, amount, maxCap);
+
+        // Same-vendor renewal check (only for vendors who HAVE loyalty enabled —
+        // already handled above for opted-out vendors)
+        if (walletApplied > 0 && vendor?.loyaltyDiscountsEnabled !== false) {
+          const hasActiveSubWithVendor = await Order.findOne({
+            userId:   req.user._id,
+            vendorId: vendorId,
+            status:   'active'
+          });
+          if (!hasActiveSubWithVendor) {
+            walletApplied = 0;
+            walletBlockedReason = 'no_active_sub'; // new vendor — wallet not applicable
+          }
+        }
+      }
+    }
+    const finalAmount = Math.max(1, amount - walletApplied); // min ₹1 for Razorpay
+
     const razorpayOrder = await razorpay.orders.create({
-      amount:   Math.round(amount * 100),
+      amount:   Math.round(finalAmount * 100),
       currency: 'INR',
       receipt:  `r_${Date.now()}`,
       notes: {
-        userId:         req.user._id.toString(),
-        vendorId:       vendorId,
-        plan:           plan,
-        mealPreference: mealPreference || 'Regular'
+        userId:          req.user._id.toString(),
+        vendorId:        vendorId,
+        plan:            plan,
+        mealPreference:  mealPreference || 'Regular',
+        walletDeduction: walletApplied.toString()
       }
     });
 
     res.json({
-      orderId:  razorpayOrder.id,
-      amount:   razorpayOrder.amount,
-      currency: razorpayOrder.currency,
-      keyId:    process.env.RAZORPAY_KEY_ID
+      orderId:             razorpayOrder.id,
+      amount:              razorpayOrder.amount,   // in paise, already reduced
+      currency:            razorpayOrder.currency,
+      keyId:               process.env.RAZORPAY_KEY_ID,
+      walletDeduction:     walletApplied,          // echo back so client can display it
+      walletBlockedReason: walletBlockedReason     // null | 'vendor_opted_out' | 'no_active_sub'
     });
   } catch (error) {
     console.error('Create Razorpay order error:', error);
@@ -2192,6 +2798,17 @@ const verifyUserPayment = async (req, res) => {
       return res.status(400).json({ message: 'Payment verification failed. Invalid signature.' });
     }
 
+    // Read wallet deduction from Razorpay order notes (set in createRazorpayOrder)
+    let walletUsed = 0;
+    try {
+      const razorpay   = require('../utils/razorpayUtils');
+      const rzpOrder   = await razorpay.orders.fetch(razorpay_order_id);
+      walletUsed = Number(rzpOrder?.notes?.walletDeduction) || 0;
+    } catch (rzpErr) {
+      console.error('[verifyPayment] Could not fetch Razorpay order notes:', rzpErr.message);
+      // Non-fatal — proceed without wallet info
+    }
+
     const PLAN_MAP = {
       'ONEDAY':  'Trial',   'Trial':   'Trial',   'trial':   'Trial',
       'WEEKLY':  'Weekly',  'Weekly':  'Weekly',  'weekly':  'Weekly',
@@ -2199,7 +2816,7 @@ const verifyUserPayment = async (req, res) => {
     };
     const planType     = PLAN_MAP[plan] || 'Trial';
     const durationDays = getPlanDurationDays(planType);
-    const { startDate, endDate } = computeSubscriptionDates(durationDays);
+    const { startDate, endDate, mealSlotToday: upiFirstDaySlot } = computeSubscriptionDates(durationDays);
 
     const user   = await User.findById(req.user._id);
     const vendor = await Vendor.findById(vendorId);
@@ -2232,10 +2849,17 @@ const verifyUserPayment = async (req, res) => {
       orderEndDate.setUTCDate(orderEndDate.getUTCDate() + durationDays);
     }
 
+    // Deduct wallet from user balance now that payment is verified
+    if (walletUsed > 0) {
+      await User.findByIdAndUpdate(req.user._id, { $inc: { wallet: -walletUsed } });
+      console.log(`[verifyPayment] Wallet deducted ₹${walletUsed} for user ${req.user._id}`);
+    }
+
     const order = await Order.create({
       userId:             req.user._id,
       vendorId,
       amount:             Number(amount),
+      walletDeduction:    walletUsed,
       deliverySlot:       deliverySlot || 'Lunch',
       mealPreference:     mealPreference || 'Regular',
       paymentStatus:      'Paid',
@@ -2245,9 +2869,13 @@ const verifyUserPayment = async (req, res) => {
       status:             orderStatus,
       startDate:          orderStartDate,
       endDate:            orderEndDate,
-      scheduledStartDate: orderStatus === 'pending' ? orderStartDate : null,
-      scheduledEndDate:   orderStatus === 'pending' ? orderEndDate   : null
+      scheduledStartDate:  orderStatus === 'pending' ? orderStartDate : null,
+      scheduledEndDate:    orderStatus === 'pending' ? orderEndDate   : null,
+      firstDayMealSlot:    orderStatus === 'active'  ? (upiFirstDaySlot || 'both') : 'both',
     });
+
+    // Notify vendor analytics dashboard in real-time
+    try { const _io = req.app.get('io') || global.io; _io?.to(`vendor_${vendorId}`).emit('analytics_update'); _io?.to(`vendor_${vendorId}`).emit('new_order_placed'); } catch (_) {}
 
     if (orderStatus === 'active') {
       await Subscription.create({
@@ -2263,6 +2891,11 @@ const verifyUserPayment = async (req, res) => {
       user.expiryDate = orderEndDate;
       await user.save();
     }
+
+    // Award loyalty points for online payment subscription (fire-and-forget)
+    // skipPoints if offer order; vendorId so vendor loyalty-off check runs inside
+    awardSubscriptionPoints(req.user._id, planType, order._id, orderStatus === 'pending', { skipPoints: !!order.isOfferOrder, vendorId })
+      .catch(err => console.error('Loyalty points error (verifyUserPayment):', err));
 
     try {
       const isQueued = orderStatus === 'pending';
@@ -2342,6 +2975,16 @@ const verifyUserPayment = async (req, res) => {
       }, 1500);
     }
 
+    // FCM notifications (fire-and-forget)
+    const { notifyOrderConfirmed: _notifyOC2, notifyVendorPayment: _notifyVP } = require('../utils/fcmService');
+    _notifyOC2(req.user._id, {
+      planType, vendorName: vendor.kitchenName,
+      startDate: orderStartDate, orderId: order._id,
+    }).catch(console.error);
+    if (vendor.ownerId) {
+      _notifyVP(vendor.ownerId, user.name, amount).catch(console.error);
+    }
+
     res.json({
       success:       true,
       message:       orderStatus === 'pending'
@@ -2410,6 +3053,299 @@ const checkCanAddPlan = async (req, res) => {
   }
 };
 
+// @desc    Submit a complaint (user)
+// @route   POST /api/users/complaint
+const submitComplaint = async (req, res) => {
+  try {
+    const { vendorId, orderId, message } = req.body;
+    if (!vendorId || !message?.trim()) {
+      return res.status(400).json({ message: 'Vendor and message are required' });
+    }
+    const complaint = await Complaint.create({
+      userId:   req.user._id,
+      vendorId,
+      orderId:  orderId || undefined,
+      message:  message.trim()
+    });
+    res.status(201).json({ message: 'Complaint submitted successfully', complaint });
+  } catch (error) {
+    console.error('Submit complaint error:', error.message);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Get current user's complaints
+// @route   GET /api/users/my-complaints
+const getMyComplaints = async (req, res) => {
+  try {
+    const complaints = await Complaint.find({ userId: req.user._id })
+      .populate('vendorId', 'kitchenName')
+      .populate('orderId', 'planType orderDate')
+      .sort({ createdAt: -1 });
+    res.json(complaints);
+  } catch (error) {
+    console.error('Get my complaints error:', error.message);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Download order invoice as PDF
+// @route   GET /api/users/orders/:orderId/invoice
+const getUserOrderInvoice = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId)
+      .populate('vendorId', 'kitchenName address phone')
+      .populate('userId',   'name email phone');
+
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    // Security: only the order owner can download
+    if (order.userId._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorised' });
+    }
+
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+
+    const invoiceNo  = order._id.toString().slice(-8).toUpperCase();
+    const orderDate  = new Date(order.orderDate);
+    const startDate  = order.startDate ? new Date(order.startDate) : null;
+    const endDate    = order.endDate   ? new Date(order.endDate)   : null;
+    const fmtDate    = (d) => d ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A';
+
+    const payStatus  = order.paymentStatus || 'Pending';
+    const statusColor = payStatus === 'Paid' ? '#16a34a' : payStatus === 'Failed' ? '#dc2626' : '#d97706';
+
+    const vendor = order.vendorId || {};
+    const user   = order.userId   || {};
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="MealSetu_Invoice_${invoiceNo}.pdf"`);
+    doc.pipe(res);
+
+    // ── HEADER ────────────────────────────────────────────────────────────────
+    doc.rect(0, 0, 612, 80).fill('#f97316');
+    doc.fillColor('white')
+       .fontSize(26).font('Helvetica-Bold')
+       .text('MEALSETU', 50, 22);
+    doc.fontSize(11).font('Helvetica')
+       .text('Tax Invoice', 50, 52);
+    doc.fontSize(10)
+       .text(`Invoice #${invoiceNo}`, 380, 28, { align: 'right', width: 182 })
+       .text(`Date: ${fmtDate(orderDate)}`, 380, 44, { align: 'right', width: 182 });
+
+    // ── PAYMENT STATUS BADGE ──────────────────────────────────────────────────
+    doc.moveDown(2.5);
+    doc.fillColor(statusColor)
+       .fontSize(13).font('Helvetica-Bold')
+       .text(payStatus.toUpperCase(), 380, 96, { align: 'right', width: 182 });
+
+    // ── DIVIDER ───────────────────────────────────────────────────────────────
+    doc.moveTo(50, 118).lineTo(562, 118).strokeColor('#e5e7eb').stroke();
+
+    // ── CUSTOMER INFO (left) + KITCHEN INFO (right) ────────────────────────────
+    doc.fillColor('#6b7280').fontSize(9).font('Helvetica-Bold')
+       .text('BILLED TO', 50, 133)
+       .text('KITCHEN', 350, 133);
+
+    doc.fillColor('#1f2937').fontSize(11).font('Helvetica-Bold')
+       .text(user.name || 'Customer', 50, 148)
+       .text(vendor.kitchenName || 'Kitchen', 350, 148);
+
+    doc.fillColor('#6b7280').fontSize(10).font('Helvetica')
+       .text(user.email || '', 50, 164)
+       .text(user.phone || '', 50, 178);
+
+    doc.fillColor('#6b7280').fontSize(10).font('Helvetica')
+       .text(
+         (typeof vendor.address === 'object' ? (vendor.address?.fullAddress || [vendor.address?.street, vendor.address?.area, vendor.address?.city].filter(Boolean).join(', ')) : vendor.address) || '',
+         350, 164, { width: 210 }
+       );
+
+    // ── DIVIDER ───────────────────────────────────────────────────────────────
+    doc.moveTo(50, 210).lineTo(562, 210).strokeColor('#e5e7eb').stroke();
+
+    // ── PLAN DETAILS TABLE ────────────────────────────────────────────────────
+    doc.fillColor('#1f2937').fontSize(12).font('Helvetica-Bold')
+       .text('Subscription Details', 50, 225);
+
+    const tableTop = 248;
+    doc.rect(50, tableTop, 512, 22).fill('#f9fafb');
+    doc.fillColor('#6b7280').fontSize(9).font('Helvetica-Bold')
+       .text('PLAN TYPE',       60,  tableTop + 7)
+       .text('PERIOD',          180, tableTop + 7)
+       .text('MEAL PREFERENCE', 340, tableTop + 7)
+       .text('PAYMENT METHOD',  470, tableTop + 7);
+
+    doc.rect(50, tableTop + 22, 512, 26).fill('#ffffff').stroke('#f3f4f6');
+    doc.fillColor('#374151').fontSize(10).font('Helvetica')
+       .text(order.planType    || '—', 60,  tableTop + 29)
+       .text(`${fmtDate(startDate)} – ${fmtDate(endDate)}`, 180, tableTop + 29, { width: 155 })
+       .text(order.mealPreference || '—', 340, tableTop + 29)
+       .text(order.paymentMethod  || '—', 470, tableTop + 29);
+
+    // ── TRANSACTION ID (if online) ────────────────────────────────────────────
+    let nextY = tableTop + 70;
+    if (order.razorpayOrderId || order.razorpayPaymentId) {
+      doc.fillColor('#6b7280').fontSize(9).font('Helvetica')
+         .text(`Transaction ID: ${order.razorpayPaymentId || order.razorpayOrderId || '—'}`,
+               50, nextY);
+      nextY += 18;
+    }
+
+    // ── AMOUNT SUMMARY BOX ────────────────────────────────────────────────────
+    nextY += 10;
+    doc.rect(360, nextY, 202, 80).fill('#f9fafb').stroke('#e5e7eb');
+
+    const isFree = (order.paymentMethod || '').toLowerCase() === 'free';
+    const amt    = isFree ? 0 : (order.amount || 0);
+
+    doc.fillColor('#6b7280').fontSize(10).font('Helvetica')
+       .text('Subtotal',  370, nextY + 14)
+       .text('Tax (0%)',  370, nextY + 32)
+    doc.fillColor('#374151').font('Helvetica-Bold')
+       .text('Total',     370, nextY + 52);
+
+    doc.fillColor('#374151').fontSize(10).font('Helvetica')
+       .text(isFree ? 'Free' : `Rs.${amt}`, 510, nextY + 14, { align: 'right', width: 42 })
+       .text('Rs.0',                          510, nextY + 32, { align: 'right', width: 42 });
+    doc.fillColor('#f97316').fontSize(13).font('Helvetica-Bold')
+       .text(isFree ? 'FREE' : `Rs.${amt}`,  510, nextY + 50, { align: 'right', width: 42 });
+
+    // ── PAYMENT STATUS BANNER ─────────────────────────────────────────────────
+    nextY += 100;
+    const bannerBg = payStatus === 'Paid'   ? '#f0fdf4'
+                   : payStatus === 'Failed' ? '#fef2f2' : '#fffbeb';
+    const bannerBorder = payStatus === 'Paid'   ? '#bbf7d0'
+                       : payStatus === 'Failed' ? '#fecaca' : '#fde68a';
+
+    doc.rect(50, nextY, 512, 40).fill(bannerBg).stroke(bannerBorder);
+    const bannerMsg = payStatus === 'Paid'
+      ? '✓  Payment received. Thank you for your subscription!'
+      : payStatus === 'Failed'
+      ? '✗  Payment failed. Please contact support.'
+      : '⏳  Cash payment pending. Please pay the vendor directly.';
+
+    doc.fillColor(statusColor).fontSize(11).font('Helvetica-Bold')
+       .text(bannerMsg, 62, nextY + 13, { width: 490 });
+
+    // ── FOOTER ────────────────────────────────────────────────────────────────
+    doc.moveTo(50, 760).lineTo(562, 760).strokeColor('#e5e7eb').stroke();
+    doc.fillColor('#9ca3af').fontSize(8).font('Helvetica')
+       .text(
+         'This is a computer-generated invoice from MealSetu. No signature required.',
+         50, 770, { align: 'center', width: 512 }
+       )
+       .text(
+         'For support contact: support@mealsetu.com',
+         50, 782, { align: 'center', width: 512 }
+       );
+
+    doc.end();
+  } catch (error) {
+    console.error('Invoice generation error:', error);
+    if (!res.headersSent) res.status(500).json({ message: 'Failed to generate invoice' });
+  }
+};
+
+// @desc  Get vendor contact details for nearby/area kitchens (Contact Us screen)
+// @route GET /api/users/vendor-contacts
+const getVendorContacts = async (req, res) => {
+  try {
+    const { pincode, userLat, userLon } = req.query;
+
+    if (!pincode) {
+      return res.status(400).json({ message: 'Pincode is required' });
+    }
+
+    const userLatitude  = userLat ? parseFloat(userLat) : null;
+    const userLongitude = userLon ? parseFloat(userLon) : null;
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return Math.round(R * c * 10) / 10;
+    }
+
+    const fields = 'kitchenName address pincode latitude longitude profileImage ownerName';
+
+    // Level 1 — exact pincode match
+    let vendors = await Vendor.find({ isApproved: true, pincode })
+      .select(fields)
+      .populate('ownerId', 'email name phone');
+
+    // Level 2 — 3-digit prefix fallback
+    if (vendors.length === 0) {
+      const prefix3 = pincode.slice(0, 3);
+      vendors = await Vendor.find({
+        isApproved: true,
+        $expr: { $regexMatch: { input: '$pincode', regex: `^${prefix3}` } }
+      }).select(fields).populate('ownerId', 'email name phone');
+    }
+
+    // Level 3 — all approved vendors
+    if (vendors.length === 0) {
+      vendors = await Vendor.find({ isApproved: true })
+        .select(fields)
+        .populate('ownerId', 'email name phone');
+    }
+
+    const result = vendors.map(v => {
+      let distanceKm = null;
+      if (userLatitude && userLongitude && v.latitude && v.longitude) {
+        distanceKm = haversineDistance(userLatitude, userLongitude, v.latitude, v.longitude);
+      }
+      return {
+        _id:          v._id,
+        kitchenName:  v.kitchenName,
+        address:      v.address    || '',
+        pincode:      v.pincode    || '',
+        phone:        v.ownerId?.phone || null,
+        email:        v.ownerId?.email || null,
+        ownerName:    v.ownerName  || v.ownerId?.name || null,
+        profileImage: v.profileImage
+          ? transformProfilePic(v.profileImage, req.protocol, req.get('host'))
+          : null,
+        distanceKm,
+      };
+    });
+
+    // Sort nearest first when coordinates available
+    result.sort((a, b) => {
+      if (a.distanceKm === null && b.distanceKm === null) return 0;
+      if (a.distanceKm === null) return 1;
+      if (b.distanceKm === null) return -1;
+      return a.distanceKm - b.distanceKm;
+    });
+
+    res.json({ vendors: result });
+  } catch (error) {
+    console.error('Error in getVendorContacts:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+// @desc   Save / refresh FCM token for push notifications
+// @route  POST /api/users/fcm-token
+const saveFCMToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    await User.findByIdAndUpdate(req.user._id, {
+      fcmToken:          token || null,
+      fcmTokenUpdatedAt: new Date(),
+    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('saveFCMToken:', err.message);
+    res.status(500).json({ message: 'Failed to save FCM token' });
+  }
+};
+
 module.exports = {
   getUserSubscription,
   getActiveSubscriptionStatus,
@@ -2425,6 +3361,9 @@ module.exports = {
   addReview,
   getVendorReviews,
   getVendorRating,
+  markReviewHelpful,
+  flagReview,
+  getPendingRating,
   getVendorStatus,
   getApprovedVendors,
   getVendorsByPincode,
@@ -2441,5 +3380,65 @@ module.exports = {
   runFixStuckOrders,
   createRazorpayOrder,
   verifyUserPayment,
-  checkCanAddPlan
+  checkCanAddPlan,
+  submitComplaint,
+  getMyComplaints,
+  getUserOrderInvoice,
+  getVendorContacts,
+  saveFCMToken,
+  reportNotReceived,
 };
+
+// ── reportNotReceived (defined here to keep exports clean) ───────────────────
+async function reportNotReceived(req, res) {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findOne({ _id: orderId, userId: req.user._id });
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.deliveryStatus !== 'delivered') {
+      return res.status(400).json({ message: 'Order has not been delivered yet' });
+    }
+    if (!order.deliveredAt) {
+      return res.status(400).json({ message: 'Delivery timestamp missing' });
+    }
+    const minutesSince = (Date.now() - new Date(order.deliveredAt).getTime()) / 60000;
+    if (minutesSince > 45) {
+      return res.status(400).json({ message: 'Report window has expired (45 min after delivery)' });
+    }
+    if (order.reportedNotReceived) {
+      return res.status(400).json({ message: 'Issue already reported for this delivery' });
+    }
+
+    order.reportedNotReceived = true;
+    order.reportedAt          = new Date();
+    order.isFlagged            = true;
+    order.flagReason           = req.body.reason || 'Customer reported not received';
+    order.flaggedAt            = new Date();
+    await order.save();
+
+    // Notify vendor via Socket.IO
+    const io = req.app?.get?.('io') || global.io;
+    if (io) {
+      io.to(`vendor_${order.vendorId}`).emit('delivery_flagged', {
+        orderId:    order._id,
+        flagReason: order.flagReason,
+        flaggedAt:  order.flaggedAt
+      });
+    }
+
+    // FCM push to vendor
+    try {
+      const Vendor = require('../models/Vendor');
+      const { notifyOrderFlagged } = require('../utils/fcmService');
+      const vendor = await Vendor.findById(order.vendorId).select('ownerId').lean();
+      if (vendor?.ownerId) {
+        notifyOrderFlagged(vendor.ownerId, req.user.name || 'Customer', order._id).catch(console.error);
+      }
+    } catch (_) {}
+
+    return res.json({ success: true, message: 'Issue reported. The vendor will review it shortly.' });
+  } catch (err) {
+    console.error('reportNotReceived:', err.message);
+    return res.status(500).json({ message: 'Failed to report issue' });
+  }
+}

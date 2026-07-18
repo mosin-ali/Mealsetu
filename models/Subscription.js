@@ -19,6 +19,10 @@ const subscriptionSchema = new mongoose.Schema({
   status: { type: String, enum: ['active', 'pending', 'on-hold', 'expired', 'cancelled', 'completed', 'trial'], default: 'active' },
   autoRenew: { type: Boolean, default: false },
 
+  // Expiry reminder tracking — prevents duplicate emails when cron runs multiple times
+  reminder2DaySent: { type: Boolean, default: false }, // sent when 2 days left
+  reminder1DaySent: { type: Boolean, default: false }, // sent when 1 day left
+
   // Fields for Vendor View
   customerName: { type: String },
   contact: { type: String },

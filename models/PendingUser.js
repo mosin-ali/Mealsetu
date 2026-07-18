@@ -15,12 +15,24 @@ const pendingUserSchema = new mongoose.Schema({
   },
   
   // --- Customer Specific ---
-  address: { type: String },
+  address: {
+    flatHouseNo: { type: String },
+    street:      { type: String },
+    area:        { type: String },
+    landmark:    { type: String },
+    city:        { type: String },
+    pincode:     { type: String },
+    latitude:    { type: Number },
+    longitude:   { type: Number },
+    fullAddress: { type: String },
+    deliveryPreference: { type: String }
+  },
   pincode: { type: String },
   
   // --- Vendor Specific ---
   kitchenName: { type: String },
   kitchenAddress: { type: String },
+  kitchenStructuredAddress: { type: mongoose.Schema.Types.Mixed },
   fssaiLicense: { type: String },
   gstDocument: { type: String },
   kitchenPoster: { type: String },

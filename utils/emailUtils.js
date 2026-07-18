@@ -78,6 +78,11 @@ const sendEmail = async (to, subject, html) => {
     return true;
   } catch (error) {
     console.error('Email send error:', error.message);
+    // Reset singleton on auth failure — forces fresh credentials on next attempt
+    if (error.code === 'EAUTH' || error.responseCode === 535 || error.responseCode === 534) {
+      console.error('⚠️  Gmail auth failed — resetting transporter. Check EMAIL_USER / EMAIL_PASS in .env');
+      transporter = null;
+    }
     return false;
   }
 };

@@ -13,6 +13,15 @@ userId: {
   customerName: { type: String },
   mealPreference: { type: String, enum: ['Regular', 'Jain'] },
   deliverySlot: { type: String, enum: ['Lunch', 'Dinner'] },
+  // Which meals the customer gets on the FIRST day of their plan:
+  //   'both'   — bought before lunch cutoff  → gets lunch + dinner today
+  //   'dinner' — bought between cutoffs      → gets dinner only today
+  //   'none'   — bought after dinner cutoff  → starts tomorrow
+  firstDayMealSlot: { type: String, enum: ['both', 'dinner', 'none'], default: 'both' },
+  // Which meals the customer gets on the LAST day of their plan:
+  //   'both'  — normal end day → gets lunch + dinner
+  //   'lunch' — compensating a missed lunch from day 1 → gets lunch only
+  lastDayMealSlot: { type: String, enum: ['both', 'lunch'], default: 'both' },
   orderDate: { type: Date, default: Date.now },
   
   // Subscription Plan Type (Weekly, Monthly, Trial)
@@ -59,13 +68,84 @@ userId: {
     default: 'active'
   },
 
+  // Wallet deduction applied at checkout (vendor-locked)
+  walletDeduction: { type: Number, default: 0 },
+
   // Manual/Offline Customer fields
   source: { type: String, enum: ['app', 'manual'], default: 'app' },
   manualCustomerName: { type: String, default: null },
   manualCustomerPhone: { type: String, default: null },
-  manualCustomerAddress: { type: String, default: null },
+  manualCustomerAddress: {
+    flatHouseNo: { type: String },
+    street:      { type: String },
+    area:        { type: String },
+    landmark:    { type: String },
+    city:        { type: String },
+    pincode:     { type: String },
+    latitude:    { type: Number },
+    longitude:   { type: Number },
+    fullAddress: { type: String },
+    deliveryPreference: { type: String, default: 'hand_to_me' },
+  },
   manualCustomerPincode: { type: String, default: null },
-  isManualOrder: { type: Boolean, default: false }
+  isManualOrder: { type: Boolean, default: false },
+
+  // ── Delivery fields ───────────────────────────────────────────────────────
+  deliveryPartnerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref:  'DeliveryPartner',
+    default: null
+  },
+  // New batch-based delivery fields
+  deliveryRiderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref:  'DeliveryPartner',
+    default: null
+  },
+  deliveryBatchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref:  'DeliveryBatch',
+    default: null
+  },
+  mealSlot: {
+    type: String,
+    enum: ['lunch', 'dinner'],
+    default: null
+  },
+  deliveryStatus: {
+    type: String,
+    enum: ['pending', 'assigned', 'preparing', 'picked_up', 'on_the_way', 'delivered', 'failed', 'retry_pending'],
+    default: 'pending'
+  },
+  retryCount: { type: Number, default: 0 },
+  deliveryLocation: {
+    latitude:  { type: Number },
+    longitude: { type: Number },
+    updatedAt: { type: Date }
+  },
+  deliveredAt:           { type: Date, default: null },
+  pickedUpAt:            { type: Date, default: null },
+  estimatedDeliveryTime: { type: Date, default: null },
+
+  deliveryProof: {
+    photoUrl:   { type: String },
+    gpsLat:     { type: Number },
+    gpsLng:     { type: Number },
+    capturedAt: { type: Date }
+  },
+
+  reportedNotReceived: { type: Boolean, default: false },
+  reportedAt:          { type: Date,    default: null  },
+  isFlagged:           { type: Boolean, default: false },
+  flagReason:          { type: String,  default: null  },
+  flaggedAt:           { type: Date,    default: null  },
+
+  // ── Final failure resolution (vendor decision) ────────────────────────────
+  failureResolution: {
+    action:     { type: String, enum: ['compensated', 'no_action'] },
+    resolvedAt: { type: Date },
+    resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  }
 });
 
 orderSchema.index({ vendorId: 1, createdAt: -1 });

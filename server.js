@@ -116,7 +116,13 @@ app.post('/api/webhooks/razorpay',
   }
 );
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+// app.options('*', cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -148,10 +154,13 @@ app.get('/api/vendor-profile/:vendorId', async (req, res) => {
 });
 
 // Mount Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/vendor', vendorRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/auth',     authRoutes);
+app.use('/api/vendor',   vendorRoutes);
+app.use('/api/users',    userRoutes);
+app.use('/api/admin',    adminRoutes);
+app.use('/api/loyalty',  require('./routes/loyaltyRoutes'));
+app.use('/api/delivery', require('./routes/deliveryRoutes'));
+app.use('/api/maps',    require('./routes/mapsRoutes'));
 
 // ===== START SERVER =====
 const startServer = async () => {
@@ -220,7 +229,42 @@ const startServer = async () => {
         socket.join('admin_room');
         console.log('👨‍💼 Admin joined admin room');
       });
-      
+
+      // Delivery partner joins their personal notification room
+      socket.on('joinDelivery', (deliveryPartnerId) => {
+        socket.join(`delivery_${deliveryPartnerId}`);
+        console.log('🛵 Delivery partner joined:', deliveryPartnerId);
+      });
+
+      // Vendor subscribes to real-time delivery dashboard updates
+      socket.on('joinVendorDelivery', (vendorId) => {
+        socket.join(`vendor_delivery_${vendorId}`);
+        console.log('🏪 Vendor delivery room:', vendorId);
+      });
+
+      // Rider/customer joins a specific batch tracking room
+      socket.on('joinBatchTracking', (batchId) => {
+        socket.join(`batch_${batchId}`);
+        console.log('📦 Joined batch tracking:', batchId);
+      });
+
+      socket.on('leaveBatchTracking', (batchId) => {
+        socket.leave(`batch_${batchId}`);
+        console.log('📦 Left batch tracking:', batchId);
+      });
+
+      // Customer starts watching a specific order (live GPS tracking)
+      socket.on('joinTracking', (orderId) => {
+        socket.join(`tracking_${orderId}`);
+        console.log('📍 User tracking order:', orderId);
+      });
+
+      // Customer stops watching (e.g. navigates away)
+      socket.on('leaveTracking', (orderId) => {
+        socket.leave(`tracking_${orderId}`);
+        console.log('📍 User stopped tracking order:', orderId);
+      });
+
       // Handle disconnect
       socket.on('disconnect', () => {
         console.log('🔌 Client disconnected:', socket.id);

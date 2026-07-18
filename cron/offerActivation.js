@@ -292,98 +292,136 @@ const processPendingSubscriptionOrders = async () => {
   }
 };
 
-// Function to send expiry reminder emails
+// ─────────────────────────────────────────────────────────────────────────────
+// Send expiry reminder emails
+//
+// Rules (fixed):
+//  1. Only send when EXACTLY 2 days left  (one email, never repeated)
+//  2. Only send when EXACTLY 1 day left   (one email, never repeated)
+//  3. Skip entirely if user already has an upcoming pending plan
+//  4. Flags (reminder2DaySent / reminder1DaySent) on Subscription prevent
+//     duplicate sends even though the cron runs every hour
+// ─────────────────────────────────────────────────────────────────────────────
 const sendExpiryReminders = async () => {
   console.log('🔄 Running cron job: Sending expiry reminder emails...');
-  
+
   try {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    
-    // Calculate 3 days from now
-    const threeDaysFromNow = new Date(now);
-    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    threeDaysFromNow.setHours(23, 59, 59, 999);
+    // Work in whole-day units — both "now" and expiry compared at midnight
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
 
-    // Find users with active plans expiring in the next 3 days
-    // who don't have any upcoming pending orders
-    const users = await User.find({ role: 'user' });
+    // Active subscriptions expiring in exactly 1 or 2 days
+    const day1 = new Date(todayMidnight); day1.setDate(day1.getDate() + 1);
+    const day2 = new Date(todayMidnight); day2.setDate(day2.getDate() + 2);
+    const day3 = new Date(todayMidnight); day3.setDate(day3.getDate() + 3); // exclusive upper bound
 
-    for (const user of users) {
+    // Fetch active subscriptions expiring within the next 1–2 days
+    const subs = await Subscription.find({
+      status:     'active',
+      expiryDate: { $gte: day1, $lt: day3 }   // tomorrow or day-after-tomorrow
+    }).populate('userId', 'name email');
+
+    let sentCount = 0;
+
+    for (const sub of subs) {
       try {
-        // Check if user has any pending orders (upcoming plans)
+        const user = sub.userId;
+        if (!user?.email) continue;
+
+        // ── Normalise expiry to midnight for clean day-diff arithmetic ────
+        const expiryMidnight = new Date(sub.expiryDate);
+        expiryMidnight.setHours(0, 0, 0, 0);
+
+        const daysRemaining = Math.round(
+          (expiryMidnight - todayMidnight) / (1000 * 60 * 60 * 24)
+        );
+
+        // Only act on exactly 2 or 1 day(s) remaining
+        if (daysRemaining !== 2 && daysRemaining !== 1) continue;
+
+        // ── Already sent this reminder? Skip ──────────────────────────────
+        if (daysRemaining === 2 && sub.reminder2DaySent) continue;
+        if (daysRemaining === 1 && sub.reminder1DaySent) continue;
+
+        // ── User has an upcoming pending plan? Skip ───────────────────────
         const hasUpcomingPlan = await Order.findOne({
-          userId: user._id,
-          status: 'pending'
-        });
+          userId:              user._id,
+          status:              'pending',
+          scheduledStartDate:  { $gt: todayMidnight }   // future start only
+        }).lean();
 
         if (hasUpcomingPlan) {
-          // User has upcoming plan, skip reminder
+          console.log(`⏭️  Skipped reminder for ${user.email} — upcoming plan exists`);
           continue;
         }
 
-        // Find user's active subscription
-        const activeSubscription = await Subscription.findOne({
-          userId: user._id,
-          status: 'active'
-        });
+        // ── Build and send email ──────────────────────────────────────────
+        const label        = daysRemaining === 1 ? 'Tomorrow!' : 'in 2 Days';
+        const urgencyColor = daysRemaining === 1 ? '#dc2626' : '#f59e0b';
 
-        if (!activeSubscription) {
-          // No active subscription, skip
-          continue;
-        }
-
-        const expiryDate = new Date(activeSubscription.expiryDate);
-        
-        // Check if subscription expires within 3 days
-        if (expiryDate > now && expiryDate <= threeDaysFromNow) {
-          const daysRemaining = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
-          
-          // Send reminder email
-          const emailSubject = `⏰ Your Plan Expires in ${daysRemaining} Days! - MealSetu`;
-          const emailHtml = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <div style="background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                <h1 style="color: white; margin: 0;">⏰ Plan Expiring Soon!</h1>
-              </div>
-              <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-                <p style="font-size: 16px;">Dear <strong>${user.name}</strong>,</p>
-                <p style="font-size: 16px;">Your current meal plan from <strong>MealSetu</strong> will expire in <strong>${daysRemaining} day${daysRemaining > 1 ? 's' : ''}</strong>!</p>
-                
-                <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #f59e0b;">
-                  <h3 style="color: #f59e0b; margin: 0 0 15px 0;">📋 Current Plan</h3>
-                  <p style="margin: 8px 0;"><strong>📅 Expires On:</strong> ${expiryDate.toLocaleDateString('en-IN')}</p>
-                  <p style="margin: 8px 0;"><strong>⏱️ Days Remaining:</strong> ${daysRemaining} day${daysRemaining > 1 ? 's' : ''}</p>
-                </div>
-                
-                <p style="color: #dc2626; font-size: 16px; font-weight: bold;">
-                  ⚠️ Don't miss out on your meals! Extend your subscription or order a new plan to continue receiving meals without interruption.
-                </p>
-                
-                <div style="text-align: center; margin: 30px 0;">
-                  <a href="#" style="background: #f26522; color: white; padding: 15px 40px; text-decoration: none; border-radius: 30px; font-weight: bold; font-size: 16px; display: inline-block;">Extend Subscription Now</a>
-                </div>
-                
-                <p style="color: #555;">Visit your dashboard to explore Weekly and Monthly subscription plans.</p>
-                <p style="color: #555;">Thank you for choosing MealSetu!</p>
-              </div>
-              <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
-                <p>MealSetu - Quality Food, Delivered with Care</p>
-              </div>
+        const emailSubject = `⏰ Your Meal Plan Expires ${label} — MealSetu`;
+        const emailHtml = `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+            <div style="background:linear-gradient(135deg,${urgencyColor} 0%,${daysRemaining === 1 ? '#ef4444' : '#fbbf24'} 100%);
+                        padding:30px;text-align:center;border-radius:10px 10px 0 0">
+              <h1 style="color:white;margin:0">⏰ Plan Expiring ${label}</h1>
             </div>
-          `;
+            <div style="background:#f8f9fa;padding:30px;border-radius:0 0 10px 10px">
+              <p style="font-size:16px">Dear <strong>${user.name}</strong>,</p>
+              <p style="font-size:16px">
+                Your current meal plan expires
+                <strong style="color:${urgencyColor}">
+                  ${daysRemaining === 1 ? 'tomorrow' : 'in 2 days'}
+                </strong>!
+              </p>
 
-          await sendEmail(user.email, emailSubject, emailHtml);
-          console.log(`📧 Sent expiry reminder to ${user.email} (expires in ${daysRemaining} days)`);
-        }
-      } catch (userError) {
-        console.error(`❌ Error processing user ${user.email}:`, userError);
+              <div style="background:white;padding:20px;border-radius:10px;margin:20px 0;
+                          border:2px solid ${urgencyColor}">
+                <h3 style="color:${urgencyColor};margin:0 0 15px 0">📋 Current Plan</h3>
+                <p style="margin:8px 0"><strong>📅 Expires On:</strong>
+                  ${expiryMidnight.toLocaleDateString('en-IN')}</p>
+                <p style="margin:8px 0"><strong>⏱️ Days Remaining:</strong>
+                  ${daysRemaining} day${daysRemaining > 1 ? 's' : ''}</p>
+              </div>
+
+              <p style="color:${urgencyColor};font-size:16px;font-weight:bold">
+                ⚠️ Extend now to avoid missing your meals!
+              </p>
+
+              <div style="text-align:center;margin:30px 0">
+                <a href="#"
+                   style="background:#f26522;color:white;padding:15px 40px;
+                          text-decoration:none;border-radius:30px;
+                          font-weight:bold;font-size:16px;display:inline-block">
+                  Extend Subscription Now
+                </a>
+              </div>
+
+              <p style="color:#555">Thank you for choosing MealSetu!</p>
+            </div>
+            <div style="text-align:center;padding:20px;color:#999;font-size:12px">
+              <p>MealSetu - Quality Food, Delivered with Care</p>
+            </div>
+          </div>`;
+
+        await sendEmail(user.email, emailSubject, emailHtml);
+
+        // ── Mark flag so this reminder is never sent again ────────────────
+        if (daysRemaining === 2) sub.reminder2DaySent = true;
+        if (daysRemaining === 1) sub.reminder1DaySent = true;
+        await sub.save();
+
+        sentCount++;
+        console.log(`📧 Sent ${daysRemaining}-day reminder to ${user.email}`);
+
+      } catch (subErr) {
+        console.error(`❌ Error processing subscription ${sub._id}:`, subErr.message);
       }
     }
 
-    console.log('✅ Cron job completed: Sent expiry reminder emails');
+    console.log(`✅ Expiry reminders done — sent: ${sentCount}`);
   } catch (error) {
-    console.error('❌ Cron job error:', error);
+    console.error('❌ sendExpiryReminders error:', error);
   }
 };
 

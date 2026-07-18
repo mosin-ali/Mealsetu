@@ -42,5 +42,28 @@ const commissionProofUpload = multer({
   fileFilter: (req, file, cb) => { checkFileType(file, cb); }
 });
 
+// Delivery proof photo — ./uploads/delivery-proofs/
+const deliveryProofStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = './uploads/delivery-proofs/';
+    require('fs').mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `delivery-${Date.now()}${path.extname(file.originalname)}`);
+  }
+});
+
+const deliveryProofUpload = multer({
+  storage: deliveryProofStorage,
+  limits: { fileSize: 5000000 },
+  fileFilter: (req, file, cb) => {
+    const ok = /jpeg|jpg|png/.test(path.extname(file.originalname).toLowerCase()) &&
+               /jpeg|jpg|png/.test(file.mimetype);
+    ok ? cb(null, true) : cb('Error: Images only for delivery proof');
+  }
+});
+
 module.exports = upload;
 module.exports.commissionProofUpload = commissionProofUpload;
+module.exports.deliveryProofUpload   = deliveryProofUpload;

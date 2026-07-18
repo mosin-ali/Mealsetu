@@ -98,6 +98,14 @@ month: {
     default: null
   },
 
+  // ── WALLET TRANSPARENCY ──────────────────────────────────
+  // Total wallet credit used by customers in this week's orders.
+  // Commission is calculated on (total_earning - total_wallet_deductions).
+  total_wallet_deductions: {
+    type:    Number,
+    default: 0
+  },
+
   // ── PAYMENT METADATA ─────────────────────────────────────
   paidOnTime: {
     type:    Boolean,
@@ -126,6 +134,22 @@ month: {
     default: null
   },
 
+  // ── EMAIL TRACKING ───────────────────────────────────────
+  emailDelivered: {
+    type:    Boolean,
+    default: null   // null = not attempted, true = delivered, false = failed
+  },
+  emailFailedAt: {
+    type:    Date,
+    default: null
+  },
+
+  // ── PAYMENT AMOUNT VERIFICATION ──────────────────────────
+  expectedRazorpayAmount: {
+    type:    Number,
+    default: null   // set when Razorpay order is created; verified on payment
+  },
+
   // ── DISPUTE ──────────────────────────────────────────────
   disputeStatus: {
     type:    String,
@@ -147,6 +171,10 @@ month: {
   disputeResolvedBy: {
     type:    String,
     default: null
+  },
+  disputeResolutionNote: {
+    type:    String,
+    default: null   // admin's explanation when resolving
   },
 
   // ── AUDIT LOG ────────────────────────────────────────────

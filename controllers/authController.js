@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { sendEmail } = require('../utils/emailUtils');
+const { geocodeAddress } = require('../utils/geocode');
 const disposableDomains = require('disposable-email-domains');
 
 // Extra blocked domains as backup for very new domains
@@ -43,12 +44,40 @@ const maskEmail = (email) => {
 // @route   POST /api/auth/register
 const registerUser = async (req, res) => {
   try {
-    const { 
-      name, email, password, role, 
-      phone, pincode, address,        // User specific
-      kitchenName, kitchenAddress,    // Vendor specific
+    const {
+      name, email, password, role,
+      phone, pincode, address,        // User — legacy compat (plain string)
+      // User — new structured address fields
+      flatHouseNo, street, area, landmark, city, latitude, longitude,
+      kitchenName, kitchenAddress,    // Vendor — legacy full-string compat
+      // Vendor — new structured kitchen address fields
+      kitchenShopNo, kitchenStreet, kitchenArea, kitchenLandmark, kitchenCity, kitchenPincode,
       adminKey                        // Admin specific
     } = req.body;
+
+    // Build structured address object for user role
+    let addressObj;
+    if (role === 'user') {
+      if (flatHouseNo || street || area || city) {
+        // New structured format from app/website
+        const fullAddress = [flatHouseNo, street, area, landmark, city, pincode]
+          .filter(Boolean).join(', ');
+        addressObj = {
+          flatHouseNo: flatHouseNo || '',
+          street:      street      || '',
+          area:        area        || '',
+          landmark:    landmark    || '',
+          city:        city        || '',
+          pincode:     pincode     || '',
+          latitude:    latitude  != null ? parseFloat(latitude)  : null,
+          longitude:   longitude != null ? parseFloat(longitude) : null,
+          fullAddress
+        };
+      } else if (address) {
+        // Legacy plain-string address — wrap for backward compat
+        addressObj = { fullAddress: address, area: '', city: '', pincode: pincode || '' };
+      }
+    }
     
     // Check for blocked temporary email domains (two-layer check)
     const emailLower = email.toLowerCase();
@@ -88,10 +117,10 @@ const registerUser = async (req, res) => {
       return normalized;
     };
 
-    const profilePicPath = req.files['profilePic'] ? normalizePath(req.files['profilePic'][0].path) : null;
-    const kitchenPosterPath = req.files['kitchenPoster'] ? normalizePath(req.files['kitchenPoster'][0].path) : null;
-    const fssaiPath = req.files['fssaiDoc'] ? normalizePath(req.files['fssaiDoc'][0].path) : null;
-    const gstPath = req.files['gstDoc'] ? normalizePath(req.files['gstDoc'][0].path) : null;
+    const profilePicPath     = req.files?.['profilePic']?.[0]     ? normalizePath(req.files['profilePic'][0].path)     : null;
+    const kitchenPosterPath  = req.files?.['kitchenPoster']?.[0]  ? normalizePath(req.files['kitchenPoster'][0].path)  : null;
+    const fssaiPath          = req.files?.['fssaiDoc']?.[0]       ? normalizePath(req.files['fssaiDoc'][0].path)       : null;
+    const gstPath            = req.files?.['gstDoc']?.[0]         ? normalizePath(req.files['gstDoc'][0].path)         : null;
 
     // 4. Hash Password
     const salt = await bcrypt.genSalt(10);
@@ -110,10 +139,27 @@ const registerUser = async (req, res) => {
       phone,
       role,
       profilePic: profilePicPath,
-      address: role === 'user' ? address : undefined,
-      pincode: role === 'user' ? pincode : undefined,
+      address: role === 'user' ? addressObj : undefined,
+      pincode: role === 'vendor'
+        ? (kitchenPincode || pincode || '')
+        : (role === 'user' ? pincode : undefined),
       kitchenName: role === 'vendor' ? kitchenName : undefined,
-      kitchenAddress: role === 'vendor' ? kitchenAddress : undefined,
+      kitchenAddress: role === 'vendor'
+        ? (kitchenAddress || [kitchenShopNo, kitchenStreet, kitchenArea, kitchenLandmark, kitchenCity, kitchenPincode].filter(Boolean).join(', '))
+        : undefined,
+      kitchenStructuredAddress: role === 'vendor' && (kitchenStreet || kitchenArea || kitchenCity)
+        ? {
+            shopNo:      kitchenShopNo   || '',
+            street:      kitchenStreet   || '',
+            area:        kitchenArea     || '',
+            landmark:    kitchenLandmark || '',
+            city:        kitchenCity     || '',
+            pincode:     kitchenPincode  || '',
+            fullAddress: [kitchenShopNo, kitchenStreet, kitchenArea, kitchenLandmark, kitchenCity, kitchenPincode].filter(Boolean).join(', '),
+            latitude:    latitude  != null ? parseFloat(latitude)  : null,
+            longitude:   longitude != null ? parseFloat(longitude) : null,
+          }
+        : undefined,
       fssaiLicense: role === 'vendor' ? fssaiPath : undefined,
       gstDocument: role === 'vendor' ? gstPath : undefined,
       kitchenPoster: role === 'vendor' ? kitchenPosterPath : undefined,
@@ -159,12 +205,12 @@ const registerUser = async (req, res) => {
       </div>
     `;
 
-    try {
-      await sendEmail(email, emailSubject, emailMessage);
+    // Non-blocking — registration is saved even if email fails (user can resend)
+    const regEmailSent = await sendEmail(email, emailSubject, emailMessage);
+    if (regEmailSent) {
       console.log('Registration OTP sent successfully to:', email);
-    } catch (emailError) {
-      console.error('Failed to send registration OTP email:', emailError);
-      // Continue anyway - don't block registration
+    } else {
+      console.error('⚠️  Registration OTP email failed for:', email, '— user can resend via /register-resend-otp');
     }
 
     // 8. Return response requiring OTP verification
@@ -197,7 +243,7 @@ const loginUser = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    if (user.role !== role) {
+    if (user.role !== role && !(user.role === 'delivery' && role === 'user')) {
       return res.status(401).json({ message: `This account is registered as ${user.role}. Please login via the ${user.role} portal.` });
     }
 
@@ -267,11 +313,17 @@ const sendOTP = async (req, res) => {
     const hashedOTP = crypto.createHash('sha256').update(otp).digest('hex');
 
     // Set OTP expiry (5 minutes)
-    user.resetOTP = hashedOTP;
-    user.resetOTPExpire = Date.now() + 5 * 60 * 1000;
-    user.isOTPVerified = false;
-    
-    await user.save();
+    // Use updateOne so Mongoose never runs full-document validation
+    // (a legacy user with gender:"" would fail user.save() with an enum error)
+    await User.updateOne(
+      { _id: user._id },
+      { $set: {
+          resetOTP: hashedOTP,
+          resetOTPExpire: new Date(Date.now() + 5 * 60 * 1000),
+          isOTPVerified: false
+        }
+      }
+    );
 
     // Send OTP via email
     const message = `
@@ -287,23 +339,25 @@ const sendOTP = async (req, res) => {
       </div>
     `;
 
-    await sendEmail(user.email, 'MealSetu - Password Reset OTP', message);
+    const sent = await sendEmail(user.email, 'MealSetu - Password Reset OTP', message);
+    if (!sent) {
+      // Email delivery failed — throw so the catch block clears the OTP and returns 500
+      throw new Error('Email delivery failed');
+    }
     console.log('OTP sent successfully to:', user.email);
 
     res.status(200).json({ message: 'If an account exists with this email, an OTP has been sent', maskedEmail: maskEmail(user.email) });
 
   } catch (error) {
-    console.error('Send OTP error:', error);
-    
+    console.error('Send OTP error:', error.message);
+    console.error('Send OTP error stack:', error.stack?.split('\n')[0]);
+
+    // Clear OTP fields from DB so a corrupt state is not left behind
+    // Use updateOne — avoids the same validation issue that may have caused the error
     try {
-      const user = await User.findOne({ email });
-      if (user) {
-        user.resetOTP = undefined;
-        user.resetOTPExpire = undefined;
-        await user.save();
-      }
-    } catch (saveError) {
-      console.error('Error resetting user fields:', saveError);
+      await User.updateOne({ email }, { $unset: { resetOTP: 1, resetOTPExpire: 1 } });
+    } catch (cleanupErr) {
+      console.error('Error clearing OTP fields:', cleanupErr.message);
     }
 
     res.status(500).json({ message: 'Failed to send OTP. Please try again.' });
@@ -335,9 +389,7 @@ const verifyOTP = async (req, res) => {
 
     // Check if OTP is expired
     if (Date.now() > user.resetOTPExpire) {
-      user.resetOTP = undefined;
-      user.resetOTPExpire = undefined;
-      await user.save();
+      await User.updateOne({ _id: user._id }, { $unset: { resetOTP: 1, resetOTPExpire: 1 } });
       return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
     }
 
@@ -352,9 +404,8 @@ const verifyOTP = async (req, res) => {
       return res.status(400).json({ message: 'Invalid OTP. Please try again.' });
     }
 
-    // Mark as verified
-    user.isOTPVerified = true;
-    await user.save();
+    // Mark as verified — updateOne avoids full-document validation
+    await User.updateOne({ _id: user._id }, { $set: { isOTPVerified: true } });
 
     console.log('OTP verified successfully for:', user.email);
 
@@ -399,14 +450,17 @@ const resetPasswordWithOTP = async (req, res) => {
 
     // Hash new password
     const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
-    
-    // Clear OTP fields
-    user.resetOTP = undefined;
-    user.resetOTPExpire = undefined;
-    user.isOTPVerified = false;
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    await user.save();
+    // Update password and clear OTP fields atomically — updateOne skips
+    // full-document validation (avoids enum errors on legacy user fields)
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: { password: hashedPassword, isOTPVerified: false },
+        $unset: { resetOTP: 1, resetOTPExpire: 1 }
+      }
+    );
 
     console.log('Password reset successful for user:', user.email);
 
@@ -500,40 +554,68 @@ const verifyRegisterOTP = async (req, res) => {
 
     // 7. If role is vendor, create Vendor document
     if (pendingUser.role === 'vendor') {
+      const structured = pendingUser.kitchenStructuredAddress;
+      const gpsLat = structured?.latitude;
+      const gpsLng = structured?.longitude;
+
       const vendorData = {
         ownerId: newUser._id,
         kitchenName: pendingUser.kitchenName,
-        address: pendingUser.kitchenAddress,
+        address: structured || pendingUser.kitchenAddress,
         pincode: pendingUser.pincode,
         fssaiLicense: pendingUser.fssaiLicense,
         gstDocument: pendingUser.gstDocument,
         profileImage: pendingUser.profilePic,
-        kitchenPoster: pendingUser.kitchenPoster
+        kitchenPoster: pendingUser.kitchenPoster,
+        // Use GPS-detected coords if vendor used Detect Location; they are more accurate
+        latitude:  gpsLat || null,
+        longitude: gpsLng || null,
       };
 
       const newVendor = await Vendor.create(vendorData);
       console.log('Created vendor document for:', newVendor.kitchenName);
 
-      // Auto-geocode vendor location
-      if (pendingUser.kitchenAddress && pendingUser.pincode) {
+      // Auto-geocode via Google Maps ONLY when vendor did NOT use GPS detect
+      if (!gpsLat && pendingUser.kitchenAddress) {
         try {
-          const fullAddress = `${pendingUser.kitchenAddress}, ${pendingUser.pincode}, India`;
-          const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&limit=1`,
-            {
-              headers: { 
-                'User-Agent': 'MealSetu/1.0'
-              }
-            }
-          );
-          const geoData = await geoRes.json();
-          if (geoData && geoData[0]) {
-            newVendor.latitude = parseFloat(geoData[0].lat);
-            newVendor.longitude = parseFloat(geoData[0].lon);
+          let coords = await geocodeAddress(`${pendingUser.kitchenAddress}, India`);
+          if (!coords && pendingUser.pincode) {
+            coords = await geocodeAddress(`${pendingUser.pincode}, India`);
+          }
+          if (coords) {
+            newVendor.latitude  = coords.lat;
+            newVendor.longitude = coords.lng;
             await newVendor.save();
+            console.log(`Geocoded vendor to ${coords.lat}, ${coords.lng}`);
           }
         } catch (geoError) {
-          console.log('Geocoding failed during vendor verification:', geoError.message);
+          console.log('Vendor geocoding failed:', geoError.message);
+        }
+      } else if (gpsLat) {
+        console.log(`Vendor registered with GPS coords: ${gpsLat}, ${gpsLng}`);
+      }
+    }
+
+    // 7b. Auto-geocode user delivery address via Google Maps
+    if (pendingUser.role === 'user' && pendingUser.address) {
+      const addr = pendingUser.address;
+      if (!addr.latitude && (addr.city || addr.pincode)) {
+        try {
+          // Attempt 1: area + city + pincode (most specific)
+          const areaQuery = [addr.area, addr.city, addr.pincode].filter(Boolean).join(', ');
+          let coords = await geocodeAddress(`${areaQuery}, India`);
+          // Attempt 2: pincode only
+          if (!coords && addr.pincode) {
+            coords = await geocodeAddress(`${addr.pincode}, India`);
+          }
+          if (coords) {
+            await newUser.updateOne({
+              $set: { 'address.latitude': coords.lat, 'address.longitude': coords.lng }
+            });
+            console.log(`Geocoded user address to ${coords.lat}, ${coords.lng}`);
+          }
+        } catch (geoError) {
+          console.log('User geocoding failed:', geoError.message);
         }
       }
     }
@@ -625,13 +707,13 @@ const resendRegisterOTP = async (req, res) => {
       </div>
     `;
 
-    try {
-      await sendEmail(pendingUser.email, emailSubject, emailMessage);
-      console.log('Registration OTP resent successfully to:', pendingUser.email);
-    } catch (emailError) {
-      console.error('Failed to resend registration OTP email:', emailError);
+    // sendEmail catches errors internally and returns false — never throws
+    const sent = await sendEmail(pendingUser.email, emailSubject, emailMessage);
+    if (!sent) {
+      console.error('Failed to resend registration OTP email to:', pendingUser.email);
       return res.status(500).json({ message: 'Failed to send OTP. Please try again.' });
     }
+    console.log('Registration OTP resent successfully to:', pendingUser.email);
 
     res.status(200).json({ 
       message: 'OTP resent successfully',
