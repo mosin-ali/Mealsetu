@@ -39,14 +39,14 @@ export default function Login() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body), 
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
 
       if (response.ok && data.token) {
         localStorage.setItem('token', data.token);
-        
+
         const userData = {
           _id: data._id,
           name: data.name,
@@ -59,7 +59,7 @@ export default function Login() {
         // Connect to socket for real-time updates
         try {
           socket.connect();
-          
+
           // Join appropriate room based on role
           if (role === 'admin') {
             socket.emit('joinAdmin');
@@ -75,7 +75,7 @@ export default function Login() {
 
         // Check for trial intent and navigate accordingly
         const trialIntent = localStorage.getItem('trialIntent');
-        
+
         if (role === 'admin') {
           navigate('/admin-dashboard');
         } else if (role === 'vendor') {

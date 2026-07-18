@@ -23,6 +23,7 @@ socket.on('connect', () => {
     socket.emit('join', _currentUserId);
     if (_currentRole === 'vendor' && _currentVendorId) {
       socket.emit('joinVendor', _currentVendorId);
+      socket.emit('joinVendorDelivery', _currentVendorId);
     }
     if (_currentRole === 'admin') {
       socket.emit('joinAdmin');
@@ -46,7 +47,10 @@ export const connectSocket = (userId, role, vendorId = null) => {
   } else {
     // Already connected — join immediately
     socket.emit('join', userId);
-    if (role === 'vendor' && vendorId) socket.emit('joinVendor', vendorId);
+    if (role === 'vendor' && vendorId) {
+      socket.emit('joinVendor', vendorId);
+      socket.emit('joinVendorDelivery', vendorId);
+    }
     if (role === 'admin') socket.emit('joinAdmin');
   }
 

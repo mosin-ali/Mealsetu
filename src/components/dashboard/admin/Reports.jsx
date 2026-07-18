@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getAdminCommissionTiers, updateAdminCommissionTiers, getAdminCommissionVendors, seedDefaultTiers, getAdminMarkCommissionPaid, getVendorCommissionDetail } from '../../../utils/api.js';
+import { getAdminCommissionTiers, updateAdminCommissionTiers, getAdminCommissionVendors, seedDefaultTiers, getAdminMarkCommissionPaid, getVendorCommissionDetail, getAdminCommissionDisputes, resolveAdminCommissionDispute } from '../../../utils/api.js';
 import VendorCommissionDetail from './VendorCommissionDetail';
 import './Reports.css';
 
@@ -14,12 +14,19 @@ const getTierName = (earning, tiers) => {
 const Reports = () => {
   const [tiers, setTiers]         = useState([]);
   const [vendors, setVendors]     = useState([]);
+  const [disputes, setDisputes]   = useState([]);
   const [loading, setLoading]     = useState(true);
   const [activeTab, setActiveTab] = useState('commissions');
   const [statusFilter, setStatusFilter]   = useState('all');
   const [searchQuery, setSearchQuery]     = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedWeek, setSelectedWeek]   = useState('');
+
+  // Dispute resolve modal state
+  const [resolveModal, setResolveModal]         = useState(null); // commission object
+  const [resolveNote, setResolveNote]           = useState('');
+  const [resolveAdjustedAmt, setResolveAdjustedAmt] = useState('');
+  const [resolveSubmitting, setResolveSubmitting]   = useState(false);
 
   const [drillVendorId, setDrillVendorId] = useState(null);
 
@@ -66,16 +73,37 @@ const Reports = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [tiersData, vendorsData] = await Promise.all([
+      const [tiersData, vendorsData, disputesData] = await Promise.all([
         getAdminCommissionTiers(),
-        getAdminCommissionVendors()
+        getAdminCommissionVendors(),
+        getAdminCommissionDisputes()
       ]);
       setTiers(tiersData.tiers || []);
       setVendors(vendorsData.vendors || []);
+      setDisputes(disputesData.disputes || []);
     } catch (error) {
       console.error('Admin commission load error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResolveDispute = async () => {
+    if (!resolveNote.trim()) { alert('Resolution note is required'); return; }
+    setResolveSubmitting(true);
+    try {
+      await resolveAdminCommissionDispute(resolveModal._id, {
+        resolutionNote: resolveNote.trim(),
+        adjustedAmount: resolveAdjustedAmt !== '' ? Number(resolveAdjustedAmt) : undefined
+      });
+      setResolveModal(null);
+      setResolveNote('');
+      setResolveAdjustedAmt('');
+      loadData();
+    } catch (error) {
+      alert('Resolve failed: ' + error.message);
+    } finally {
+      setResolveSubmitting(false);
     }
   };
 
@@ -171,6 +199,7 @@ const Reports = () => {
         <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid #e5e7eb', marginTop: 12 }}>
           {[
             { key: 'commissions', label: 'Collections & Settlements' },
+            { key: 'disputes',    label: 'Disputes', badge: disputes.length },
             { key: 'settings',    label: 'Tier Configuration' }
           ].map(tab => (
             <button
@@ -186,10 +215,23 @@ const Reports = () => {
                 color:        activeTab === tab.key ? '#f97316' : '#6b7280',
                 borderBottom: activeTab === tab.key ? '2px solid #f97316' : '2px solid transparent',
                 marginBottom: -2,
-                transition:   'all 0.15s'
+                transition:   'all 0.15s',
+                display:      'flex',
+                alignItems:   'center',
+                gap:          6
               }}
             >
               {tab.label}
+              {tab.badge > 0 && (
+                <span style={{
+                  background: '#dc2626', color: 'white',
+                  borderRadius: '50%', width: 18, height: 18,
+                  fontSize: 11, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  {tab.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -379,7 +421,8 @@ const Reports = () => {
               <tr>
                 <th>Vendor</th>
                 <th>Week</th>
-                <th>Earnings</th>
+                <th>Gross</th>
+                <th title="Total wallet credit used by customers this week">Wallet Used</th>
                 <th>Rate</th>
                 <th>Due</th>
                 <th>Due Date / Paid</th>
@@ -389,7 +432,7 @@ const Reports = () => {
             </thead>
             <tbody>
               {filteredVendors.length === 0 ? (
-                <tr><td colSpan="8" className="no-data">No vendor commission records found.</td></tr>
+                <tr><td colSpan="9" className="no-data">No vendor commission records found.</td></tr>
               ) : (
                 filteredVendors.map((v) => {
                   const isOverdue = v.status === 'overdue';
@@ -445,6 +488,11 @@ const Reports = () => {
                       </td>
 
                       <td>₹{v.total_earning?.toLocaleString('en-IN')}</td>
+                      <td style={{ color: v.total_wallet_deductions > 0 ? '#f59e0b' : '#9ca3af', fontSize: 13 }}>
+                        {v.total_wallet_deductions > 0
+                          ? `-₹${v.total_wallet_deductions.toLocaleString('en-IN')}`
+                          : '—'}
+                      </td>
                       <td>{v.commission_rate}%</td>
                       <td style={{ fontWeight: 600 }}>₹{v.commission_amount?.toLocaleString('en-IN')}</td>
 
@@ -523,6 +571,188 @@ const Reports = () => {
       </div>
 
       )} {/* end commissions tab */}
+
+      {/* DISPUTES TAB */}
+      {activeTab === 'disputes' && (
+        <div className="reports-section">
+          <h2>Open Disputes ({disputes.length})</h2>
+          {disputes.length === 0 ? (
+            <div style={{
+              textAlign: 'center', padding: '48px 0',
+              color: '#9ca3af', fontSize: 15
+            }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+              No open disputes. All clear!
+            </div>
+          ) : (
+            <div className="table-wrapper">
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>Vendor</th>
+                    <th>Week</th>
+                    <th>Commission</th>
+                    <th>Raised On</th>
+                    <th>Dispute Note</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disputes.map((d) => (
+                    <tr key={d._id} style={{ background: '#fef2f2' }}>
+                      <td>
+                        <strong>{d.vendorId?.kitchenName || 'Unknown Vendor'}</strong>
+                        <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                          {d.vendorId?.ownerId?.email || ''}
+                        </div>
+                      </td>
+                      <td>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>
+                          {d.weekStart && d.weekEnd
+                            ? `${new Date(d.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(d.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                            : (d.week || d.month || '—')}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 600 }}>₹{d.commission_amount?.toLocaleString('en-IN')}</td>
+                      <td style={{ fontSize: 12, color: '#6b7280' }}>
+                        {d.disputeRaisedAt
+                          ? new Date(d.disputeRaisedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                          : '—'}
+                      </td>
+                      <td style={{ maxWidth: 200, fontSize: 13, color: '#374151' }}>
+                        <span title={d.disputeNote}>{d.disputeNote || '—'}</span>
+                      </td>
+                      <td>
+                        <span style={{
+                          padding: '3px 9px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                          background: '#fef3c7', color: '#d97706'
+                        }}>
+                          {d.disputeStatus === 'under_review' ? 'Under Review' : 'Raised'}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          className="confirm-btn"
+                          onClick={() => {
+                            setResolveModal(d);
+                            setResolveNote('');
+                            setResolveAdjustedAmt('');
+                          }}
+                        >
+                          Resolve
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )} {/* end disputes tab */}
+
+      {/* DISPUTE RESOLVE MODAL */}
+      {resolveModal && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          zIndex: 2000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 20
+        }}
+          onClick={() => { if (!resolveSubmitting) setResolveModal(null); }}
+        >
+          <div
+            style={{
+              background: 'white', borderRadius: 14,
+              width: '100%', maxWidth: 500, padding: 28
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Resolve Dispute</h2>
+            <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 13 }}>
+              {resolveModal.vendorId?.kitchenName} · {resolveModal.week || resolveModal.weekStart
+                ? (resolveModal.weekStart
+                    ? `${new Date(resolveModal.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(resolveModal.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    : resolveModal.week)
+                : ''}
+            </p>
+
+            <div style={{ background: '#fef3c7', borderRadius: 8, padding: '12px 16px', marginBottom: 18 }}>
+              <p style={{ margin: 0, fontSize: 12, color: '#92400e', fontWeight: 600 }}>VENDOR'S DISPUTE NOTE</p>
+              <p style={{ margin: '6px 0 0', color: '#374151', fontSize: 13 }}>{resolveModal.disputeNote}</p>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                Resolution Note <span style={{ color: '#dc2626' }}>*</span>
+              </label>
+              <textarea
+                value={resolveNote}
+                onChange={e => setResolveNote(e.target.value)}
+                placeholder="Explain your decision to the vendor (they will receive this by email)..."
+                rows={4}
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  borderRadius: 8, border: '1.5px solid #e5e7eb',
+                  fontSize: 13, resize: 'vertical', boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                Adjust Commission Amount (optional)
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#6b7280' }}>₹</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={resolveAdjustedAmt}
+                  onChange={e => setResolveAdjustedAmt(e.target.value)}
+                  placeholder={`Current: ₹${resolveModal.commission_amount?.toLocaleString('en-IN')}`}
+                  style={{
+                    flex: 1, padding: '8px 12px',
+                    borderRadius: 8, border: '1.5px solid #e5e7eb', fontSize: 13
+                  }}
+                />
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>
+                Leave blank to keep the current amount. Vendor will be notified if changed.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setResolveModal(null)}
+                disabled={resolveSubmitting}
+                style={{
+                  padding: '10px 20px', borderRadius: 8,
+                  border: '1px solid #e5e7eb', background: 'white',
+                  fontSize: 13, cursor: 'pointer', color: '#374151'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResolveDispute}
+                disabled={resolveSubmitting || !resolveNote.trim()}
+                style={{
+                  padding: '10px 24px', borderRadius: 8,
+                  border: 'none',
+                  background: resolveSubmitting || !resolveNote.trim() ? '#9ca3af' : '#2563eb',
+                  color: 'white', fontSize: 13, fontWeight: 600,
+                  cursor: resolveSubmitting || !resolveNote.trim() ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {resolveSubmitting ? 'Resolving...' : 'Resolve & Notify Vendor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* VENDOR DRILL-DOWN MODAL — outside tabs so it overlays everything */}
       {drillVendorId && (

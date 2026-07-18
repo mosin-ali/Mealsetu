@@ -25,18 +25,23 @@ const AdminProfile = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // Load admin data on mount
+  // Load admin data on mount — fetch from API for freshest data
   useEffect(() => {
-    const user = localStorage.getItem('user');
-    if (user) {
-      const userData = JSON.parse(user);
-      setProfileData(prev => ({
-        ...prev,
-        name: userData.name || '',
-        email: userData.email || '',
-        phone: userData.phone || ''
-      }));
-    }
+    const token = localStorage.getItem('token');
+    fetch('/api/admin/profile', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => {
+        const u = data.user || data;
+        setProfileData({ name: u.name || '', email: u.email || '', phone: u.phone || '' });
+      })
+      .catch(() => {
+        // Fallback to localStorage if API fails
+        const user = localStorage.getItem('user');
+        if (user) {
+          const u = JSON.parse(user);
+          setProfileData({ name: u.name || '', email: u.email || '', phone: u.phone || '' });
+        }
+      });
   }, []);
 
   const handleProfileChange = (field, value) => {

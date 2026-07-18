@@ -63,6 +63,12 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
+/* "New" variant — green badge when no reviews yet */
+.rating-badge-new {
+  background: #16a34a;
+  color: #ffffff;
+}
+
 /* 3. Card Body */
 .card-details {
   padding: 24px;

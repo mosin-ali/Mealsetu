@@ -568,9 +568,14 @@ const Subscription = ({
               </>
             )}
             <p className="status-label" style={{ marginTop: '10px' }}>
-              Subscription Valid Until
+              Valid Until
             </p>
             <h2 className="status-date">{formatDate(currentSubscription.endDate)}</h2>
+            <p style={{ fontSize: '12px', color: '#64748b', marginTop: '2px', fontStyle: 'italic' }}>
+              {currentSubscription.lastDayMealSlot === 'lunch'
+                ? 'last meal: lunch only'
+                : 'last meal day'}
+            </p>
             {currentSubscription.status === 'active' ? (
               <p style={{ color: '#16a34a', marginTop: '5px' }}>✓ Active</p>
             ) : (
@@ -870,7 +875,7 @@ const Subscription = ({
               )}
               {modalPlanType && (
                 <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '2px' }}>
-                  Current: {modalPlanType} · Expires {modalExpiryDate}
+                  Current: {modalPlanType} · Last meal: {modalExpiryDate}
                 </p>
               )}
               <p className="subscribe-modal-subtitle">

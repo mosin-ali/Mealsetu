@@ -127,9 +127,17 @@ const CommissionHistory = () => {
     ? history.filter(h => h.week !== currentWeek.week)
     : history;
 
+  // All unpaid locked commissions (overdue first, then pending by due date)
+  const unpaidLocked = history
+    .filter(c => (c.status === 'overdue' || c.status === 'pending') && c.isLocked)
+    .sort((a, b) => {
+      if (a.status === 'overdue' && b.status !== 'overdue') return -1;
+      if (b.status === 'overdue' && a.status !== 'overdue') return  1;
+      return new Date(a.due_date) - new Date(b.due_date);
+    });
+
   // For banners: most urgent unpaid locked commission
-  const urgentCommission = history.find(c => c.status === 'overdue' && c.isLocked) ||
-                           history.find(c => c.status === 'pending' && c.isLocked);
+  const urgentCommission = unpaidLocked[0] || null;
 
   const handleWeekClick = async (commission) => {
     if (!commission.weekStart || !commission.weekEnd) return;
@@ -190,59 +198,61 @@ const CommissionHistory = () => {
   return (
     <div className={styles.commissionContainer}>
 
-      {/* OVERDUE BANNER */}
-      {urgentCommission?.status === 'overdue' && (
-        <div style={{
-          background: '#fef2f2', border: '1.5px solid #dc2626',
-          borderRadius: 10, padding: '14px 18px', marginBottom: 20,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-        }}>
-          <div>
-            <p style={{ margin: 0, fontWeight: 700, color: '#dc2626' }}>Commission Overdue</p>
-            <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 13 }}>
-              {`₹${urgentCommission.commission_amount} was due on ${longDate(urgentCommission.due_date)}. Pay now to avoid service interruption.`}
-            </p>
-          </div>
-          <button
-            onClick={() => handleRazorpayCommissionPayment(urgentCommission)}
-            disabled={submitting}
-            style={{
-              background: submitting ? '#9ca3af' : '#dc2626', color: 'white',
-              border: 'none', borderRadius: 8, padding: '10px 20px',
-              fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer',
-              whiteSpace: 'nowrap', marginLeft: 16
-            }}
-          >
-            {submitting ? 'Processing...' : `Pay ₹${urgentCommission.commission_amount} Now`}
-          </button>
-        </div>
-      )}
+      {/* MULTIPLE UNPAID WEEKS — each shown as its own payable card */}
+      {unpaidLocked.length > 0 && (
+        <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {unpaidLocked.map((c, idx) => {
+            const isOverdue = c.status === 'overdue';
+            const dueSoon   = !isOverdue && c.due_date &&
+              new Date(c.due_date) < new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+            const borderColor = isOverdue ? '#dc2626' : dueSoon ? '#d97706' : '#f97316';
+            const bg          = isOverdue ? '#fef2f2' : dueSoon ? '#fffbeb' : '#fff7ed';
+            const accentColor = isOverdue ? '#dc2626' : dueSoon ? '#d97706' : '#ea580c';
 
-      {/* DUE SOON BANNER */}
-      {urgentCommission?.status === 'pending' &&
-       new Date(urgentCommission.due_date) < new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) && (
-        <div style={{
-          background: '#fffbeb', border: '1.5px solid #d97706',
-          borderRadius: 10, padding: '14px 18px', marginBottom: 20,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-        }}>
-          <div>
-            <p style={{ margin: 0, fontWeight: 700, color: '#d97706' }}>Commission Due Soon</p>
-            <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 13 }}>
-              {`₹${urgentCommission.commission_amount} due by ${fmtDate(urgentCommission.due_date, { day: 'numeric', month: 'long' })}.`}
-            </p>
-          </div>
-          <button
-            onClick={() => handleRazorpayCommissionPayment(urgentCommission)}
-            disabled={submitting}
-            style={{
-              background: submitting ? '#9ca3af' : '#d97706', color: 'white',
-              border: 'none', borderRadius: 8, padding: '10px 20px',
-              fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer', marginLeft: 16
-            }}
-          >
-            {submitting ? 'Processing...' : 'Pay Now'}
-          </button>
+            return (
+              <div key={c._id || idx} style={{
+                background: bg, border: `1.5px solid ${borderColor}`,
+                borderRadius: 10, padding: '14px 18px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                flexWrap: 'wrap', gap: 12
+              }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 700, color: accentColor, fontSize: 14 }}>
+                    {isOverdue ? '⚠️ Commission Overdue' : dueSoon ? '⏰ Due Soon' : '📋 Commission Due'}
+                    {unpaidLocked.length > 1 && (
+                      <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: '#9ca3af' }}>
+                        (Week {idx + 1} of {unpaidLocked.length})
+                      </span>
+                    )}
+                  </p>
+                  <p style={{ margin: '4px 0 0', color: '#374151', fontSize: 13 }}>
+                    <strong>₹{c.commission_amount?.toLocaleString('en-IN')}</strong>
+                    {c.weekStart && c.weekEnd
+                      ? ` · ${shortDate(c.weekStart)} – ${fmtDate(c.weekEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`
+                      : ''}
+                  </p>
+                  <p style={{ margin: '2px 0 0', color: '#6b7280', fontSize: 12 }}>
+                    {isOverdue
+                      ? `Was due on ${longDate(c.due_date)}. Pay now to avoid service interruption.`
+                      : `Due by ${longDate(c.due_date)}.`}
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setPaymentError(null); handleRazorpayCommissionPayment(c); }}
+                  disabled={submitting}
+                  style={{
+                    background: submitting ? '#9ca3af' : accentColor, color: 'white',
+                    border: 'none', borderRadius: 8, padding: '10px 20px',
+                    fontWeight: 600, fontSize: 13,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {submitting ? 'Processing...' : `Pay ₹${c.commission_amount?.toLocaleString('en-IN')}`}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -558,13 +568,25 @@ const CommissionHistory = () => {
                               ⚑ Dispute
                             </button>
                           )}
-                          {w.disputeStatus === 'raised' && (
+                          {(w.disputeStatus === 'raised' || w.disputeStatus === 'under_review') && (
                             <span style={{
                               fontSize: 11, color: '#d97706',
                               padding: '4px 8px', background: '#fef3c7',
                               borderRadius: 6
                             }}>
-                              Under Review
+                              🔍 Under Review
+                            </span>
+                          )}
+                          {w.disputeStatus === 'resolved' && (
+                            <span
+                              title={w.disputeResolutionNote || 'Dispute resolved by admin'}
+                              style={{
+                                fontSize: 11, color: '#16a34a',
+                                padding: '4px 8px', background: '#dcfce7',
+                                borderRadius: 6, cursor: 'help'
+                              }}
+                            >
+                              ✓ Resolved{w.disputeResolutionNote ? ` · "${w.disputeResolutionNote.slice(0, 40)}${w.disputeResolutionNote.length > 40 ? '…' : ''}"` : ''}
                             </span>
                           )}
                         </div>
@@ -645,14 +667,16 @@ const CommissionHistory = () => {
               <p style={{ textAlign: 'center', color: '#9ca3af', padding: 40 }}>Loading orders...</p>
             ) : weekOrders ? (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
                   {[
-                    { label: 'ORDERS',     value: weekOrders.totalOrders,                                         color: '#374151' },
-                    { label: 'GROSS',      value: `₹${(weekOrders.grossEarnings || 0).toLocaleString('en-IN')}`,  color: '#374151' },
-                    { label: 'COMMISSION', value: `-₹${(weekOrders.commissionAmount || 0).toLocaleString('en-IN')}`, color: '#dc2626' },
-                    { label: 'YOU KEEP',   value: `₹${(weekOrders.netEarnings || 0).toLocaleString('en-IN')}`,    color: '#16a34a' }
+                    { label: 'ORDERS',          value: weekOrders.totalOrders,                                                          color: '#374151' },
+                    { label: 'GROSS',           value: `₹${(weekOrders.grossEarnings || 0).toLocaleString('en-IN')}`,                   color: '#374151' },
+                    { label: 'WALLET USED',     value: weekOrders.totalWalletDeductions > 0 ? `-₹${weekOrders.totalWalletDeductions.toLocaleString('en-IN')}` : '₹0', color: weekOrders.totalWalletDeductions > 0 ? '#f59e0b' : '#9ca3af',
+                      tooltip: 'Amount customers paid using loyalty wallet credit. Commission is calculated on Gross − Wallet.' },
+                    { label: 'COMMISSION',      value: `-₹${(weekOrders.commissionAmount || 0).toLocaleString('en-IN')}`,               color: '#dc2626' },
+                    { label: 'YOU KEEP',        value: `₹${(weekOrders.netEarnings || 0).toLocaleString('en-IN')}`,                     color: '#16a34a' }
                   ].map(item => (
-                    <div key={item.label} style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 14px' }}>
+                    <div key={item.label} title={item.tooltip || ''} style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 14px', cursor: item.tooltip ? 'help' : 'default' }}>
                       <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>{item.label}</p>
                       <p style={{ margin: '4px 0 0', fontSize: 17, fontWeight: 700, color: item.color }}>{item.value}</p>
                     </div>
@@ -663,7 +687,7 @@ const CommissionHistory = () => {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr style={{ background: '#f9fafb' }}>
-                        {['DATE', 'CUSTOMER', 'PLAN', 'AMOUNT', 'COMMISSION', 'YOUR SHARE'].map(h => (
+                        {['DATE', 'CUSTOMER', 'PLAN', 'GROSS', 'WALLET', 'COMMISSION', 'YOUR SHARE'].map(h => (
                           <th key={h} style={{
                             padding: '8px 10px',
                             textAlign: ['DATE', 'CUSTOMER', 'PLAN'].includes(h) ? 'left' : 'right',
@@ -685,6 +709,9 @@ const CommissionHistory = () => {
                           <td style={{ padding: '10px 10px', color: '#6b7280' }}>{order.planType}</td>
                           <td style={{ padding: '10px 10px', textAlign: 'right', color: '#374151', fontWeight: 500 }}>
                             ₹{order.grossAmount}
+                          </td>
+                          <td style={{ padding: '10px 10px', textAlign: 'right', color: order.walletDeduction > 0 ? '#f59e0b' : '#9ca3af', fontSize: 12 }}>
+                            {order.walletDeduction > 0 ? `-₹${order.walletDeduction}` : '—'}
                           </td>
                           <td style={{ padding: '10px 10px', textAlign: 'right', color: '#dc2626' }}>
                             -₹{order.commissionCut}

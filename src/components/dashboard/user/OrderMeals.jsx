@@ -140,7 +140,7 @@ const [selectedNewVendor, setSelectedNewVendor] = useState(null);
         tiffinsList.map(async (tiffin) => {
           const vendorId = tiffin.vendorId || tiffin._id || tiffin.id;
           if (vendorId) {
-            const ratingData = await getUserVendorRating(vendorId).catch(() => ({ rating: tiffin.rating || 4.5, reviewCount: 0 }));
+            const ratingData = await getUserVendorRating(vendorId).catch(() => ({ rating: tiffin.rating ?? 0, reviewCount: tiffin.reviewCount ?? 0 }));
             ratings[vendorId] = ratingData;
           }
         })
@@ -158,7 +158,7 @@ const [selectedNewVendor, setSelectedNewVendor] = useState(null);
     const vendorId = tiffin.vendorId || tiffin._id || tiffin.id;
     const ratingData = vendorRatings[vendorId];
     if (ratingData && ratingData.rating) return ratingData.rating;
-    return tiffin.rating || 4.5;
+    return tiffin.rating ?? 0;
   };
 
   const getVendorReviewCount = (tiffin) => {
@@ -429,11 +429,11 @@ const continueWithUpcomingPlan = async () => {
           setUserLat(latitude);
           setUserLon(longitude);
           const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-            { headers: { 'Accept-Language': 'en' } }
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyCgJ0v4LEJaPxZUQR20A56GpBeFa8cf3LQ&language=en`
           );
           const data = await response.json();
-          const detectedPincode = data.address?.postcode;
+          const components = data.results?.[0]?.address_components || [];
+          const detectedPincode = components.find(c => c.types.includes('postal_code'))?.long_name;
           if (detectedPincode) {
             setPincodeInput(detectedPincode);
             try { await updateUserPincode(detectedPincode); } catch (err) { console.error('Failed to save pincode:', err); }
@@ -565,7 +565,10 @@ const continueWithUpcomingPlan = async () => {
                   ) : (
                     <img src="https://images.unsplash.com/photo-1547573854-74d2a71d0826?w=500" alt="Kitchen" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block', ...(!isOpen ? { filter: 'grayscale(100%) opacity(0.6)' } : {}) }} />
                   )}
-                  <div className="rating-badge">⭐ {dynamicRating.toFixed(1)}</div>
+                  {reviewCount === 0
+                    ? <div className="rating-badge rating-badge-new">New</div>
+                    : <div className="rating-badge">⭐ {dynamicRating.toFixed(1)}</div>
+                  }
                   {!isOpen && <div className="kitchen-closed-overlay"><span className="closed-badge">Kitchen Closed</span></div>}
                 </div>
                 <div className="card-details">

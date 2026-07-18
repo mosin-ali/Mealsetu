@@ -14,17 +14,55 @@ const AddManualCustomer = ({ vendorProfile }) => {
     startDate: '',
     paymentMethod: 'Cash',
     amount: 0,
-    deliveryPincode: '',
-    mealPreference: 'Regular'
+    mealPreference: 'Regular',
+    address: {
+      flatHouseNo: '',
+      street: '',
+      area: '',
+      landmark: '',
+      city: '',
+      pincode: '',
+    }
   });
+  const [geocoding, setGeocoding] = useState(false);
   const [loading, setLoading] = useState(false);
   const [calculateLoading, setCalculateLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [confirmation, setConfirmation] = useState(null); // mealSlotInfo after add
 
   // Load manual customers on mount
   useEffect(() => {
     fetchManualCustomers();
   }, []);
+
+  const handleAddressChange = (field, value) => {
+    setFormData(prev => ({ ...prev, address: { ...prev.address, [field]: value } }));
+  };
+
+  const geocodeAddress = async (area, pincode) => {
+    if (!area && !pincode) return;
+    try {
+      setGeocoding(true);
+      const query = [area, pincode, 'India'].filter(Boolean).join(', ');
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=in`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'MealSetu/1.0' } });
+      const data = await res.json();
+      if (data?.[0]) {
+        setFormData(prev => ({
+          ...prev,
+          address: {
+            ...prev.address,
+            latitude: parseFloat(data[0].lat),
+            longitude: parseFloat(data[0].lon),
+          }
+        }));
+      }
+    } catch (_) {
+      // silent — geocoding failure is non-critical
+    } finally {
+      setGeocoding(false);
+    }
+  };
 
   const fetchManualCustomers = async () => {
     try {
@@ -72,8 +110,8 @@ const AddManualCustomer = ({ vendorProfile }) => {
 
     try {
       setLoading(true);
-      await addManualCustomer(formData);
-      addToast('Manual customer added successfully!', 'success');
+      const res = await addManualCustomer(formData);
+      const savedName = formData.name;
       setFormData({
         name: '',
         phone: '',
@@ -81,11 +119,17 @@ const AddManualCustomer = ({ vendorProfile }) => {
         startDate: '',
         paymentMethod: 'Cash',
         amount: 0,
-        deliveryPincode: '',
-        mealPreference: 'Regular'
+        mealPreference: 'Regular',
+        address: { flatHouseNo: '', street: '', area: '', landmark: '', city: '', pincode: '' }
       });
       fetchManualCustomers();
       setShowForm(false);
+      // Show confirmation with meal slot info
+      if (res?.mealSlotInfo) {
+        setConfirmation({ ...res.mealSlotInfo, customerName: savedName });
+      } else {
+        addToast('Manual customer added successfully!', 'success');
+      }
     } catch (error) {
       console.error('Submit error:', error);
       addToast('Failed to add customer: ' + (error.message || 'Unknown error'), 'error');
@@ -149,8 +193,48 @@ const AddManualCustomer = ({ vendorProfile }) => {
 
   const toggleForm = () => setShowForm(!showForm);
 
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+
   return (
     <div className="v-card">
+
+      {/* ── Confirmation modal ─────────────────────────────────────────────── */}
+      {confirmation && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#fff', borderRadius: '16px', padding: '28px', maxWidth: '420px', width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{ fontSize: '40px', marginBottom: '8px' }}>✅</div>
+              <h3 style={{ margin: 0, color: '#1e293b', fontSize: '18px' }}>{confirmation.customerName} Added!</h3>
+              <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '13px' }}>Tell the customer:</p>
+            </div>
+
+            {/* Meal slot badge */}
+            <div style={{ background: confirmation.color + '18', border: `1.5px solid ${confirmation.color}`, borderRadius: '10px', padding: '14px 16px', marginBottom: '16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: confirmation.color }}>{confirmation.label}</div>
+              <div style={{ fontSize: '13px', color: '#475569', marginTop: '6px', lineHeight: '1.5' }}>{confirmation.note}</div>
+            </div>
+
+            {/* Plan dates */}
+            <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontSize: '13px', color: '#64748b' }}>Plan starts</span>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{fmtDate(confirmation.startDate)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '13px', color: '#64748b' }}>Plan ends</span>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{fmtDate(confirmation.endDate)}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setConfirmation(null)}
+              style={{ width: '100%', padding: '12px', background: '#f26522', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', fontSize: '15px', cursor: 'pointer' }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
         <h3 style={{ margin: 0, color: '#2b3674' }}>➕ Manual / Offline Customers</h3>
         <div style={{ display: 'flex', gap: '15px' }}>
@@ -235,15 +319,82 @@ const AddManualCustomer = ({ vendorProfile }) => {
                 required
               />
             </div>
-            <div>
-              <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Delivery Pincode</label>
-              <input
-                type="text"
-                className="v-input"
-                value={formData.deliveryPincode}
-                onChange={(e) => setFormData({ ...formData, deliveryPincode: e.target.value })}
-                placeholder="400001"
-              />
+            {/* ── Address section (spans full row) ── */}
+            <div style={{ gridColumn: '1 / -1', background: '#f1f5f9', borderRadius: '10px', padding: '16px', border: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <label style={{ fontWeight: '700', color: '#374151', fontSize: '14px' }}>📍 Delivery Address</label>
+                {geocoding && <span style={{ fontSize: '12px', color: '#6b7280' }}>Detecting location...</span>}
+              </div>
+              <div className="flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>Flat / House No.</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.flatHouseNo}
+                    onChange={e => handleAddressChange('flatHouseNo', e.target.value)}
+                    placeholder="B-12, Shanti Apt"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>Street</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.street}
+                    onChange={e => handleAddressChange('street', e.target.value)}
+                    placeholder="MG Road"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>Area / Locality *</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.area}
+                    onChange={e => handleAddressChange('area', e.target.value)}
+                    onBlur={() => geocodeAddress(formData.address.area, formData.address.pincode)}
+                    placeholder="Jalalpore"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>Landmark</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.landmark}
+                    onChange={e => handleAddressChange('landmark', e.target.value)}
+                    placeholder="Near Bus Stand"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>City</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.city}
+                    onChange={e => handleAddressChange('city', e.target.value)}
+                    placeholder="Navsari"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '5px', color: '#6b7280' }}>Pincode</label>
+                  <input
+                    type="text"
+                    className="v-input"
+                    value={formData.address.pincode}
+                    onChange={e => handleAddressChange('pincode', e.target.value)}
+                    onBlur={() => geocodeAddress(formData.address.area, formData.address.pincode)}
+                    placeholder="396445"
+                    maxLength={6}
+                  />
+                </div>
+              </div>
+              {(formData.address.latitude) && (
+                <p style={{ marginTop: '8px', fontSize: '11px', color: '#16a34a', fontWeight: '600' }}>
+                  ✅ Location detected — delivery navigation & proximity alerts will work
+                </p>
+              )}
             </div>
             <div>
               <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Meal Preference</label>
@@ -358,7 +509,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
                   <th>Start Date</th>
                   <th>Amount</th>
                   <th>Payment</th>
-                  <th>Pincode</th>
+                  <th>Address</th>
                   <th>Meal Pref</th>
                 </tr>
               </thead>
@@ -393,7 +544,12 @@ const AddManualCustomer = ({ vendorProfile }) => {
                         {customer.paymentMethod || 'Cash'}
                       </span>
                     </td>
-                    <td>{customer.deliveryPincode || '-'}</td>
+                    <td style={{ fontSize: '12px' }}>
+                      {customer.manualCustomerAddress && typeof customer.manualCustomerAddress === 'object'
+                        ? [customer.manualCustomerAddress.area, customer.manualCustomerAddress.city, customer.manualCustomerAddress.pincode].filter(Boolean).join(', ') || '-'
+                        : (customer.manualCustomerPincode || '-')
+                      }
+                    </td>
                     <td>
                       <span style={{ 
                         padding: '4px 6px', 

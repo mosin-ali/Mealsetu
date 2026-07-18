@@ -2,40 +2,72 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminSidebar from '../components/dashboard/admin/AdminSidebar';
 import VendorManagement from '../components/dashboard/admin/VendorManagement';
-import UserManagement from '../components/dashboard/admin/UserManagement';
 import Reports from '../components/dashboard/admin/Reports';
 import AdminProfile from '../components/dashboard/admin/AdminProfile';
+import AdminOrders from '../components/dashboard/admin/AdminOrders';
+import AdminReviews from '../components/dashboard/admin/AdminReviews';
+import AdminDelivery from '../components/dashboard/admin/AdminDelivery';
+import AdminUsers from '../components/dashboard/admin/AdminUsers';
+import AdminDashboardHome from '../components/dashboard/admin/AdminDashboardHome';
 import './AdminDashboard.css';
 
+const ORANGE = '#f26522';
+
+const getToken = () => localStorage.getItem('token');
+
+const apiFetch = (url, opts = {}) =>
+  fetch(url, {
+    ...opts,
+    headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json', ...opts.headers },
+  }).then(r => r.json());
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN ADMIN DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════
+
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('requests');
+  const [activeTab, setActiveTab]   = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState('');
+  const [alerts, setAlerts]         = useState([]);
+  const [alertCounts, setAlertCounts] = useState({});
+
   const navigate = useNavigate();
 
+  // Auth check
   useEffect(() => {
     const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    if (!token || !user) {
-      navigate('/login');
-      return;
-    }
+    const user  = localStorage.getItem('user');
+    if (!token || !user) { navigate('/login'); return; }
     try {
       const userData = JSON.parse(user);
-      if (userData.role !== 'admin') {
-        navigate('/');
-        return;
-      }
+      if (userData.role !== 'admin') { navigate('/'); return; }
       setLoading(false);
-    } catch (e) {
-      navigate('/login');
-    }
+    } catch { navigate('/login'); }
   }, [navigate]);
 
+  // Load alerts on mount to populate sidebar badges
+  useEffect(() => { loadAlerts(); }, []);
+
+  const loadAlerts = () => {
+    apiFetch('/api/admin/alerts')
+      .then(data => {
+        const al = data.alerts || [];
+        setAlerts(al);
+        setAlertCounts({
+          pendingVendors:      al.find(a => a.category === 'vendors')?.count    || 0,
+          flaggedReviews:      al.find(a => a.category === 'reviews')?.count    || 0,
+          overdueCommissions:  al.find(a => a.category === 'commission')?.count || 0,
+          pendingTransactions: al.find(a => a.category === 'orders')?.count     || 0,
+        });
+      })
+      .catch(e => console.error('alerts load:', e));
+  };
+
   const handleTabChange = (tab) => {
-    console.log('Tab changed to:', tab);
     setActiveTab(tab);
+    setSidebarOpen(false);
   };
 
   const handleLogout = () => {
@@ -45,26 +77,24 @@ export default function AdminDashboard() {
   };
 
   const renderContent = () => {
-    console.log('Rendering tab:', activeTab);
     switch (activeTab) {
-      case 'requests':
-        return <VendorManagement />;
-      case 'users':
-        return <UserManagement />;
-      case 'commission':
-        return <Reports />;
-      case 'profile':
-        return <AdminProfile />;
-      default:
-        return <VendorManagement />;
+      case 'dashboard':  return <AdminDashboardHome onTabChange={handleTabChange} />;
+      case 'requests':   return <VendorManagement />;
+      case 'users':      return <AdminUsers />;
+      case 'orders':     return <AdminOrders />;
+      case 'reviews':    return <AdminReviews />;
+      case 'delivery':   return <AdminDelivery />;
+      case 'commission': return <Reports />;
+      case 'profile':    return <AdminProfile />;
+      default:           return <AdminDashboardHome onTabChange={handleTabChange} />;
     }
   };
 
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
-        <div style={{ width: '48px', height: '48px', border: '4px solid #f1f5f9', borderTop: '4px solid #f26522', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading your dashboard...</p>
+        <div style={{ width: '48px', height: '48px', border: '4px solid #f1f5f9', borderTop: `4px solid ${ORANGE}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading your dashboard…</p>
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
     );
@@ -76,62 +106,42 @@ export default function AdminDashboard() {
         <div style={{ textAlign: 'center', maxWidth: '400px' }}>
           <div style={{ fontSize: '64px', marginBottom: '16px' }}>⚙️</div>
           <h2 style={{ color: '#2b3674', margin: '0 0 8px 0', fontSize: '22px' }}>Admin Panel Unavailable</h2>
-          <p style={{ color: '#64748b', fontSize: '14px', margin: '0 0 24px 0', lineHeight: '1.6' }}>
-            Could not connect to server. Check backend status.
-          </p>
-          <button
-            onClick={() => { setError(''); setLoading(true); window.location.reload(); }}
-            style={{ background: '#f26522', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '10px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', width: '100%', marginBottom: '12px' }}
-          >
+          <p style={{ color: '#64748b', fontSize: '14px', margin: '0 0 24px 0', lineHeight: '1.6' }}>Could not connect to server.</p>
+          <button onClick={() => { setError(''); setLoading(true); window.location.reload(); }} style={{ background: ORANGE, color: 'white', border: 'none', padding: '12px 28px', borderRadius: '10px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', width: '100%', marginBottom: '12px' }}>
             🔄 Try Again
-          </button>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ background: 'transparent', color: '#64748b', border: '1px solid #e2e8f0', padding: '10px 28px', borderRadius: '10px', fontSize: '14px', cursor: 'pointer', width: '100%' }}
-          >
-            Refresh Page
           </button>
         </div>
       </div>
     );
   }
 
-return (
-  <div className="admin-dashboard">
+  return (
+    <div className="admin-dashboard">
 
-    {/* Mobile Topbar */}
-    <div className="admin-topbar">
-      <span className="admin-topbar-brand">MealSetu Admin</span>
-      <button
-        className="admin-hamburger"
-        onClick={() => setSidebarOpen(true)}
-        aria-label="Open menu"
-      >
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
+      {/* Mobile Topbar */}
+      <div className="admin-topbar">
+        <span className="admin-topbar-brand">MealSetu Admin</span>
+        <button className="admin-hamburger" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+          <span /><span /><span />
+        </button>
+      </div>
+
+      {/* Backdrop */}
+      <div className={`admin-backdrop ${sidebarOpen ? 'show' : ''}`} onClick={() => setSidebarOpen(false)} />
+
+      <AdminSidebar
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        onLogout={handleLogout}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        alertCounts={alertCounts}
+      />
+
+      <div className="admin-content">
+        {renderContent()}
+      </div>
+
     </div>
-
-    {/* Backdrop */}
-    <div
-      className={`admin-backdrop ${sidebarOpen ? 'show' : ''}`}
-      onClick={() => setSidebarOpen(false)}
-    />
-
-    {/* Sidebar */}
-    <AdminSidebar
-      activeTab={activeTab}
-      onTabChange={(tab) => { handleTabChange(tab); setSidebarOpen(false); }}
-      onLogout={handleLogout}
-      isOpen={sidebarOpen}
-      onClose={() => setSidebarOpen(false)}
-    />
-
-    <div className="admin-content">
-      {renderContent()}
-    </div>
-
-  </div>
-);
+  );
 }

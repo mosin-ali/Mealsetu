@@ -5,7 +5,9 @@ import { getUserVendorReviews, getUserVendorRating } from '../../../utils/api';
 const AllReviewsModal = ({ vendor, onClose }) => {
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [ratingInfo, setRatingInfo] = useState({ rating: 0, reviewCount: 0 });
+  const [ratingInfo, setRatingInfo] = useState({
+    rating: 0, reviewCount: 0, verifiedCount: 0, ratingLabel: '', breakdown: {},
+  });
 
   useEffect(() => {
     fetchReviews();
@@ -18,7 +20,21 @@ const AllReviewsModal = ({ vendor, onClose }) => {
       const vendorId = vendor?.vendorId || vendor?._id || vendor?.id;
       if (vendorId) {
         const data = await getUserVendorReviews(vendorId);
-        setReviews(data || []);
+        // API now returns { analytics, reviews, pagination } — handle both shapes
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          setReviews(data.reviews || []);
+          if (data.analytics) {
+            setRatingInfo({
+              rating:       data.analytics.avgRating    || 0,
+              reviewCount:  data.analytics.totalReviews || 0,
+              verifiedCount: data.analytics.verifiedCount || 0,
+              ratingLabel:  data.analytics.ratingLabel  || '',
+              breakdown:    data.analytics.breakdownPercent || {},
+            });
+          }
+        } else {
+          setReviews(data || []); // legacy flat-list fallback
+        }
       }
     } catch (error) {
       console.error('Error fetching reviews:', error);
@@ -62,38 +78,43 @@ const AllReviewsModal = ({ vendor, onClose }) => {
 
         {/* Rating Summary */}
         {!loading && (
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '15px', 
-            marginBottom: '20px',
-            padding: '15px',
-            background: '#f8fafc',
-            borderRadius: '10px'
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <span style={{ 
-                fontSize: '32px', 
-                fontWeight: 'bold', 
-                color: '#f26522' 
-              }}>
-                {ratingInfo.rating || 0}
-              </span>
-              <div style={{ color: '#f59e0b', fontSize: '16px' }}>
-                {renderStars(Math.round(ratingInfo.rating || 0))}
+          <div style={{ marginBottom: 20, padding: 16, background: '#f8fafc',
+            borderRadius: 12, border: '1px solid #e8ecf0' }}>
+            <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+              {/* Big number + stars */}
+              <div style={{ textAlign: 'center', minWidth: 70 }}>
+                <div style={{ fontSize: 40, fontWeight: 800, color: '#f26522', lineHeight: 1 }}>
+                  {(ratingInfo.rating || 0).toFixed(1)}
+                </div>
+                <div style={{ color: '#f59e0b', fontSize: 18, margin: '4px 0' }}>
+                  {renderStars(Math.round(ratingInfo.rating || 0))}
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  {ratingInfo.reviewCount || 0} review{ratingInfo.reviewCount !== 1 ? 's' : ''}
+                </div>
               </div>
-              <small style={{ color: '#64748b' }}>
-                {ratingInfo.reviewCount || 0} reviews
-              </small>
+              {/* Breakdown bars */}
+              <div style={{ flex: 1 }}>
+                {[5,4,3,2,1].map(s => {
+                  const pct = ratingInfo.breakdown?.[s] ?? 0;
+                  return (
+                    <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 11, color: '#64748b', width: 16, textAlign: 'right' }}>{s}⭐</span>
+                      <div style={{ flex: 1, background: '#e8ecf0', borderRadius: 4, height: 7 }}>
+                        <div style={{ width: `${pct}%`, background: '#f59e0b',
+                          borderRadius: 4, height: '100%', transition: 'width 0.4s' }} />
+                      </div>
+                      <span style={{ fontSize: 11, color: '#94a3b8', width: 28 }}>{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ margin: 0, color: '#16a34a', fontWeight: '600', fontSize: '14px' }}>
-                ✓ Verified Reviews
-              </p>
-              {/* <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#64748b' }}>
-                Sorted by rating (Excellent first)
-              </p> */}
-            </div>
+            {ratingInfo.ratingLabel && (
+              <div style={{ marginTop: 10, fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
+                ✓ {ratingInfo.ratingLabel} · {ratingInfo.verifiedCount || 0} verified purchase{ratingInfo.verifiedCount !== 1 ? 's' : ''}
+              </div>
+            )}
           </div>
         )}
 
@@ -106,22 +127,35 @@ const AllReviewsModal = ({ vendor, onClose }) => {
             reviews.map((rev, idx) => (
               <div key={rev._id || idx} className="review-item">
                 <div className="review-header">
-                  <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span className="review-user">
                       {rev.user || 'Anonymous'}
                     </span>
-                    <span className="review-date" style={{ marginLeft: '10px', fontSize: '12px', color: '#64748b' }}>
+                    {rev.isVerifiedPurchase && (
+                      <span style={{ fontSize: 11, color: '#16a34a', background: '#f0fdf4',
+                        border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px',
+                        fontWeight: 600 }}>✓ Verified</span>
+                    )}
+                    {rev.planType && (
+                      <span style={{ fontSize: 11, color: '#6d28d9', background: '#ede9fe',
+                        borderRadius: 10, padding: '1px 7px' }}>{rev.planType}</span>
+                    )}
+                    <span className="review-date" style={{ fontSize: '12px', color: '#64748b' }}>
                       {rev.date}
                     </span>
+                    {rev.isEdited && (
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>(edited)</span>
+                    )}
                   </div>
-                  <span 
-                    className="review-rating" 
-                    style={{ 
+                  <span
+                    className="review-rating"
+                    style={{
                       backgroundColor: rev.rating >= 4 ? '#dcfce7' : rev.rating <= 2 ? '#fee2e2' : '#fef3c7',
                       color: getRatingColor(rev.rating),
                       padding: '4px 8px',
                       borderRadius: '12px',
-                      fontWeight: '600'
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap',
                     }}
                   >
                     {renderStars(rev.rating)} {rev.rating}/5
@@ -129,6 +163,11 @@ const AllReviewsModal = ({ vendor, onClose }) => {
                 </div>
                 {rev.comment && (
                   <p className="review-comment">{rev.comment}</p>
+                )}
+                {rev.helpfulCount > 0 && (
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                    👍 {rev.helpfulCount} found this helpful
+                  </div>
                 )}
               </div>
             ))

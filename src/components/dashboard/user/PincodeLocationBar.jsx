@@ -29,11 +29,11 @@ const PincodeLocationBar = ({
         try {
           const { latitude, longitude } = position.coords;
           const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-            { headers: { 'Accept-Language': 'en' } }
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyCgJ0v4LEJaPxZUQR20A56GpBeFa8cf3LQ&language=en`
           );
           const data = await response.json();
-          const detectedPincode = data.address?.postcode;
+          const components = data.results?.[0]?.address_components || [];
+          const detectedPincode = components.find(c => c.types.includes('postal_code'))?.long_name;
           if (detectedPincode) {
             setUserPincode(detectedPincode);
             setPincodeInput(detectedPincode);

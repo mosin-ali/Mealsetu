@@ -2,10 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { verifyRegisterOTP, resendRegisterOTP } from '../utils/api';
 import { useToast } from '../components/common/Toast';
+
 import './Register.css';
 
 export default function Register() {
-  const { showToast } = useToast();
+  const { addToast: showToast } = useToast();
   const [role, setRole] = useState('user');
   const [profilePic, setProfilePic] = useState(null);
   const [profilePicFile, setProfilePicFile] = useState(null);
@@ -26,10 +27,50 @@ export default function Register() {
     confirmPassword: '',
     phone: '',
     pincode: '',
-    address: '',
+    flatHouseNo: '',
+    street: '',
+    area: '',
+    landmark: '',
+    city: '',
     kitchenName: '',
-    kitchenAddress: ''
+    kitchenShopNo:   '',
+    kitchenStreet:   '',
+    kitchenArea:     '',
+    kitchenLandmark: '',
+    kitchenCity:     '',
+    kitchenPincode:  '',
+    kitchenLat:      null,
+    kitchenLng:      null,
   });
+
+  // Customer location state
+  const [detectedLat, setDetectedLat] = useState(null);
+  const [detectedLng, setDetectedLng] = useState(null);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [userLocationDetected, setUserLocationDetected] = useState(false);
+
+  // Vendor location state
+  const [vendorLocationDetected, setVendorLocationDetected] = useState(false);
+  const [isDetectingVendorLocation, setIsDetectingVendorLocation] = useState(false);
+
+  // User address autocomplete state
+  const [userSearchQuery,  setUserSearchQuery]  = useState('');
+  const [userSuggestions,  setUserSuggestions]  = useState([]);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [userFetching,     setUserFetching]     = useState(false);
+  const [userGeoStatus,    setUserGeoStatus]    = useState('idle'); // 'idle'|'found'|'notfound'
+
+  // Vendor address autocomplete state
+  const [vendorSearchQuery,  setVendorSearchQuery]  = useState('');
+  const [vendorSuggestions,  setVendorSuggestions]  = useState([]);
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
+  const [vendorFetching,     setVendorFetching]     = useState(false);
+
+  // Refs for autocomplete dropdowns + debounce
+  const userDropdownRef   = useRef(null);
+  const vendorDropdownRef = useRef(null);
+  const userDebounce      = useRef(null);
+  const vendorDebounce    = useRef(null);
 
   // Errors state for form validation
   const [errors, setErrors] = useState({});
@@ -50,6 +91,16 @@ export default function Register() {
 
   // Refs for OTP inputs
   const otpRefs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()];
+
+  // Close autocomplete dropdowns on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(e.target))   setShowUserDropdown(false);
+      if (vendorDropdownRef.current && !vendorDropdownRef.current.contains(e.target)) setShowVendorDropdown(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   // Countdown timer effect
   useEffect(() => {
@@ -162,6 +213,195 @@ export default function Register() {
     }
   };
 
+  // User GPS detect
+  const detectGPS = async () => {
+    if (!navigator.geolocation) {
+      showToast('Geolocation not supported by your browser', 'error');
+      return;
+    }
+    setIsDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude, longitude } = coords;
+        setDetectedLat(latitude);
+        setDetectedLng(longitude);
+        try {
+          const res = await fetch(
+            `/api/maps/geocode/reverse?lat=${latitude}&lng=${longitude}`
+          );
+          const data = await res.json();
+          const components = data.results?.[0]?.address_components || [];
+          const get = (...types) => components.find(c => types.some(t => c.types.includes(t)))?.long_name || '';
+          const street  = get('route', 'premise');
+          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood');
+          const city    = get('locality', 'administrative_area_level_2');
+          const pincode = get('postal_code');
+          setFormData(prev => ({
+            ...prev,
+            street:  street  || prev.street,
+            area:    area    || prev.area,
+            city:    city    || prev.city,
+            pincode: pincode || prev.pincode,
+          }));
+          setErrors(prev => {
+            const next = { ...prev };
+            delete next.area; delete next.city; delete next.pincode;
+            return next;
+          });
+          setUserLocationDetected(true);
+          showToast('Location detected! Please verify the fields.', 'success');
+        } catch {
+          showToast('Could not fetch address. Fill manually.', 'warning');
+        }
+        setIsDetectingLocation(false);
+      },
+      () => {
+        showToast('Location access denied. Please fill address manually.', 'error');
+        setIsDetectingLocation(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  // Vendor GPS detect
+  const detectVendorLocation = async () => {
+    if (!navigator.geolocation) {
+      showToast('Geolocation not supported by your browser', 'error');
+      return;
+    }
+    setIsDetectingVendorLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude, longitude } = coords;
+        try {
+          const res = await fetch(
+            `/api/maps/geocode/reverse?lat=${latitude}&lng=${longitude}`
+          );
+          const data = await res.json();
+          const components = data.results?.[0]?.address_components || [];
+          const get = (...types) => components.find(c => types.some(t => c.types.includes(t)))?.long_name || '';
+          const street  = get('route', 'premise');
+          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood');
+          const city    = get('locality', 'administrative_area_level_2');
+          const pincode = get('postal_code');
+          setFormData(prev => ({
+            ...prev,
+            kitchenStreet:  street  || prev.kitchenStreet,
+            kitchenArea:    area    || prev.kitchenArea,
+            kitchenCity:    city    || prev.kitchenCity,
+            kitchenPincode: pincode || prev.kitchenPincode,
+            kitchenLat: latitude,
+            kitchenLng: longitude,
+          }));
+          setVendorLocationDetected(true);
+          setErrors(prev => {
+            const next = { ...prev };
+            delete next.kitchenStreet; delete next.kitchenArea;
+            delete next.kitchenCity;   delete next.kitchenPincode;
+            return next;
+          });
+          showToast('Kitchen location detected!', 'success');
+        } catch {
+          showToast('Could not fetch address. Fill manually.', 'warning');
+        }
+        setIsDetectingVendorLocation(false);
+      },
+      () => {
+        showToast('Location access denied. Please fill address manually.', 'error');
+        setIsDetectingVendorLocation(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  // Shared Google Places forward-search
+  const fetchGooglePlaces = async (q, setSugg, setShow, setFetch) => {
+    if (q.length < 3) { setSugg([]); setShow(false); return; }
+    setFetch(true);
+    try {
+      const { getPlacePredictions } = await import('../utils/googleMaps');
+      const predictions = await getPlacePredictions(q);
+      setSugg(predictions);
+      setShow(predictions.length > 0);
+    } catch { setSugg([]); }
+    finally { setFetch(false); }
+  };
+
+  // User autocomplete handlers
+  const handleUserSearchChange = (e) => {
+    const q = e.target.value;
+    setUserSearchQuery(q);
+    setUserGeoStatus('idle');
+    clearTimeout(userDebounce.current);
+    userDebounce.current = setTimeout(() =>
+      fetchGooglePlaces(q, setUserSuggestions, setShowUserDropdown, setUserFetching), 400);
+  };
+
+  const handleSelectUserSuggestion = async (s) => {
+    setUserSearchQuery(s.description || '');
+    setShowUserDropdown(false);
+    setUserSuggestions([]);
+    setUserFetching(true);
+    try {
+      const { getPlaceDetails } = await import('../utils/googleMaps');
+      const details = await getPlaceDetails(s.place_id);
+      if (details) {
+        setDetectedLat(details.lat);
+        setDetectedLng(details.lng);
+        setFormData(prev => ({
+          ...prev,
+          ...(details.area    && { area:    details.area }),
+          ...(details.city    && { city:    details.city }),
+          ...(details.pincode && { pincode: details.pincode }),
+        }));
+        setUserGeoStatus('found');
+        setErrors(prev => {
+          const n = { ...prev };
+          delete n.area; delete n.city; delete n.pincode;
+          return n;
+        });
+      }
+    } catch (_) {}
+    setUserFetching(false);
+  };
+
+  // Vendor autocomplete handlers
+  const handleVendorSearchChange = (e) => {
+    const q = e.target.value;
+    setVendorSearchQuery(q);
+    clearTimeout(vendorDebounce.current);
+    vendorDebounce.current = setTimeout(() =>
+      fetchGooglePlaces(q, setVendorSuggestions, setShowVendorDropdown, setVendorFetching), 400);
+  };
+
+  const handleSelectVendorSuggestion = async (s) => {
+    setVendorSearchQuery(s.description || '');
+    setShowVendorDropdown(false);
+    setVendorSuggestions([]);
+    setVendorFetching(true);
+    try {
+      const { getPlaceDetails } = await import('../utils/googleMaps');
+      const details = await getPlaceDetails(s.place_id);
+      if (details) {
+        setFormData(prev => ({
+          ...prev,
+          ...(details.area    && { kitchenArea:    details.area }),
+          ...(details.city    && { kitchenCity:    details.city }),
+          ...(details.pincode && { kitchenPincode: details.pincode }),
+          kitchenLat: details.lat,
+          kitchenLng: details.lng,
+        }));
+        setVendorLocationDetected(true);
+        setErrors(prev => {
+          const n = { ...prev };
+          delete n.kitchenArea; delete n.kitchenCity; delete n.kitchenPincode;
+          return n;
+        });
+      }
+    } catch (_) {}
+    setVendorFetching(false);
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -208,8 +448,8 @@ export default function Register() {
       }
     }
 
-    // Pincode validation (for user and vendor roles)
-    if (role === 'user' || role === 'vendor') {
+    // Pincode validation — user only (vendor pincode comes from kitchenPincode)
+    if (role === 'user') {
       if (!formData.pincode) {
         newErrors.pincode = 'Please enter a valid 6 digit pincode.';
       } else if (!/^\d{6}$/.test(formData.pincode)) {
@@ -217,12 +457,29 @@ export default function Register() {
       }
     }
 
-    // Delivery Address validation (for user role)
+    // Customer delivery address validation
     if (role === 'user') {
-      if (!formData.address.trim()) {
-        newErrors.address = 'Please enter your complete delivery address with at least 10 characters.';
-      } else if (formData.address.trim().length < 10) {
-        newErrors.address = 'Please enter your complete delivery address with at least 10 characters.';
+      if (!formData.area.trim()) {
+        newErrors.area = 'Please enter your area / locality.';
+      }
+      if (!formData.city.trim()) {
+        newErrors.city = 'Please enter your city.';
+      }
+    }
+
+    // Vendor kitchen address validation
+    if (role === 'vendor') {
+      if (!formData.kitchenStreet?.trim()) {
+        newErrors.kitchenStreet = 'Kitchen street / road is required.';
+      }
+      if (!formData.kitchenArea?.trim()) {
+        newErrors.kitchenArea = 'Kitchen area / locality is required.';
+      }
+      if (!formData.kitchenCity?.trim()) {
+        newErrors.kitchenCity = 'Kitchen city is required.';
+      }
+      if (!formData.kitchenPincode?.trim() || !/^\d{6}$/.test(formData.kitchenPincode)) {
+        newErrors.kitchenPincode = 'Valid 6-digit pincode required.';
       }
     }
 
@@ -277,20 +534,40 @@ export default function Register() {
 
       // User specific fields
       if (role === 'user') {
-        data.append('phone', formData.phone);
-        data.append('pincode', formData.pincode);
-        data.append('address', formData.address);
+        data.append('phone',       formData.phone);
+        data.append('pincode',     formData.pincode);
+        data.append('flatHouseNo', formData.flatHouseNo);
+        data.append('street',      formData.street);
+        data.append('area',        formData.area);
+        data.append('landmark',    formData.landmark);
+        data.append('city',        formData.city);
+        if (detectedLat !== null) data.append('latitude',  detectedLat);
+        if (detectedLng !== null) data.append('longitude', detectedLng);
       }
 
-// Vendor specific fields
+      // Vendor specific fields
       if (role === 'vendor') {
-        data.append('kitchenName', formData.kitchenName);
-        data.append('kitchenAddress', formData.kitchenAddress);
-        data.append('pincode', formData.pincode);
-        data.append('phone', formData.phone);
-        if (docFiles.fssai) data.append('fssaiDoc', docFiles.fssai);
-        if (docFiles.gst) data.append('gstDoc', docFiles.gst);
+        const kitchenFullAddress = [
+          formData.kitchenShopNo, formData.kitchenStreet, formData.kitchenArea,
+          formData.kitchenLandmark, formData.kitchenCity, formData.kitchenPincode,
+        ].filter(Boolean).join(', ');
 
+        data.append('kitchenName',    formData.kitchenName);
+        data.append('kitchenShopNo',  formData.kitchenShopNo || '');
+        data.append('kitchenStreet',  formData.kitchenStreet);
+        data.append('kitchenArea',    formData.kitchenArea);
+        data.append('kitchenLandmark', formData.kitchenLandmark || '');
+        data.append('kitchenCity',    formData.kitchenCity);
+        data.append('kitchenPincode', formData.kitchenPincode);
+        data.append('kitchenAddress', kitchenFullAddress); // full string for backend compat
+        data.append('pincode',        formData.kitchenPincode);
+        data.append('phone',          formData.phone);
+        if (formData.kitchenLat) {
+          data.append('latitude',  formData.kitchenLat);
+          data.append('longitude', formData.kitchenLng);
+        }
+        if (docFiles.fssai) data.append('fssaiDoc', docFiles.fssai);
+        if (docFiles.gst)   data.append('gstDoc',   docFiles.gst);
       }
 
       const response = await fetch('/api/auth/register', {
@@ -463,31 +740,135 @@ return (
                   />
                   {errors.phone && <p className="field-error">{errors.phone}</p>}
                 </div>
+                {/* Map-pick row — user */}
+                <div className="input-field full-width" style={{ marginBottom: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <label style={{ fontWeight: '600', fontSize: '14px', marginBottom: 0 }}>Delivery Address</label>
+                    <button
+                      type="button"
+                      onClick={detectGPS}
+                      disabled={isDetectingLocation}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '6px 14px', borderRadius: '8px',
+                        backgroundColor: '#f26522', color: 'white',
+                        border: 'none', cursor: isDetectingLocation ? 'not-allowed' : 'pointer',
+                        fontSize: '13px', fontWeight: '500', opacity: isDetectingLocation ? 0.7 : 1,
+                      }}
+                    >
+                      {isDetectingLocation ? 'Detecting…' : userLocationDetected ? '📍 Re-detect' : '📍 Detect Location'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* User address autocomplete */}
+                <div className="input-field full-width" style={{ position: 'relative', marginBottom: '4px' }} ref={userDropdownRef}>
+                  <label style={{ fontWeight: '600', fontSize: '13px' }}>Search Area / Locality</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={userSearchQuery}
+                      onChange={handleUserSearchChange}
+                      placeholder="Type area name, e.g. Koramangala, Bengaluru…"
+                      autoComplete="off"
+                      style={{ paddingRight: '36px' }}
+                    />
+                    <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                      {userFetching ? '⏳' : '🔍'}
+                    </span>
+                  </div>
+                  {showUserDropdown && userSuggestions.length > 0 && (
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 9999,
+                      background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', marginTop: '4px',
+                    }}>
+                      {userSuggestions.map((s, i) => {
+                        const sf = s.structured_formatting || {};
+                        const main = sf.main_text || s.description?.split(',')[0] || '';
+                        const secondary = sf.secondary_text || '';
+                        return (
+                          <div key={i}
+                            onMouseDown={() => handleSelectUserSuggestion(s)}
+                            style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: i < userSuggestions.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: '13px' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#fff7ed'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'white'}
+                          >
+                            <div style={{ fontWeight: '600', color: '#1a1a2e' }}>📍 {main}</div>
+                            {secondary && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>{secondary}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {userGeoStatus === 'found' && (
+                    <div style={{ marginTop: '6px', padding: '6px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '12px', color: '#16a34a', fontWeight: '600' }}>
+                      📍 Location coordinates saved — rider will navigate here accurately.
+                    </div>
+                  )}
+                </div>
+
+                {/* Flat / House No + Street */}
                 <div className="input-field">
-                  <label>Pincode</label>
-                  <input 
-                    type="text" 
-                    placeholder="383001" 
-                    required 
-                    name="pincode"
-                    value={formData.pincode}
+                  <label>Flat / House No</label>
+                  <input
+                    type="text" placeholder="e.g. 101, Block B"
+                    name="flatHouseNo" value={formData.flatHouseNo}
+                    onChange={handleInputChange}
+                    className={formData.flatHouseNo ? 'input-valid' : ''}
+                  />
+                </div>
+                <div className="input-field">
+                  <label>Street / Road</label>
+                  <input
+                    type="text" placeholder="e.g. MG Road"
+                    name="street" value={formData.street}
+                    onChange={handleInputChange}
+                    className={formData.street ? 'input-valid' : ''}
+                  />
+                </div>
+
+                {/* Area + Landmark */}
+                <div className="input-field">
+                  <label>Area / Locality *</label>
+                  <input
+                    type="text" placeholder="e.g. Koramangala" required
+                    name="area" value={formData.area}
+                    onChange={handleInputChange}
+                    className={errors.area ? 'input-error' : (formData.area ? 'input-valid' : '')}
+                  />
+                  {errors.area && <p className="field-error">{errors.area}</p>}
+                </div>
+                <div className="input-field">
+                  <label>Landmark (optional)</label>
+                  <input
+                    type="text" placeholder="e.g. Near City Mall"
+                    name="landmark" value={formData.landmark}
+                    onChange={handleInputChange}
+                    className={formData.landmark ? 'input-valid' : ''}
+                  />
+                </div>
+
+                {/* City + Pincode */}
+                <div className="input-field">
+                  <label>City *</label>
+                  <input
+                    type="text" placeholder="e.g. Bengaluru" required
+                    name="city" value={formData.city}
+                    onChange={handleInputChange}
+                    className={errors.city ? 'input-error' : (formData.city ? 'input-valid' : '')}
+                  />
+                  {errors.city && <p className="field-error">{errors.city}</p>}
+                </div>
+                <div className="input-field">
+                  <label>Pincode *</label>
+                  <input
+                    type="text" placeholder="383001" required
+                    name="pincode" value={formData.pincode}
                     onChange={handleInputChange}
                     className={errors.pincode ? 'input-error' : (formData.pincode ? 'input-valid' : '')}
                   />
                   {errors.pincode && <p className="field-error">{errors.pincode}</p>}
-                </div>
-                <div className="input-field full-width">
-                  <label>Delivery Address</label>
-                  <input 
-                    type="text" 
-                    placeholder="House No, Building, Area" 
-                    required 
-                    name="address"
-                    value={formData.address}
-                    onChange={handleInputChange}
-                    className={errors.address ? 'input-error' : (formData.address ? 'input-valid' : '')}
-                  />
-                  {errors.address && <p className="field-error">{errors.address}</p>}
                 </div>
               </>
             )}
@@ -507,44 +888,146 @@ return (
                     className={formData.kitchenName ? 'input-valid' : ''}
                   />
                 </div>
-                <div className="input-field">
-                  <label>Kitchen Address</label>
-                  <input 
-                    type="text" 
-                    placeholder="Full Location" 
-                    required 
-                    name="kitchenAddress"
-                    value={formData.kitchenAddress}
-                    onChange={handleInputChange}
-                    className={formData.kitchenAddress ? 'input-valid' : ''}
-                  />
+                {/* Structured kitchen address */}
+                <div className="input-field full-width" style={{ background: '#fff5f0', border: '1px solid #fed7b0', borderRadius: '10px', padding: '16px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: '700', color: '#e8570c', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    🏪 Kitchen / Restaurant Address
+                  </h4>
+
+                  {/* Vendor address autocomplete */}
+                  <div style={{ position: 'relative', marginBottom: '14px' }} ref={vendorDropdownRef}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Search Kitchen Area</label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        value={vendorSearchQuery}
+                        onChange={handleVendorSearchChange}
+                        placeholder="Type kitchen area, e.g. Satellite, Ahmedabad…"
+                        autoComplete="off"
+                        style={{ paddingRight: '36px' }}
+                      />
+                      <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                        {vendorFetching ? '⏳' : '🔍'}
+                      </span>
+                    </div>
+                    {showVendorDropdown && vendorSuggestions.length > 0 && (
+                      <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 9999,
+                        background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', marginTop: '4px',
+                      }}>
+                        {vendorSuggestions.map((s, i) => {
+                          const sf = s.structured_formatting || {};
+                          const main = sf.main_text || s.description?.split(',')[0] || '';
+                          const secondary = sf.secondary_text || '';
+                          return (
+                            <div key={i}
+                              onMouseDown={() => handleSelectVendorSuggestion(s)}
+                              style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: i < vendorSuggestions.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: '13px' }}
+                              onMouseEnter={e => e.currentTarget.style.background = '#fff7ed'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'white'}
+                            >
+                              <div style={{ fontWeight: '600', color: '#1a1a2e' }}>📍 {main}</div>
+                              {secondary && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>{secondary}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Shop / Building No */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>
+                      Shop / Building No. <span style={{ color: '#999', fontWeight: '400' }}>(Optional)</span>
+                    </label>
+                    <input type="text" name="kitchenShopNo" value={formData.kitchenShopNo} onChange={handleInputChange}
+                      placeholder="e.g. Shop 3, Ground Floor, Block B"
+                      className={formData.kitchenShopNo ? 'input-valid' : ''} />
+                  </div>
+
+                  {/* Street */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Street / Road *</label>
+                    <input type="text" name="kitchenStreet" value={formData.kitchenStreet} onChange={handleInputChange}
+                      placeholder="e.g. MG Road, SG Highway"
+                      className={errors.kitchenStreet ? 'input-error' : formData.kitchenStreet ? 'input-valid' : ''} />
+                    {errors.kitchenStreet && <p className="field-error">{errors.kitchenStreet}</p>}
+                  </div>
+
+                  {/* Area + Pincode */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Area / Locality *</label>
+                      <input type="text" name="kitchenArea" value={formData.kitchenArea} onChange={handleInputChange}
+                        placeholder="e.g. Satellite, Navrangpura"
+                        className={errors.kitchenArea ? 'input-error' : formData.kitchenArea ? 'input-valid' : ''} />
+                      {errors.kitchenArea && <p className="field-error">{errors.kitchenArea}</p>}
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Pincode *</label>
+                      <input type="text" name="kitchenPincode" value={formData.kitchenPincode} onChange={handleInputChange}
+                        placeholder="380015" maxLength={6}
+                        className={errors.kitchenPincode ? 'input-error' : formData.kitchenPincode ? 'input-valid' : ''} />
+                      {errors.kitchenPincode && <p className="field-error">{errors.kitchenPincode}</p>}
+                    </div>
+                  </div>
+
+                  {/* Landmark */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>
+                      Landmark <span style={{ color: '#999', fontWeight: '400' }}>(Optional)</span>
+                    </label>
+                    <input type="text" name="kitchenLandmark" value={formData.kitchenLandmark} onChange={handleInputChange}
+                      placeholder="e.g. Near City Mall, Opp. Park" />
+                  </div>
+
+                  {/* City */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', display: 'block', marginBottom: '4px' }}>City *</label>
+                    <input type="text" name="kitchenCity" value={formData.kitchenCity} onChange={handleInputChange}
+                      placeholder="e.g. Ahmedabad"
+                      className={errors.kitchenCity ? 'input-error' : formData.kitchenCity ? 'input-valid' : ''} />
+                    {errors.kitchenCity && <p className="field-error">{errors.kitchenCity}</p>}
+                  </div>
+
+                  {/* GPS detect row — vendor kitchen */}
+                  <div
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '10px 14px', borderRadius: '8px',
+                      background: vendorLocationDetected ? '#f0fdf4' : '#f8f9fa',
+                      border: `1px solid ${vendorLocationDetected ? '#86efac' : '#e2e8f0'}`,
+                    }}
+                  >
+                    <span style={{ fontSize: '20px' }}>📍</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a2e' }}>Auto-detect Kitchen Location</div>
+                      <div style={{ fontSize: '12px', color: vendorLocationDetected ? '#16a34a' : '#64748b' }}>
+                        {vendorLocationDetected
+                          ? `✅ Location detected (${formData.kitchenArea})`
+                          : 'Fills kitchen address fields automatically'}
+                      </div>
+                    </div>
+                    <button type="button" onClick={detectVendorLocation} disabled={isDetectingVendorLocation} style={{
+                      background: '#f26522', color: 'white', border: 'none',
+                      borderRadius: '6px', padding: '6px 14px', fontSize: '13px',
+                      fontWeight: '600', cursor: isDetectingVendorLocation ? 'not-allowed' : 'pointer',
+                      opacity: isDetectingVendorLocation ? 0.7 : 1,
+                    }}>
+                      {isDetectingVendorLocation ? 'Detecting…' : vendorLocationDetected ? 'Re-detect' : 'Detect'}
+                    </button>
+                  </div>
                 </div>
+
                 <div className="input-field">
                   <label>Phone Number</label>
                   <input
-                    type="tel"
-                    placeholder="9876543210"
-                    required
-                    name="phone"
-                    value={formData.phone}
-                    onChange={handleInputChange}
+                    type="tel" placeholder="9876543210" required
+                    name="phone" value={formData.phone} onChange={handleInputChange}
                     className={errors.phone ? 'input-error' : (formData.phone ? 'input-valid' : '')}
                   />
                   {errors.phone && <p className="field-error">{errors.phone}</p>}
-                </div>
-                <div className="input-field">
-
-                  <label>Pincode</label>
-                  <input 
-                    type="text" 
-                    placeholder="6-digit Pincode" 
-                    required 
-                    name="pincode"
-                    value={formData.pincode}
-                    onChange={handleInputChange}
-                    className={errors.pincode ? 'input-error' : (formData.pincode ? 'input-valid' : '')}
-                  />
-                  {errors.pincode && <p className="field-error">{errors.pincode}</p>}
                 </div>
                 
                 {/* Kitchen Poster/Banner Upload */}
@@ -678,6 +1161,7 @@ return (
           </div>
         </div>
       )}
+
     </div>
   );
 }

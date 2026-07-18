@@ -1,15 +1,22 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
+
 import AddManualCustomer from '../components/dashboard/vendor/AddManualCustomer';
+import DeliveryManagement from '../components/dashboard/vendor/DeliveryManagement';
+import FinanceDashboard from '../components/dashboard/vendor/FinanceDashboard';
+import ExpenseTracker from '../components/dashboard/vendor/ExpenseTracker';
+import SubscriptionAnalytics from '../components/dashboard/vendor/SubscriptionAnalytics';
+import CustomerLoyalty from '../components/dashboard/vendor/CustomerLoyalty';
 import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './VendorDashboard.css';
-import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments } from '../utils/api';
+import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getCustomerPlans, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments } from '../utils/api';
 import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
 import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
 import CashPayments from '../components/dashboard/vendor/CashPayments';
 import VendorOffers from '../components/dashboard/vendor/VendorOffers';
 import TrialSettings from '../components/dashboard/vendor/TrialSettings';
+import LoyaltySettings from '../components/dashboard/vendor/LoyaltySettings';
 import { useToast } from '../components/common/Toast';
 import { connectSocket, disconnectSocket, onEvent, offEvent } from '../utils/socket';
 
@@ -30,15 +37,26 @@ const VendorDashboard = () => {
   const [error, setError] = useState('');
 
   // --- PROFILE STATE ---
- const [profile, setProfile] = useState({
-  kitchenName: "",
-  address: "",
-  phone: "",
-  upiId: "",   
-  image: null,
-  kitchenPoster: null,
-  profileImage: null
-});
+  const [profile, setProfile] = useState({
+    ownerName:    '',
+    email:        '',
+    kitchenName:  '',
+    addrShopNo:   '',
+    addrStreet:   '',
+    addrArea:     '',
+    addrLandmark: '',
+    addrCity:     '',
+    addrPincode:  '',
+    addrLat:      null,
+    addrLng:      null,
+    phone:        '',
+    upiId:        '',
+    image:        null,
+    kitchenPoster: null,
+    profileImage:  null,
+  });
+  const [vendorGpsDetected,    setVendorGpsDetected]    = useState(false);
+  const [detectingVendorGps,   setDetectingVendorGps]   = useState(false);
   // State to track if there's a new image to upload
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedKitchenPoster, setSelectedKitchenPoster] = useState(null);
@@ -53,6 +71,13 @@ const VendorDashboard = () => {
   const [vendorOrders, setVendorOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [complaints, setComplaints] = useState([]);
+
+  // Customer plans modal
+  const [selectedCustomer, setSelectedCustomer] = useState(null); // { _id, name, email, phone }
+  const [customerPlans,    setCustomerPlans]    = useState([]);
+  const [plansLoading,     setPlansLoading]     = useState(false);
+  const [replyInputs, setReplyInputs] = useState({});   // { [complaintId]: string }
+  const [replyLoading, setReplyLoading] = useState({}); // { [complaintId]: bool }
 
   const [notifications, setNotifications] = useState([
     { id: 1, text: "New Order received from Aryan Patel!", type: "order" },
@@ -212,15 +237,44 @@ const fetchPricing = async () => {
       const resolvedImage = resolveImageUrl(vendorData.profileImage);
       const resolvedKitchenPoster = resolveImageUrl(vendorData.kitchenPoster);
       
-     setProfile({
-      kitchenName: vendorData.kitchenName,
-      address: vendorData.address,
-      phone: vendorData.ownerId?.phone || "",
-      upiId: vendorData.upiId || "",
-      image: resolvedImage,
-      kitchenPoster: resolvedKitchenPoster,
-      profileImage: vendorData.profileImage
-    });
+      const rawAddr = vendorData.address;
+      const a = (typeof rawAddr === 'object' && rawAddr !== null) ? rawAddr : {};
+      const isLegacyAddr = typeof rawAddr === 'string';
+
+      // Parse a legacy flat string like "Sayaji Road, Dudhia Talav, Navsari, 396445"
+      // into separate fields so the vendor sees their data pre-filled.
+      let parsedStreet = '', parsedArea = '', parsedCity = '', parsedPincode = '';
+      if (isLegacyAddr && rawAddr.trim()) {
+        const parts = rawAddr.split(',').map(p => p.trim()).filter(Boolean);
+        // Detect 6-digit pincode at the end
+        const lastPincode = /^\d{6}$/.test(parts[parts.length - 1]);
+        if (lastPincode) { parsedPincode = parts.pop(); }
+        // Remaining: [street, ...area, city]
+        if (parts.length >= 1) parsedStreet = parts[0];
+        if (parts.length >= 2) parsedCity   = parts[parts.length - 1];
+        if (parts.length >= 3) parsedArea   = parts.slice(1, parts.length - 1).join(', ');
+        else if (parts.length === 2) parsedArea = '';
+      }
+
+      setProfile({
+        ownerName:    vendorData.ownerId?.name  || '',
+        email:        vendorData.ownerId?.email || '',
+        kitchenName:  vendorData.kitchenName || '',
+        addrShopNo:   isLegacyAddr ? ''            : (a.shopNo   || ''),
+        addrStreet:   isLegacyAddr ? parsedStreet  : (a.street   || ''),
+        addrArea:     isLegacyAddr ? parsedArea    : (a.area     || ''),
+        addrLandmark: isLegacyAddr ? ''            : (a.landmark || ''),
+        addrCity:     isLegacyAddr ? parsedCity    : (a.city     || ''),
+        addrPincode:  isLegacyAddr ? parsedPincode : (a.pincode  || vendorData.pincode || ''),
+        addrLat:      a.latitude  || null,
+        addrLng:      a.longitude || null,
+        legacyAddr:   isLegacyAddr ? rawAddr : null,
+        phone:        vendorData.ownerId?.phone || '',
+        upiId:        vendorData.upiId || '',
+        image:        resolvedImage,
+        kitchenPoster: resolvedKitchenPoster,
+        profileImage:  vendorData.profileImage,
+      });
     if (vendorData._id) setVendorSocketId(vendorData._id);
       
       // Image has been resolved, stop loading
@@ -308,7 +362,14 @@ const fetchPricing = async () => {
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
-    setProfile(prev => ({ ...prev, [name]: value }));
+    const addrFields = ['addrShopNo', 'addrStreet', 'addrArea', 'addrCity', 'addrPincode', 'addrLandmark'];
+    if (addrFields.includes(name)) {
+      // Address typed manually — clear GPS coords so backend re-geocodes from new address
+      setProfile(prev => ({ ...prev, [name]: value, addrLat: null, addrLng: null }));
+      setVendorGpsDetected(false);
+    } else {
+      setProfile(prev => ({ ...prev, [name]: value }));
+    }
   };
 
   const handleImageUpload = (e) => {
@@ -421,6 +482,50 @@ const handleSavePricing = async () => {
   }
 };
   // Enhanced handleSaveProfile with proper persistence and state update - now includes image and kitchen poster upload
+  const detectVendorGps = async () => {
+    if (!navigator.geolocation) {
+      addToast('Geolocation not supported', 'error');
+      return;
+    }
+    setDetectingVendorGps(true);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude, longitude } = coords;
+        try {
+          const res = await fetch(
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyCgJ0v4LEJaPxZUQR20A56GpBeFa8cf3LQ&language=en`
+          );
+          const data = await res.json();
+          const components = data.results?.[0]?.address_components || [];
+          const get = (...types) => components.find(c => types.some(t => c.types.includes(t)))?.long_name || '';
+          const street  = get('route', 'premise');
+          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood');
+          const city    = get('locality', 'administrative_area_level_2');
+          const pincode = get('postal_code');
+          setProfile(prev => ({
+            ...prev,
+            addrStreet:  street  || prev.addrStreet,
+            addrArea:    area    || prev.addrArea,
+            addrCity:    city    || prev.addrCity,
+            addrPincode: pincode || prev.addrPincode,
+            addrLat: latitude,
+            addrLng: longitude,
+          }));
+          setVendorGpsDetected(true);
+          addToast('Kitchen location detected!', 'success');
+        } catch {
+          addToast('Could not fetch address. Fill manually.', 'warning');
+        }
+        setDetectingVendorGps(false);
+      },
+      () => {
+        addToast('Location access denied.', 'error');
+        setDetectingVendorGps(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
   const handleSaveProfile = async () => {
     try {
       setLoading(true);
@@ -473,26 +578,49 @@ const handleSavePricing = async () => {
         }
       }
       
-      // Now update the profile text fields
-     const updatedVendor = await updateVendorProfile({
+      // Build structured address object before sending
+      const addrObj = {
+        shopNo:      profile.addrShopNo   || '',
+        street:      profile.addrStreet   || '',
+        area:        profile.addrArea     || '',
+        landmark:    profile.addrLandmark || '',
+        city:        profile.addrCity     || '',
+        pincode:     profile.addrPincode  || '',
+        fullAddress: [profile.addrShopNo, profile.addrStreet, profile.addrArea,
+                      profile.addrLandmark, profile.addrCity, profile.addrPincode].filter(Boolean).join(', '),
+      };
+      if (profile.addrLat) addrObj.latitude  = profile.addrLat;
+      if (profile.addrLng) addrObj.longitude = profile.addrLng;
+
+      const updatedVendor = await updateVendorProfile({
         kitchenName: profile.kitchenName,
-        address: profile.address,
+        address: addrObj,
         phone: profile.phone,
-        upiId: profile.upiId   // ✅ ADD THIS
+        upiId: profile.upiId,
+        name: profile.ownerName,
       });
       
       // Use the uploaded image URLs (which have full URLs) if available, otherwise use the updated vendor's values
       const displayImage = finalProfileImage || updatedVendor.profileImage || profile.image;
       const displayKitchenPoster = finalKitchenPoster || updatedVendor.kitchenPoster || profile.kitchenPoster;
       
-      // Update local state with the new images
+      // Update local state with the new images + parsed address
+      const ua = updatedVendor.address;
+      const uaObj = (typeof ua === 'object' && ua !== null) ? ua : {};
       setProfile(prev => ({
         ...prev,
-        kitchenName: updatedVendor.kitchenName,
-        address: updatedVendor.address,
-        phone: updatedVendor.ownerId?.phone || profile.phone,
-        image: displayImage,
-        kitchenPoster: displayKitchenPoster
+        ownerName:    updatedVendor.ownerId?.name  || prev.ownerName,
+        kitchenName:  updatedVendor.kitchenName || prev.kitchenName,
+        addrShopNo:   uaObj.shopNo   ?? prev.addrShopNo,
+        addrStreet:   uaObj.street   ?? prev.addrStreet,
+        addrArea:     uaObj.area     ?? prev.addrArea,
+        addrLandmark: uaObj.landmark ?? prev.addrLandmark,
+        addrCity:     uaObj.city     ?? prev.addrCity,
+        addrPincode:  uaObj.pincode  ?? prev.addrPincode,
+        legacyAddr:   null,
+        phone:        updatedVendor.ownerId?.phone || prev.phone,
+        image:        displayImage,
+        kitchenPoster: displayKitchenPoster,
       }));
       
       // Stop image loading to show the image immediately
@@ -722,29 +850,247 @@ case 'orders':
           </div>
         );
 
-     case 'customers':
+     case 'customers': {
+  // ── helpers ────────────────────────────────────────────────────────
+  const fmtD = (d) => d
+    ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+
+  const statusStyle = (s, daysLeft) => {
+    if (s === 'active'    && daysLeft > 7)              return { bg: '#f0fdf4', color: '#16a34a', label: 'Active' };
+    if (s === 'active'    && daysLeft <= 7 && daysLeft > 0) return { bg: '#fff7ed', color: '#ea580c', label: `Expiring in ${daysLeft}d` };
+    if (s === 'active'    && daysLeft <= 0)             return { bg: '#fef2f2', color: '#dc2626', label: 'Expired' };
+    if (s === 'pending')                                return { bg: '#eff6ff', color: '#2563eb', label: 'Upcoming' };
+    if (s === 'completed')                              return { bg: '#f8fafc', color: '#64748b', label: 'Completed' };
+    if (s === 'cancelled')                              return { bg: '#fef2f2', color: '#dc2626', label: 'Cancelled' };
+    return { bg: '#f8fafc', color: '#64748b', label: s || '—' };
+  };
+
+  const planColor = { Trial: '#64748b', Weekly: '#f26522', Monthly: '#16a34a' };
+
+  const openPlans = async (c) => {
+    setSelectedCustomer(c);
+    setCustomerPlans([]);
+    setPlansLoading(true);
+    try {
+      const plans = await getCustomerPlans(c._id);
+      setCustomerPlans(Array.isArray(plans) ? plans : []);
+    } catch { setCustomerPlans([]); }
+    finally { setPlansLoading(false); }
+  };
+  const closeModal = () => { setSelectedCustomer(null); setCustomerPlans([]); };
+
   return (
-    <div className="v-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h3>Active Subscriptions</h3>
-      </div>
-      <div className="table-scroll">
-        <table className="v-table">
-          <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Total Orders</th></tr></thead>
-          <tbody>
+    <>
+      {/* ── Responsive CSS ──────────────────────────────────────── */}
+      <style>{`
+        .cust-grid { display: flex; flex-direction: column; gap: 12px; }
+        .cust-card {
+          background: #fff; border: 1px solid #e8ecf0; border-radius: 14px;
+          padding: 16px; cursor: pointer; transition: box-shadow .15s, border-color .15s;
+          display: flex; justify-content: space-between; align-items: center; gap: 12px;
+        }
+        .cust-card:hover  { border-color: #f26522; box-shadow: 0 4px 16px rgba(242,101,34,.12); }
+        .cust-card:active { background: #fff7ed; }
+        .cust-card-left   { flex: 1; min-width: 0; }
+        .cust-name        { font-size: 15px; font-weight: 800; color: #1e2d5a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cust-meta        { font-size: 12px; color: #64748b; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px 12px; }
+        .cust-badge       { background: #fff7ed; color: #f26522; font-size: 12px; font-weight: 700;
+                            padding: 4px 12px; border-radius: 20px; white-space: nowrap; }
+        .cust-arrow       { background: #f26522; color: #fff; font-size: 13px; font-weight: 700;
+                            padding: 6px 14px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
+
+        /* Modal */
+        .cm-backdrop {
+          position: fixed; inset: 0; background: rgba(0,0,0,.5);
+          display: flex; align-items: flex-end; justify-content: center;
+          z-index: 9999; padding: 0;
+        }
+        .cm-sheet {
+          background: #fff; width: 100%; max-height: 92vh;
+          border-radius: 20px 20px 0 0;
+          overflow: hidden; display: flex; flex-direction: column;
+          box-shadow: 0 -8px 40px rgba(0,0,0,.2);
+          animation: slideUp .25s ease;
+        }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+        .plan-details-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 10px 16px;
+        }
+
+        /* ── Tablet / Desktop ───────────────────────────── */
+        @media (min-width: 640px) {
+          .cm-backdrop { align-items: center; padding: 16px; }
+          .cm-sheet    { max-width: 720px; max-height: 88vh; border-radius: 18px; animation: fadeIn .2s ease; }
+          @keyframes fadeIn { from { opacity:0; transform:scale(.97); } to { opacity:1; transform:scale(1); } }
+          .plan-details-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (min-width: 900px) {
+          .plan-details-grid { grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); }
+        }
+      `}</style>
+
+      {/* ── Customer Card List ───────────────────────────────────── */}
+      <div className="v-card">
+        {/* Header */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20, flexWrap:'wrap', gap:10 }}>
+          <div>
+            <h3 style={{ margin:0, fontSize:18, fontWeight:800, color:'#1e2d5a' }}>My Customers</h3>
+            <p style={{ margin:'4px 0 0', fontSize:13, color:'#64748b' }}>Tap any card to see full plan history</p>
+          </div>
+          <span style={{ background:'#fff7ed', color:'#f26522', fontWeight:700, fontSize:13,
+            padding:'4px 14px', borderRadius:20, border:'1px solid #fed7aa' }}>
+            {customers.length} customers
+          </span>
+        </div>
+
+        {/* Cards */}
+        {customers.length === 0 ? (
+          <div style={{ textAlign:'center', padding:48, color:'#94a3b8', fontSize:14 }}>
+            No customers yet
+          </div>
+        ) : (
+          <div className="cust-grid">
             {customers.map((c) => (
-              <tr key={c._id}>
-                <td style={{ fontWeight: 'bold' }}>{c.name}</td>
-                <td>{c.phone}</td>
-                <td>{c.email}</td>
-                <td style={{ fontWeight: '600', color: '#f26522' }}>{c.totalOrders || 0}</td>
-              </tr>
+              <div key={c._id} className="cust-card" onClick={() => openPlans(c)}>
+                <div className="cust-card-left">
+                  <div className="cust-name">{c.name}</div>
+                  <div className="cust-meta">
+                    {c.phone && <span>📞 {c.phone}</span>}
+                    {c.email && c.email !== '—' && <span>✉️ {c.email}</span>}
+                  </div>
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+                  <span className="cust-badge">{c.totalOrders || 0} plans</span>
+                  <span className="cust-arrow">View →</span>
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
-    </div>
+
+      {/* ── Plans Modal (bottom-sheet on mobile, dialog on desktop) ── */}
+      {selectedCustomer && (
+        <div className="cm-backdrop" onClick={closeModal}>
+          <div className="cm-sheet" onClick={e => e.stopPropagation()}>
+
+            {/* Modal Header */}
+            <div style={{ padding:'18px 20px', display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+              background:'linear-gradient(135deg,#1e2d5a 0%,#2d4a8a 100%)',
+              borderRadius:'20px 20px 0 0', flexShrink:0 }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:18, fontWeight:800, color:'#fff',
+                  whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                  {selectedCustomer.name}
+                </div>
+                <div style={{ fontSize:12, color:'#cbd5e1', marginTop:4, display:'flex', flexWrap:'wrap', gap:'4px 10px' }}>
+                  {selectedCustomer.phone && <span>📞 {selectedCustomer.phone}</span>}
+                  {selectedCustomer.email && selectedCustomer.email !== '—' &&
+                    <span>✉️ {selectedCustomer.email}</span>}
+                </div>
+              </div>
+              <button onClick={closeModal} style={{
+                background:'rgba(255,255,255,.15)', border:'none', color:'#fff',
+                width:32, height:32, borderRadius:'50%', cursor:'pointer',
+                fontSize:16, fontWeight:700, display:'flex', alignItems:'center',
+                justifyContent:'center', flexShrink:0, marginLeft:10 }}>✕</button>
+            </div>
+
+            {/* Sub-header */}
+            <div style={{ padding:'10px 20px', background:'#f8fafc', borderBottom:'1px solid #e8ecf0',
+              fontSize:13, color:'#64748b', flexShrink:0 }}>
+              📋 <strong style={{ color:'#1e2d5a' }}>
+                {customerPlans.length} plan{customerPlans.length !== 1 ? 's' : ''}
+              </strong> on record
+            </div>
+
+            {/* Scrollable Body */}
+            <div style={{ overflowY:'auto', flex:1, padding:'14px 16px 24px' }}>
+              {plansLoading ? (
+                <div style={{ textAlign:'center', padding:48, color:'#64748b' }}>
+                  <div style={{ width:36, height:36, border:'3px solid #e2e8f0',
+                    borderTop:'3px solid #f26522', borderRadius:'50%',
+                    animation:'spin 1s linear infinite', margin:'0 auto 12px' }} />
+                  Loading plans…
+                  <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+                </div>
+              ) : customerPlans.length === 0 ? (
+                <div style={{ textAlign:'center', padding:48, color:'#94a3b8', fontSize:14 }}>
+                  No plans found
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                  {customerPlans.map((p, i) => {
+                    const st = statusStyle(p.status, p.daysLeft);
+                    const isExpiringSoon = p.status === 'active' && p.daysLeft !== null && p.daysLeft <= 7 && p.daysLeft > 0;
+                    const fields = [
+                      { icon:'📅', label:'Start Date',  val: fmtD(p.startDate) },
+                      { icon:'⏳', label:'Expiry Date', val: fmtD(p.endDate),
+                        valColor: p.daysLeft !== null && p.daysLeft <= 7 && p.daysLeft > 0 ? '#ea580c'
+                          : p.daysLeft !== null && p.daysLeft <= 0 ? '#dc2626' : undefined },
+                      { icon:'💰', label:'Amount',      val:`₹${(p.amount||0).toLocaleString('en-IN')}` },
+                      { icon:'💳', label:'Payment',     val:`${p.paymentMethod} · ${p.paymentStatus}` },
+                      { icon:'🍽️', label:'Meal Pref',   val: p.mealPreference },
+                      p.status === 'active' && p.daysLeft !== null
+                        ? { icon:'⏰', label:'Days Left',
+                            val: p.daysLeft > 0 ? `${p.daysLeft} days` : 'Expired today',
+                            valColor: p.daysLeft <= 3 ? '#dc2626' : p.daysLeft <= 7 ? '#ea580c' : '#16a34a' }
+                        : null,
+                    ].filter(Boolean);
+
+                    return (
+                      <div key={i} style={{
+                        border:`1px solid ${isExpiringSoon ? '#fed7aa' : '#e8ecf0'}`,
+                        borderRadius:12, padding:'14px',
+                        background: p.status === 'active' && p.daysLeft > 0 ? '#fafffe' : '#fafafa',
+                      }}>
+                        {/* Plan top row */}
+                        <div style={{ display:'flex', justifyContent:'space-between',
+                          alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:6 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <span style={{ fontSize:11, fontWeight:700, color:'#94a3b8' }}>PLAN #{p.planNo}</span>
+                            <span style={{
+                              background: (planColor[p.planType] || '#64748b') + '18',
+                              color: planColor[p.planType] || '#64748b',
+                              fontSize:12, fontWeight:800, padding:'3px 10px', borderRadius:20 }}>
+                              {p.planType}
+                            </span>
+                          </div>
+                          <span style={{ background:st.bg, color:st.color,
+                            fontSize:12, fontWeight:700, padding:'4px 12px', borderRadius:20 }}>
+                            {st.label}
+                          </span>
+                        </div>
+
+                        {/* Details grid */}
+                        <div className="plan-details-grid">
+                          {fields.map((row) => (
+                            <div key={row.label}>
+                              <div style={{ fontSize:10, color:'#94a3b8', fontWeight:700,
+                                textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:2 }}>
+                                {row.icon} {row.label}
+                              </div>
+                              <div style={{ fontSize:13, fontWeight:600,
+                                color: row.valColor || '#1a202c' }}>{row.val}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
+}
 
       case 'manual-customers':
         return <AddManualCustomer vendorProfile={profile} />;
@@ -860,12 +1206,203 @@ case 'orders':
 
       case 'profile':
         return (
-         <div className="profile-settings-grid">
-            <h3 style={{ color: '#2b3674' }}>Kitchen Profile Settings</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginTop: '20px' }}>
+         <div style={{ padding: '10px 0' }}>
+            <h3 style={{ color: '#2b3674', marginBottom: '24px' }}>Kitchen Profile Settings</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(220px, 280px)', gap: '30px', alignItems: 'start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Kitchen Name</label><input className="v-input" name="kitchenName" value={profile.kitchenName} onChange={handleProfileChange} /></div>
-                <div><label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Complete Address</label><textarea className="v-input" name="address" style={{ height: '100px', paddingTop: '10px' }} value={profile.address} onChange={handleProfileChange} /></div>
+
+                {/* Personal Info */}
+                <div style={{ background: '#f0f4ff', border: '1.5px solid #c7d2fe', borderRadius: '14px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
+                    <span style={{ fontSize: '18px' }}>👤</span>
+                    <span style={{ fontSize: '15px', fontWeight: '700', color: '#3730a3' }}>Personal Info</span>
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      YOUR NAME
+                    </label>
+                    <input
+                      className="v-input"
+                      name="ownerName"
+                      value={profile.ownerName}
+                      onChange={handleProfileChange}
+                      placeholder="Your full name"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      EMAIL <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>(cannot be changed)</span>
+                    </label>
+                    <input
+                      className="v-input"
+                      value={profile.email}
+                      disabled
+                      style={{ background: '#f1f5f9', color: '#94a3b8', cursor: 'not-allowed' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      PHONE NUMBER
+                    </label>
+                    <input
+                      className="v-input"
+                      name="phone"
+                      value={profile.phone}
+                      onChange={handleProfileChange}
+                      placeholder="e.g. 9876543210"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Kitchen Name</label>
+                  <input className="v-input" name="kitchenName" value={profile.kitchenName} onChange={handleProfileChange} />
+                </div>
+
+                {/* Kitchen Address */}
+                <div style={{ background: '#fff8f5', border: '1.5px solid #fcd5b8', borderRadius: '14px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
+                    <span style={{ fontSize: '18px' }}>🏪</span>
+                    <span style={{ fontSize: '15px', fontWeight: '700', color: '#c2410c' }}>Kitchen Address</span>
+                  </div>
+
+                  {/* Legacy address hint */}
+                  {profile.legacyAddr && (
+                    <div style={{ fontSize: '12px', color: '#92400e', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '8px 12px', marginBottom: '14px' }}>
+                      ⚠️ Your original address was saved as a single field. Please fill in the separate fields below so deliveries work correctly.
+                      <div style={{ marginTop: '4px', fontWeight: '600' }}>"{profile.legacyAddr}"</div>
+                    </div>
+                  )}
+
+                  {/* Shop / Building No */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      SHOP / BUILDING NO. <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>(Optional)</span>
+                    </label>
+                    <input
+                      className="v-input"
+                      name="addrShopNo"
+                      value={profile.addrShopNo || ''}
+                      onChange={handleProfileChange}
+                      placeholder="e.g. Shop 3, Ground Floor, Block B"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+
+                  {/* Street */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      STREET / ROAD <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      className="v-input"
+                      name="addrStreet"
+                      value={profile.addrStreet || ''}
+                      onChange={handleProfileChange}
+                      placeholder="e.g. Hotel Relief, NH48"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+
+                  {/* Area */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      AREA / LOCALITY <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      className="v-input"
+                      name="addrArea"
+                      value={profile.addrArea || ''}
+                      onChange={handleProfileChange}
+                      placeholder="e.g. Baleshwar"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+
+                  {/* City + Pincode side by side */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                        CITY <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        className="v-input"
+                        name="addrCity"
+                        value={profile.addrCity || ''}
+                        onChange={handleProfileChange}
+                        placeholder="e.g. Surat"
+                        style={{ background: '#fff' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                        PINCODE <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        className="v-input"
+                        type="text"
+                        maxLength={6}
+                        name="addrPincode"
+                        value={profile.addrPincode || ''}
+                        onChange={handleProfileChange}
+                        placeholder="e.g. 394315"
+                        style={{ background: '#fff' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Landmark */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                      LANDMARK <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>(Optional)</span>
+                    </label>
+                    <input
+                      className="v-input"
+                      name="addrLandmark"
+                      value={profile.addrLandmark || ''}
+                      onChange={handleProfileChange}
+                      placeholder="e.g. Opp. Khetalaba Tea Stall"
+                      style={{ background: '#fff' }}
+                    />
+                  </div>
+
+                  {/* GPS detect row */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    padding: '11px 14px', borderRadius: '10px',
+                    background: vendorGpsDetected ? '#f0fdf4' : '#f8fafc',
+                    border: `1px solid ${vendorGpsDetected ? '#86efac' : '#e2e8f0'}`,
+                  }}>
+                    <span style={{ fontSize: '18px' }}>📍</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>Kitchen Location</div>
+                      <div style={{ fontSize: '11px', color: vendorGpsDetected ? '#16a34a' : '#94a3b8', marginTop: 2 }}>
+                        {vendorGpsDetected
+                          ? `✅ Detected (${profile.addrLat?.toFixed(4)}, ${profile.addrLng?.toFixed(4)})`
+                          : 'Auto-fill address from your current location'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={detectVendorGps}
+                      disabled={detectingVendorGps}
+                      style={{
+                        background: vendorGpsDetected ? '#16a34a' : '#f26522',
+                        color: 'white', border: 'none',
+                        borderRadius: '8px', padding: '7px 14px', fontSize: '12px',
+                        fontWeight: '600', cursor: detectingVendorGps ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap', opacity: detectingVendorGps ? 0.7 : 1,
+                      }}
+                    >
+                      {detectingVendorGps ? 'Detecting…' : vendorGpsDetected ? '📍 Re-detect' : '📍 Detect'}
+                    </button>
+                  </div>
+                </div>
                 <div>
                   <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
                     UPI ID
@@ -879,19 +1416,20 @@ case 'orders':
                   />
                 </div>
               </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ marginBottom: '20px' }}>
-                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>Profile Picture</p>
-                  <div style={{ width: '150px', height: '150px', borderRadius: '50%', border: '2px dashed #cbd5e1', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
+              <div style={{ position: 'sticky', top: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Profile Picture */}
+                <div style={{ background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: '14px', padding: '20px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '13px', fontWeight: '700', color: '#2b3674', marginBottom: '14px' }}>Profile Picture</p>
+                  <div style={{ width: '120px', height: '120px', borderRadius: '50%', border: '2px dashed #cbd5e1', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
                     {imageLoading ? (
                       <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#e2e8f0' }}>
-                        <span style={{ fontSize: '30px' }}>⏳</span>
+                        <span style={{ fontSize: '24px' }}>⏳</span>
                       </div>
                     ) : profile.image ? (
-                      <img 
-                        src={resolveImageUrl(profile.image)} 
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                        alt="Preview" 
+                      <img
+                        src={resolveImageUrl(profile.image)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        alt="Preview"
                         onError={(e) => { e.target.onerror = null; e.target.src = ''; }}
                         onLoad={() => setImageLoading(false)}
                       />
@@ -900,16 +1438,20 @@ case 'orders':
                     )}
                   </div>
                   <input type="file" accept="image/*" id="imageUpload" hidden onChange={handleImageUpload} />
-                  <label htmlFor="imageUpload" style={{ display: 'inline-block', marginTop: '10px', padding: '8px 16px', background: '#f26522', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>Change</label>
+                  <label htmlFor="imageUpload" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: '#f26522', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
+                    Change Photo
+                  </label>
                 </div>
-                <div>
-                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>Kitchen Banner/Poster</p>
-                  <div style={{ width: '200px', height: '100px', borderRadius: '12px', border: '2px dashed #cbd5e1', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
+
+                {/* Kitchen Banner */}
+                <div style={{ background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: '14px', padding: '20px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '13px', fontWeight: '700', color: '#2b3674', marginBottom: '14px' }}>Kitchen Banner / Poster</p>
+                  <div style={{ width: '100%', height: '110px', borderRadius: '10px', border: '2px dashed #cbd5e1', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f8fafc' }}>
                     {profile.kitchenPoster ? (
-                      <img 
-                        src={resolveImageUrl(profile.kitchenPoster)} 
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                        alt="Kitchen Poster" 
+                      <img
+                        src={resolveImageUrl(profile.kitchenPoster)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        alt="Kitchen Poster"
                         onError={(e) => { e.target.onerror = null; e.target.src = ''; }}
                       />
                     ) : (
@@ -917,17 +1459,19 @@ case 'orders':
                     )}
                   </div>
                   <input type="file" accept="image/*" id="kitchenPosterUpload" hidden onChange={handleKitchenPosterUpload} />
-                  <label htmlFor="kitchenPosterUpload" style={{ display: 'inline-block', marginTop: '10px', padding: '8px 16px', background: '#16a34a', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>Upload Banner</label>
+                  <label htmlFor="kitchenPosterUpload" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: '#16a34a', color: 'white', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
+                    Upload Banner
+                  </label>
                 </div>
               </div>
             </div>
-            <button 
-              className="v-nav-btn" 
-              style={{ background: '#2b3674', color: 'white', width: '200px', justifyContent: 'center', marginTop: '30px' }} 
+            <button
+              className="v-nav-btn"
+              style={{ background: '#2b3674', color: 'white', width: '100%', maxWidth: '260px', justifyContent: 'center', marginTop: '28px', padding: '12px 0', fontSize: '14px', fontWeight: '700', borderRadius: '10px' }}
               onClick={handleSaveProfile}
               disabled={loading}
             >
-              {loading ? 'Saving...' : 'Save Changes'}
+              {loading ? 'Saving…' : 'Save Changes'}
             </button>
           </div>
         );
@@ -972,36 +1516,60 @@ case 'orders':
             <div style={{ marginTop: '20px' }}>
               {reviews && reviews.reviews && reviews.reviews.length > 0 ? (
                 reviews.reviews.map((rev, idx) => (
-                  <div key={rev._id || idx} style={{ 
-                    padding: '15px', 
-                    borderBottom: '1px solid #f4f7fe',
-                    background: rev.rating >= 4 ? '#f0fdf4' : rev.rating <= 2 ? '#fef2f2' : '#fff',
+                  <div key={rev._id || idx} style={{
+                    padding: '15px',
+                    background: rev.isHidden ? '#f8fafc' : rev.rating >= 4 ? '#f0fdf4' : rev.rating <= 2 ? '#fef2f2' : '#fff',
                     marginBottom: '10px',
-                    borderRadius: '8px'
+                    borderRadius: '10px',
+                    border: `1px solid ${rev.isFlagged ? '#fecaca' : rev.isHidden ? '#e8ecf0' : '#e8f5e9'}`,
+                    opacity: rev.isHidden ? 0.6 : 1,
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
                       <div>
-                        <strong style={{ fontSize: '16px', color: '#2b3674' }}>{rev.user}</strong>
-                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{rev.date}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                          <strong style={{ fontSize: '15px', color: '#2b3674' }}>{rev.user}</strong>
+                          {rev.isVerifiedPurchase && (
+                            <span style={{ fontSize: 11, color: '#16a34a', background: '#f0fdf4',
+                              border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 6px', fontWeight: 600 }}>
+                              ✓ Verified
+                            </span>
+                          )}
+                          {rev.planType && (
+                            <span style={{ fontSize: 11, color: '#6d28d9', background: '#ede9fe',
+                              borderRadius: 10, padding: '1px 6px' }}>{rev.planType}</span>
+                          )}
+                          {rev.isHidden && (
+                            <span style={{ fontSize: 11, color: '#94a3b8', background: '#f1f5f9',
+                              borderRadius: 10, padding: '1px 6px' }}>Hidden</span>
+                          )}
+                          {rev.isFlagged && (
+                            <span style={{ fontSize: 11, color: '#dc2626', background: '#fef2f2',
+                              borderRadius: 10, padding: '1px 6px' }}>🚩 Flagged</span>
+                          )}
+                          {rev.isEdited && (
+                            <span style={{ fontSize: 11, color: '#94a3b8' }}>(edited)</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>{rev.date}</div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ 
-                          display: 'inline-block',
-                          padding: '4px 10px',
-                          borderRadius: '20px',
-                          background: rev.rating >= 4 ? '#dcfce7' : rev.rating <= 2 ? '#fee2e2' : '#fef3c7',
-                          color: rev.rating >= 4 ? '#16a34a' : rev.rating <= 2 ? '#dc2626' : '#d97706',
-                          fontWeight: '600',
-                          fontSize: '14px'
-                        }}>
-                          {'⭐'.repeat(rev.rating)} <span style={{ marginLeft: '5px' }}>{rev.rating}/5</span>
-                        </span>
-                      </div>
+                      <span style={{
+                        padding: '4px 10px', borderRadius: '20px', fontWeight: '600', fontSize: '14px',
+                        background: rev.rating >= 4 ? '#dcfce7' : rev.rating <= 2 ? '#fee2e2' : '#fef3c7',
+                        color: rev.rating >= 4 ? '#16a34a' : rev.rating <= 2 ? '#dc2626' : '#d97706',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {'⭐'.repeat(rev.rating)} {rev.rating}/5
+                      </span>
                     </div>
                     {rev.comment && (
-                      <p style={{ color: '#444', fontSize: '14px', margin: '10px 0 0 0', lineHeight: '1.5' }}>
+                      <p style={{ color: '#444', fontSize: '14px', margin: '10px 0 0', lineHeight: 1.6 }}>
                         {rev.comment}
                       </p>
+                    )}
+                    {rev.helpfulCount > 0 && (
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+                        👍 {rev.helpfulCount} found this helpful
+                      </div>
                     )}
                   </div>
                 ))
@@ -1104,44 +1672,140 @@ case 'orders':
           </div>
         );
 
-      case 'complaints':
+      case 'complaints': {
+        const statusBadge = (status) => {
+          const map = {
+            Open:     { bg: '#fef3c7', color: '#92400e', label: '🔴 Open' },
+            Resolved: { bg: '#dcfce7', color: '#166534', label: '✅ Resolved' },
+            Rejected: { bg: '#fee2e2', color: '#991b1b', label: '❌ Rejected' },
+          };
+          const s = map[status] || map['Open'];
+          return (
+            <span style={{
+              background: s.bg, color: s.color,
+              padding: '3px 10px', borderRadius: '20px',
+              fontSize: '12px', fontWeight: '600'
+            }}>{s.label}</span>
+          );
+        };
+
+        const handleAction = async (id, newStatus) => {
+          const reply = replyInputs[id] || '';
+          if (newStatus === 'Resolved' && !reply.trim()) {
+            setReplyInputs(prev => ({ ...prev, [`${id}_err`]: 'Please write a reply before resolving.' }));
+            return;
+          }
+          setReplyLoading(prev => ({ ...prev, [id]: true }));
+          setReplyInputs(prev => ({ ...prev, [`${id}_err`]: '' }));
+          try {
+            await resolveVendorComplaint(id, newStatus, reply.trim() || 'Noted by vendor');
+            await fetchVendorData();
+            setReplyInputs(prev => { const n = { ...prev }; delete n[id]; delete n[`${id}_err`]; return n; });
+          } catch (e) {
+            setReplyInputs(prev => ({ ...prev, [`${id}_err`]: 'Action failed. Please try again.' }));
+          } finally {
+            setReplyLoading(prev => ({ ...prev, [id]: false }));
+          }
+        };
+
         return (
           <div className="v-card">
-            <h3>Customer Complaints</h3>
-            <div style={{ marginTop: '20px' }}>
-              {complaints.length === 0 && <div style={{ color: '#a3aed0' }}>No complaints</div>}
-              {complaints.map(c => (
-                <div key={c._id} style={{ padding: '12px', borderBottom: '1px solid #f4f7fe' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>{c.userId?.name}</strong>
-                    <span style={{ color: '#a3aed0' }}>{new Date(c.createdAt).toLocaleString()}</span>
-                  </div>
-                  <p style={{ margin: '8px 0' }}>{c.message}</p>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <button onClick={async () => {
-                      const resp = prompt('Reply to complaint (will mark Resolved):');
-                      if (resp !== null) {
-                        try {
-                          await resolveVendorComplaint(c._id, 'Resolved', resp);
-                          alert('Complaint resolved');
-                          fetchVendorData();
-                        } catch (e) { alert('Failed to resolve'); }
-                      }
-                    }} style={{ background: '#16a34a', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Resolve</button>
-                    <button onClick={async () => {
-                      const resp = prompt('Reject reason (optional):');
-                      try {
-                        await resolveVendorComplaint(c._id, 'Rejected', resp || 'Rejected by vendor');
-                        alert('Complaint rejected');
-                        fetchVendorData();
-                      } catch (e) { alert('Failed to reject'); }
-                    }} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px' }}>Reject</button>
-                  </div>
-                </div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#2b3674' }}>Customer Complaints</h3>
+                <p style={{ margin: '4px 0 0 0', color: '#a3aed0', fontSize: '13px' }}>
+                  {complaints.filter(c => c.status === 'Open').length} open · {complaints.length} total
+                </p>
+              </div>
+              <button
+                onClick={fetchVendorData}
+                style={{ background: '#f4f7fe', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#2b3674', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}
+              >↻ Refresh</button>
             </div>
+
+            {complaints.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#a3aed0' }}>
+                <div style={{ fontSize: '40px', marginBottom: '10px' }}>🎉</div>
+                <div style={{ fontWeight: '600' }}>No complaints yet!</div>
+                <div style={{ fontSize: '13px', marginTop: '4px' }}>Your customers are happy.</div>
+              </div>
+            ) : (
+              complaints.map(c => (
+                <div key={c._id} style={{
+                  border: '1px solid #f4f7fe', borderRadius: '12px',
+                  padding: '16px', marginBottom: '14px',
+                  borderLeft: `4px solid ${c.status === 'Open' ? '#f59e0b' : c.status === 'Resolved' ? '#16a34a' : '#ef4444'}`
+                }}>
+                  {/* Header row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                    <div>
+                      <div style={{ fontWeight: '700', color: '#2b3674', fontSize: '15px' }}>{c.userId?.name || 'Customer'}</div>
+                      <div style={{ color: '#a3aed0', fontSize: '12px', marginTop: '2px' }}>{c.userId?.email || ''}</div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                      {statusBadge(c.status)}
+                      <span style={{ color: '#a3aed0', fontSize: '11px' }}>{new Date(c.createdAt).toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  {/* Order reference */}
+                  {c.orderId && (
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280', background: '#f9fafb', padding: '4px 10px', borderRadius: '6px', display: 'inline-block' }}>
+                      📦 Order: {c.orderId?.planType || c.orderId?._id?.toString().slice(-6) || 'Ref'}
+                    </div>
+                  )}
+
+                  {/* Message */}
+                  <p style={{ margin: '12px 0 0 0', color: '#2b3674', fontSize: '14px', lineHeight: '1.5', background: '#f9fafb', padding: '10px 12px', borderRadius: '8px' }}>
+                    {c.message}
+                  </p>
+
+                  {/* Vendor response (if already given) */}
+                  {c.response && (
+                    <div style={{ marginTop: '10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 12px' }}>
+                      <div style={{ fontSize: '11px', color: '#16a34a', fontWeight: '600', marginBottom: '4px' }}>YOUR RESPONSE</div>
+                      <div style={{ fontSize: '13px', color: '#166534' }}>{c.response}</div>
+                    </div>
+                  )}
+
+                  {/* Action area — only for Open complaints */}
+                  {c.status === 'Open' && (
+                    <div style={{ marginTop: '14px' }}>
+                      <textarea
+                        placeholder="Write your reply to the customer (required for Resolve)…"
+                        rows={2}
+                        value={replyInputs[c._id] || ''}
+                        onChange={e => setReplyInputs(prev => ({ ...prev, [c._id]: e.target.value }))}
+                        style={{
+                          width: '100%', boxSizing: 'border-box',
+                          padding: '10px 12px', border: '1px solid #e2e8f0',
+                          borderRadius: '8px', fontSize: '13px', resize: 'vertical',
+                          fontFamily: 'inherit', outline: 'none', color: '#2b3674'
+                        }}
+                      />
+                      {replyInputs[`${c._id}_err`] && (
+                        <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{replyInputs[`${c._id}_err`]}</div>
+                      )}
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                        <button
+                          disabled={replyLoading[c._id]}
+                          onClick={() => handleAction(c._id, 'Resolved')}
+                          style={{ background: replyLoading[c._id] ? '#a3aed0' : '#16a34a', color: 'white', border: 'none', padding: '9px 18px', borderRadius: '8px', fontWeight: '600', cursor: replyLoading[c._id] ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+                        >{replyLoading[c._id] ? 'Saving…' : '✓ Resolve'}</button>
+                        <button
+                          disabled={replyLoading[c._id]}
+                          onClick={() => handleAction(c._id, 'Rejected')}
+                          style={{ background: replyLoading[c._id] ? '#a3aed0' : '#ef4444', color: 'white', border: 'none', padding: '9px 18px', borderRadius: '8px', fontWeight: '600', cursor: replyLoading[c._id] ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+                        >{replyLoading[c._id] ? 'Saving…' : '✗ Reject'}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         );
+      }
 
       case 'offers':
         return <VendorOffers />;
@@ -1260,6 +1924,24 @@ case 'orders':
           />
         );
 
+      case 'loyalty-settings':
+        return <LoyaltySettings />;
+
+      case 'finance':
+        return <FinanceDashboard />;
+
+      case 'expenses':
+        return <ExpenseTracker />;
+
+      case 'analytics':
+        return <SubscriptionAnalytics />;
+
+      case 'loyalty':
+        return <CustomerLoyalty />;
+
+      case 'delivery-management':
+        return <DeliveryManagement />;
+
       default: return null;
     }
   };
@@ -1335,6 +2017,10 @@ return (
           <button className={`v-nav-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => { setActiveTab('customers'); setSidebarOpen(false); }}>My Customers</button>
           <button className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} onClick={() => { setActiveTab('manual-customers'); setSidebarOpen(false); }}>Add Customer</button>
           <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setSidebarOpen(false); }}>Reports & PDF</button>
+          <button className={`v-nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); setSidebarOpen(false); }}>Finance</button>
+          <button className={`v-nav-btn ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSidebarOpen(false); }}>💰 Expenses</button>
+          <button className={`v-nav-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => { setActiveTab('analytics'); setSidebarOpen(false); }}> Sub Analytics</button>
+          <button className={`v-nav-btn ${activeTab === 'loyalty' ? 'active' : ''}`} onClick={() => { setActiveTab('loyalty'); setSidebarOpen(false); }}>Customer Loyalty</button>
           <button
             className={`v-nav-btn ${activeTab === 'cash-payments' ? 'active' : ''}`}
             onClick={() => { setActiveTab('cash-payments'); setSidebarOpen(false); }}
@@ -1355,9 +2041,29 @@ return (
           </button>
           <button className={`v-nav-btn ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => { setActiveTab('commission'); setSidebarOpen(false); }}>Commission</button>
           <button className={`v-nav-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => { setActiveTab('reviews'); setSidebarOpen(false); }}>Reviews</button>
+          <button
+            className={`v-nav-btn ${activeTab === 'complaints' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('complaints'); setSidebarOpen(false); }}
+            style={{ position: 'relative' }}
+          >
+            Complaints
+            {complaints.filter(c => c.status === 'Open').length > 0 && (
+              <span style={{
+                position: 'absolute', right: '12px', top: '50%',
+                transform: 'translateY(-50%)', background: '#ef4444',
+                color: 'white', borderRadius: '50%', width: '20px', height: '20px',
+                fontSize: '11px', fontWeight: '700', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', lineHeight: 1
+              }}>
+                {complaints.filter(c => c.status === 'Open').length > 9 ? '9+' : complaints.filter(c => c.status === 'Open').length}
+              </span>
+            )}
+          </button>
           <button className={`v-nav-btn ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => { setActiveTab('compliance'); setSidebarOpen(false); }}>Compliance</button>
           <button className={`v-nav-btn ${activeTab === 'offers' ? 'active' : ''}`} onClick={() => { setActiveTab('offers'); setSidebarOpen(false); }}>Offers</button>
           <button className={`v-nav-btn ${activeTab === 'trials' ? 'active' : ''}`} onClick={() => { setActiveTab('trials'); setSidebarOpen(false); }}>Trial Settings</button>
+          <button className={`v-nav-btn ${activeTab === 'loyalty-settings' ? 'active' : ''}`} onClick={() => { setActiveTab('loyalty-settings'); setSidebarOpen(false); }}>Loyalty Settings</button>
+          <button className={`v-nav-btn ${activeTab === 'delivery-management' ? 'active' : ''}`} onClick={() => { setActiveTab('delivery-management'); setSidebarOpen(false); }}>📦 Delivery Mgmt</button>
           <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => { setActiveTab('profile'); setSidebarOpen(false); }}>Edit Profile</button>
         </nav>
         <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>Logout</button>
@@ -1390,6 +2096,7 @@ return (
 
         {renderContent()}
       </main>
+
     </div>
   );
 };

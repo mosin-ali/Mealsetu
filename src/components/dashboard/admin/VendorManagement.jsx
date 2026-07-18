@@ -8,7 +8,7 @@ const VendorManagement = () => {
   const [rejectModal, setRejectModal] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
-  const [actionLoading, setActionLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState({});
   const [successMessage, setSuccessMessage] = useState(null);
 
   const token = localStorage.getItem('token');
@@ -38,7 +38,6 @@ const VendorManagement = () => {
         throw new Error('Failed to fetch vendors. Status: ' + response.status);
       }
       const data = await response.json();
-      console.log('Vendors fetched:', data);
       setVendors(data.vendors || []);
     } catch (err) {
       console.error('Fetch error:', err);
@@ -49,8 +48,8 @@ const VendorManagement = () => {
   };
 
   const handleApprove = async (vendorId) => {
-    if (actionLoading) return;
-    setActionLoading(true);
+    if (actionLoading[vendorId]) return;
+    setActionLoading(prev => ({ ...prev, [vendorId]: true }));
     try {
       const response = await fetch('/api/admin/vendor-requests/approve', {
         method: 'POST',
@@ -66,7 +65,7 @@ const VendorManagement = () => {
     } catch (err) {
       setError(err.message);
     } finally {
-      setActionLoading(false);
+      setActionLoading(prev => ({ ...prev, [vendorId]: false }));
     }
   };
 
@@ -77,8 +76,9 @@ const VendorManagement = () => {
   };
 
   const handleReject = async () => {
-    if (!rejectionReason.trim()) return;
-    setActionLoading(true);
+    if (!rejectionReason.trim() || !selectedVendor) return;
+    const vid = selectedVendor._id;
+    setActionLoading(prev => ({ ...prev, [vid]: true }));
     try {
       const response = await fetch('/api/admin/vendor-requests/reject', {
         method: 'POST',
@@ -87,19 +87,19 @@ const VendorManagement = () => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          vendorId: selectedVendor._id,
+          vendorId: vid,
           rejectionReason: rejectionReason.trim()
         })
       });
       if (!response.ok) throw new Error('Failed to reject');
-      setVendors(prev => prev.filter(v => v._id !== selectedVendor._id));
+      setVendors(prev => prev.filter(v => v._id !== vid));
       setSuccessMessage('Vendor rejected. Email sent to vendor.');
       setRejectModal(false);
       setRejectionReason('');
     } catch (err) {
       setError(err.message);
     } finally {
-      setActionLoading(false);
+      setActionLoading(prev => ({ ...prev, [vid]: false }));
     }
   };
 
@@ -239,14 +239,14 @@ const VendorManagement = () => {
                   <button
                     className="vm-approve-btn"
                     onClick={() => handleApprove(vendor._id)}
-                    disabled={actionLoading}
+                    disabled={!!actionLoading[vendor._id]}
                   >
-                    {actionLoading ? 'Processing...' : 'Approve Vendor'}
+                    {actionLoading[vendor._id] ? 'Processing...' : 'Approve Vendor'}
                   </button>
                   <button
                     className="vm-reject-btn"
                     onClick={() => handleRejectOpen(vendor)}
-                    disabled={actionLoading}
+                    disabled={!!actionLoading[vendor._id]}
                   >
                     Reject Vendor
                   </button>
@@ -277,10 +277,10 @@ const VendorManagement = () => {
               </button>
               <button
                 onClick={handleReject}
-                disabled={actionLoading || !rejectionReason.trim()}
+                disabled={!rejectionReason.trim() || (selectedVendor && !!actionLoading[selectedVendor._id])}
                 className="vm-confirm-reject-btn"
               >
-                {actionLoading ? 'Processing...' : 'Confirm Rejection'}
+                {selectedVendor && actionLoading[selectedVendor._id] ? 'Processing...' : 'Confirm Rejection'}
               </button>
             </div>
           </div>

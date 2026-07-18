@@ -365,6 +365,10 @@ export const getVendorCustomers = () => {
   return apiCall('/vendor/customers', { method: 'GET' });
 };
 
+export const getCustomerPlans = (customerId) => {
+  return apiCall(`/vendor/customer/${customerId}/plans`, { method: 'GET' });
+};
+
 export const getVendorComplaints = () => {
   return apiCall('/vendor/complaints', { method: 'GET' });
 };
@@ -455,6 +459,10 @@ export const createOfferPaymentOrder = (data) =>
 
 export const redeemOffer = (data) =>
   apiCall('/users/offers/redeem', { method: 'POST', body: JSON.stringify(data) });
+
+// Subscription Analytics
+export const getSubscriptionAnalytics = () =>
+  apiCall('/vendor/subscription-analytics', { method: 'GET' });
 
 // ============ ADMIN ENDPOINTS ============
 export const getPlatformSettings = () => {
@@ -616,5 +624,216 @@ export const verifyCommissionPaymentRazorpay = (data) =>
     body: JSON.stringify(data)
   });
 
+// ── ADMIN DISPUTE ENDPOINTS ──────────────────────────────────────────
+export const getAdminCommissionDisputes = () =>
+  apiCall('/admin/commission/disputes');
+
+export const resolveAdminCommissionDispute = (commissionId, data) =>
+  apiCall(`/admin/commission/${commissionId}/resolve-dispute`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+
 export const checkCanAddPlan = () =>
   apiCall('/users/check-can-add-plan', { method: 'GET' });
+
+// ── VENDOR LOYALTY SETTINGS ──────────────────────────────────────────
+export const getVendorLoyaltySettings = () =>
+  apiCall('/vendor/loyalty-settings');
+
+export const updateVendorLoyaltySettings = (data) =>
+  apiCall('/vendor/loyalty-settings', {
+    method: 'PUT',
+    body:   JSON.stringify(data)
+  });
+
+// Vendor: get today's active orders (used by delivery batch system)
+export const getTodayOrders = () =>
+  apiCall('/vendor/today-orders', { method: 'GET' });
+
+// ============ VENDOR DELIVERY MANAGEMENT (salary-based batch system) ============
+
+export const toggleVendorDelivery = (deliveryEnabled) =>
+  apiCall('/vendor/delivery/toggle', {
+    method: 'PATCH',
+    body: JSON.stringify({ deliveryEnabled }),
+  });
+
+export const getVendorRiders = () =>
+  apiCall('/vendor/delivery/riders', { method: 'GET' });
+
+export const addRider = (data) =>
+  apiCall('/vendor/delivery/riders', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const updateRider = (riderId, data) =>
+  apiCall(`/vendor/delivery/riders/${riderId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+
+export const deleteRider = (riderId) =>
+  apiCall(`/vendor/delivery/riders/${riderId}`, { method: 'DELETE' });
+
+export const markRiderSalaryPaid = (riderId, data) =>
+  apiCall(`/vendor/delivery/riders/${riderId}/salary`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const createSalaryRazorpayOrder = (riderId, data) =>
+  apiCall(`/vendor/delivery/riders/${riderId}/salary/razorpay-order`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const verifySalaryRazorpayPayment = (riderId, data) =>
+  apiCall(`/vendor/delivery/riders/${riderId}/salary/razorpay-verify`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const createDeliveryBatches = (data) =>
+  apiCall('/vendor/delivery/batches/create', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const getDeliveryBatches = (date, mealSlot) =>
+  apiCall(`/vendor/delivery/batches?date=${date}&mealSlot=${mealSlot}`, { method: 'GET' });
+
+export const assignBatchToRider = (batchId, riderId) =>
+  apiCall(`/vendor/delivery/batches/${batchId}/assign`, {
+    method: 'PATCH',
+    body: JSON.stringify({ riderId }),
+  });
+
+export const getDeliveryFinancials = (month) =>
+  apiCall(`/vendor/delivery/financials${month ? `?month=${month}` : ''}`, { method: 'GET' });
+
+export const getDeliveryAnalytics = (month) =>
+  apiCall(`/vendor/delivery/analytics${month ? `?month=${month}` : ''}`, { method: 'GET' });
+
+export const getDeliveryAttendance = (month) =>
+  apiCall(`/vendor/delivery/attendance${month ? `?month=${month}` : ''}`, { method: 'GET' });
+
+export const reassignBatch = (batchId, riderId) =>
+  apiCall(`/vendor/delivery/batches/${batchId}/reassign`, {
+    method: 'PATCH',
+    body: JSON.stringify({ riderId }),
+  });
+
+export const mergeBatches = (sourceBatchId, targetBatchId) =>
+  apiCall('/vendor/delivery/batches/merge', {
+    method: 'POST',
+    body: JSON.stringify({ sourceBatchId, targetBatchId }),
+  });
+
+export const getLiveRiderLocations = () =>
+  apiCall('/vendor/delivery/riders/live', { method: 'GET' });
+
+export const getRetryOrders = () =>
+  apiCall('/vendor/delivery/retry-queue', { method: 'GET' });
+
+export const getFailedDeliveries = () =>
+  apiCall('/vendor/delivery/failed-queue', { method: 'GET' });
+
+export const resolveFailedDeliveryOrder = (orderId, action) =>
+  apiCall(`/vendor/delivery/failed/${orderId}/resolve`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action }),
+  });
+
+// ============ VENDOR EXPENSE TRACKER ============
+export const addExpense = (data) =>
+  apiCall('/vendor/expenses', { method: 'POST', body: JSON.stringify(data) });
+
+export const getExpenses = (month) =>
+  apiCall(`/vendor/expenses?month=${month}`, { method: 'GET' });
+
+export const updateExpense = (id, data) =>
+  apiCall(`/vendor/expenses/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+
+export const deleteExpense = (id) =>
+  apiCall(`/vendor/expenses/${id}`, { method: 'DELETE' });
+
+export const getExpenseSummary = (month) =>
+  apiCall(`/vendor/expenses/summary?month=${month}`, { method: 'GET' });
+
+export const downloadExpenseCSV = async (month, type) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`/api/vendor/expenses/export?month=${month}&type=${type}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.message || 'Export failed');
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `expenses_${type}_${month}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+export const applyRecurringExpenses = (month) =>
+  apiCall('/vendor/expenses/recurring/apply', { method: 'POST', body: JSON.stringify({ month }) });
+
+export const getExpenseTrend = (months = 6) =>
+  apiCall(`/vendor/expenses/trend?months=${months}`, { method: 'GET' });
+
+export const getExpenseBudget = () =>
+  apiCall('/vendor/expenses/budget', { method: 'GET' });
+
+export const saveExpenseBudget = (budgets) =>
+  apiCall('/vendor/expenses/budget', { method: 'PUT', body: JSON.stringify({ budgets }) });
+
+// ============ ADMIN DELIVERY PARTNER ENDPOINTS ============
+export const getDeliveryPartners = () =>
+  apiCall('/admin/delivery-partners', { method: 'GET' });
+
+export const createDeliveryPartner = (data) =>
+  apiCall('/admin/delivery-partners', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const toggleDeliveryPartner = (partnerId) =>
+  apiCall(`/admin/delivery-partners/${partnerId}/toggle`, { method: 'PATCH' });
+
+export const getAllVendorsList = () =>
+  apiCall('/admin/vendors-stats', { method: 'GET' });
+
+// ============ ADMIN VENDOR PAYMENT HISTORY ============
+export const getVendorPaymentHistory = (vendorId) =>
+  apiCall(`/admin/commission/vendor/${vendorId}/payments`);
+
+// ── CSV Download helper ──────────────────────────────────────────────────────
+// Downloads a CSV file from an admin export endpoint.
+// `endpoint` should start with /admin/export/... (no /api prefix).
+export const downloadCSV = async (endpoint, filename) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`/api${endpoint}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    let msg = 'Export failed';
+    try { const d = await res.json(); msg = d.message || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename || 'export.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
