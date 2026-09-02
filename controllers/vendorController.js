@@ -17,7 +17,6 @@ const VendorPricing = require('../models/VendorPricing');
 const CommissionSetting = require('../models/CommissionSetting');
 const JainMenu = require('../models/JainMenu');
 const { sendEmail } = require('../utils/emailUtils');
-
 // Helper function to transform profilePic path to full URL
 const transformProfilePic = (profilePic, req) => {
   if (!profilePic) return null;
