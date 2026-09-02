@@ -25,6 +25,7 @@ const UserManagement = () => {
       const data = await apiCall('/admin/vendors-stats');
       const vendorList = data.vendors || [];
       setVendors(vendorList);
+      console.log('Vendor address type:', typeof vendorList[0]?.address, vendorList[0]?.address);
       const totalVendors = vendorList.length;
       const totalUsers = vendorList.reduce((sum, v) => sum + (v.subscriberCount || 0), 0);
       setStats({ totalVendors, totalUsers, inactiveUsers: 0 });
@@ -90,6 +91,27 @@ const UserManagement = () => {
       month: 'short',
       year: 'numeric'
     }).format(d);
+  };
+ const formatAddress = (address) => {
+    if (!address) return '—';
+    if (typeof address === 'string') return address;
+
+    if (typeof address === 'object') {
+      if (address.fullAddress && typeof address.fullAddress === 'string') {
+        return address.fullAddress;
+      }
+      return [
+        address.flatHouseNo,
+        address.shopNo,
+        address.street,
+        address.area,
+        address.landmark,
+        address.city,
+        address.pincode
+      ].filter(Boolean).join(', ') || '—';
+    }
+
+    return '—';
   };
 
   const getStatusBadge = (user) => {
@@ -291,6 +313,7 @@ filteredVendors.map((vendor) => (
           <h2>{selectedVendor?.kitchenName}</h2>
           <p>{selectedVendor?.email}</p>
           <p>{selectedVendor?.phone}</p>
+          <p>{formatAddress(selectedVendor?.address)}</p>
         </div>
       </div>
 

@@ -490,7 +490,7 @@ const SalaryModal = ({ rider, onClose, onSave }) => {
         {/* Razorpay info */}
         {paymentMethod === 'Razorpay' && (
           <div style={{ background: C.blueLight, border: `1px solid #BFDBFE`, borderRadius: 10, padding: 12, marginBottom: 12, fontSize: 13, color: C.blue }}>
-            💳 Opens secure Razorpay popup — pay via card, UPI, netbanking, or wallet.
+             Opens secure Razorpay popup — pay via card, UPI, netbanking, or wallet.
           </div>
         )}
 
@@ -503,7 +503,7 @@ const SalaryModal = ({ rider, onClose, onSave }) => {
               border: 'none', borderRadius: 8, padding: '9px 18px',
               fontSize: 13, fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer',
             }}>
-              {saving ? 'Opening…' : `💳 Pay ₹${amount} via Razorpay`}
+              {saving ? 'Opening…' : ` Pay ₹${amount} via Razorpay`}
             </button>
           ) : (
             <Btn color={C.green} disabled={saving}>{saving ? 'Processing…' : '✓ Mark as Paid (Cash)'}</Btn>
@@ -546,7 +546,7 @@ const RiderCard = ({ rider, onEdit, onDelete, onMarkPaid }) => {
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, color: '#fff' }}>{rider.name}</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2 }}>
-              🛵 Delivery Rider
+               Delivery Rider
             </div>
           </div>
         </div>
@@ -643,10 +643,10 @@ const DetailedBatchCard = ({ batch, riders = [], onAssign, onRefresh }) => {
             {total} orders · {done} delivered
             {retryCount > 0 && (
               <span style={{ color: '#EA580C', marginLeft: 8, fontWeight: 700 }}>
-                · 🔄 {retryCount} retry pending
+                ·  {retryCount} retry pending
               </span>
             )}
-            {riderName && <span style={{ color: C.blue, marginLeft: 8 }}>· 🛵 {riderName}</span>}
+            {riderName && <span style={{ color: C.blue, marginLeft: 8 }}>·  {riderName}</span>}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -719,7 +719,7 @@ const DetailedBatchCard = ({ batch, riders = [], onAssign, onRefresh }) => {
                     )}
                     {order.status === 'retry_pending' && order.failReason && (
                       <div style={{ fontSize: 11, color: '#EA580C', marginTop: 3 }}>
-                        ⚠️ {order.failReason} · attempt {order.retryCount || 1}/2
+                         {order.failReason} · attempt {order.retryCount || 1}/2
                       </div>
                     )}
                   </div>
@@ -919,7 +919,7 @@ const OverviewTab = ({ riders = [] }) => {
               transition: 'all 0.2s',
             }}
           >
-            {slot === 'lunch' ? '☀️ Lunch' : '🌙 Dinner'}
+            {slot === 'lunch' ? ' Lunch' : ' Dinner'}
           </button>
         ))}
         <Btn small outline color={C.blue} onClick={fetchData} style={{ marginLeft: 'auto' }}>↺ Refresh</Btn>
@@ -1104,15 +1104,15 @@ const BatchesTab = ({ riders = [] }) => {
       const res = await createDeliveryBatches({ batchDate: date, date, mealSlot });
       const count = res?.batches?.length ?? res?.batchCount ?? 0;
       if (count === 0) {
-        setMsg({ text: '⚠️ No active orders found for this date. Make sure orders exist and are not already batched.', ok: false });
+        setMsg({ text: ' No active orders found for this date. Make sure orders exist and are not already batched.', ok: false });
       } else {
-        setMsg({ text: `✅ ${count} batch${count !== 1 ? 'es' : ''} created successfully!`, ok: true });
+        setMsg({ text: ` ${count} batch${count !== 1 ? 'es' : ''} created successfully!`, ok: true });
         setNewOrderAlert(0);
         fetchBatches();
         fetchPendingCount();
       }
     } catch (e) {
-      setMsg({ text: '❌ ' + (e.message || 'Create failed'), ok: false });
+      setMsg({ text: ' ' + (e.message || 'Create failed'), ok: false });
     } finally {
       setCreating(false);
     }
@@ -1167,14 +1167,14 @@ const BatchesTab = ({ riders = [] }) => {
           <div style={{ flex: '0 0 auto' }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: C.slate, display: 'block', marginBottom: 4 }}>Meal Slot</label>
             <select value={mealSlot} onChange={(e) => setMealSlot(e.target.value)} style={{ ...inputSt, width: 130 }}>
-              <option value="lunch">☀️ Lunch</option>
-              <option value="dinner">🌙 Dinner</option>
+              <option value="lunch"> Lunch</option>
+              <option value="dinner"> Dinner</option>
             </select>
           </div>
-          <Btn onClick={fetchBatches} outline color={C.blue}>🔍 Fetch</Btn>
+          <Btn onClick={fetchBatches} outline color={C.blue}> Fetch</Btn>
           <Btn onClick={handleAutoCreate} disabled={creating || date !== todayStr()} color={C.orange}
             title={date !== todayStr() ? 'Batches can only be created for today' : ''}>
-            {creating ? 'Creating…' : '⚡ Auto-Create Batches'}
+            {creating ? 'Creating…' : ' Auto-Create Batches'}
           </Btn>
         </div>
 
@@ -1184,7 +1184,7 @@ const BatchesTab = ({ riders = [] }) => {
             marginTop: 12, padding: '10px 14px', borderRadius: 8,
             background: '#FFF7ED', border: `1px solid #FED7AA`, fontSize: 13, color: '#C2410C',
           }}>
-            📋 Viewing past batches — Auto-Create is only available for today's date.
+             Viewing past batches — Auto-Create is only available for today's date.
           </div>
         )}
 
@@ -1197,10 +1197,10 @@ const BatchesTab = ({ riders = [] }) => {
             display: 'flex', alignItems: 'center', gap: 10,
             animation: 'pulseAlert 1.5s ease-in-out infinite',
           }}>
-            <span style={{ fontSize: 18 }}>🔔</span>
+            <span style={{ fontSize: 18 }}></span>
             <span>
               {newOrderAlert} new order{newOrderAlert !== 1 ? 's' : ''} arrived since last batch!
-              {' '}Click <strong>⚡ Auto-Create Batches</strong> to include {newOrderAlert !== 1 ? 'them' : 'it'}.
+              {' '}Click <strong> Auto-Create Batches</strong> to include {newOrderAlert !== 1 ? 'them' : 'it'}.
             </span>
             <button onClick={() => setNewOrderAlert(0)}
               style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: C.orange }}>
@@ -1219,8 +1219,8 @@ const BatchesTab = ({ riders = [] }) => {
             color: pendingOrders > 0 ? C.blue : C.slate,
           }}>
             {pendingOrders > 0
-              ? `📋 ${pendingOrders} active order${pendingOrders !== 1 ? 's' : ''} for today (${batches.length > 0 ? 'some may already be batched' : 'not yet batched'}).`
-              : '📋 No active orders found for today yet.'}
+              ? ` ${pendingOrders} active order${pendingOrders !== 1 ? 's' : ''} for today (${batches.length > 0 ? 'some may already be batched' : 'not yet batched'}).`
+              : ' No active orders found for today yet.'}
           </div>
         )}
 
@@ -1238,7 +1238,7 @@ const BatchesTab = ({ riders = [] }) => {
             style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
             onClick={() => setRetryExpanded((p) => !p)}
           >
-            <span style={{ fontSize: 20 }}>🔄</span>
+            <span style={{ fontSize: 20 }}></span>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: '#9A3412' }}>
                 {retryOrders.length} order{retryOrders.length !== 1 ? 's' : ''} awaiting re-attempt
@@ -1271,7 +1271,7 @@ const BatchesTab = ({ riders = [] }) => {
                       </div>
                       {o.deliveryRiderId?.name && (
                         <div style={{ fontSize: 11, color: C.slate }}>
-                          🛵 {o.deliveryRiderId.name}
+                           {o.deliveryRiderId.name}
                         </div>
                       )}
                     </div>
@@ -1293,7 +1293,7 @@ const BatchesTab = ({ riders = [] }) => {
             style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
             onClick={() => setFailedExpanded((p) => !p)}
           >
-            <span style={{ fontSize: 20 }}>❌</span>
+            <span style={{ fontSize: 20 }}></span>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: '#991B1B' }}>
                 {failedOrders.filter((o) => !o.failureResolution?.action).length} failed deliver{failedOrders.filter((o) => !o.failureResolution?.action).length !== 1 ? 'ies' : 'y'} need{failedOrders.filter((o) => !o.failureResolution?.action).length === 1 ? 's' : ''} your action
@@ -1332,7 +1332,7 @@ const BatchesTab = ({ riders = [] }) => {
                         </div>
                         {o.deliveryRiderId?.name && (
                           <div style={{ fontSize: 11, color: C.slate, marginTop: 1 }}>
-                            🛵 Rider: {o.deliveryRiderId.name}
+                             Rider: {o.deliveryRiderId.name}
                           </div>
                         )}
                         {o.lastFailureReason && (
@@ -1349,7 +1349,7 @@ const BatchesTab = ({ riders = [] }) => {
                         background: resolved === 'compensated' ? '#D1FAE5' : '#F1F5F9',
                         color: resolved === 'compensated' ? '#065F46' : C.slate,
                       }}>
-                        {resolved === 'compensated' ? '🎁 +1 Meal Compensated' : '🏠 Customer Absent — No Action'}
+                        {resolved === 'compensated' ? ' +1 Meal Compensated' : ' Customer Absent — No Action'}
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1362,7 +1362,7 @@ const BatchesTab = ({ riders = [] }) => {
                             opacity: isResolving ? 0.6 : 1,
                           }}
                         >
-                          🛵 Rider's Mistake — Give +1 Meal
+                          Rider's Mistake — Give +1 Meal
                         </button>
                         <button
                           disabled={isResolving}
@@ -1373,7 +1373,7 @@ const BatchesTab = ({ riders = [] }) => {
                             opacity: isResolving ? 0.6 : 1,
                           }}
                         >
-                          🏠 Customer Absent — No Action
+                           Customer Absent — No Action
                         </button>
                       </div>
                     )}
@@ -1393,7 +1393,7 @@ const BatchesTab = ({ riders = [] }) => {
             No batches created yet for this date.
           </p>
           <p style={{ color: C.slate, fontSize: 12 }}>
-            Click <strong style={{ color: C.orange }}>⚡ Auto-Create Batches</strong> above to group today's active orders by area.
+            Click <strong style={{ color: C.orange }}> Auto-Create Batches</strong> above to group today's active orders by area.
           </p>
         </Card>
       ) : (
@@ -1514,7 +1514,7 @@ const FinancialsTab = ({ riders = [] }) => {
                           color: paid ? C.green : '#EA580C',
                           fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 12,
                         }}>
-                          {paid ? '✓ Paid' : '⏳ Pending'}
+                          {paid ? '✓ Paid' : ' Pending'}
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px', color: paid ? C.green : C.slate }}>
@@ -1592,7 +1592,7 @@ const DailyTrendChart = ({ trend = [] }) => {
   return (
     <Card style={{ padding: 20, marginBottom: 16 }}>
       <h4 style={{ margin: '0 0 16px', fontSize: 14, fontWeight: 700, color: '#1E293B' }}>
-        📅 7-Day Delivery Trend
+         7-Day Delivery Trend
       </h4>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 150 }}>
         {trend.map((day, i) => {
@@ -1788,8 +1788,8 @@ const AnalyticsTab = ({ riders = [] }) => {
           {/* Lunch vs Dinner */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
             {[
-              { slot: 'lunch',  icon: '☀️', stats: data.lunch  },
-              { slot: 'dinner', icon: '🌙', stats: data.dinner },
+              { slot: 'lunch',  icon: '', stats: data.lunch  },
+              { slot: 'dinner', icon: '', stats: data.dinner },
             ].map(({ slot, icon, stats }) => stats && (
               <Card key={slot} style={{ padding: 16 }}>
                 <h4 style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 700, color: '#1E293B' }}>{icon} {capitalize(slot)}</h4>
@@ -1883,11 +1883,11 @@ const AnalyticsTab = ({ riders = [] }) => {
    ROOT: DeliveryManagement
 ═══════════════════════════════════════════════════════════════════════ */
 const TABS = [
-  { id: 'overview',    label: '📊 Overview'   },
-  { id: 'riders',      label: '🛵 My Riders'  },
-  { id: 'batches',     label: '📦 Batches'    },
-  { id: 'financials',  label: '💰 Financials' },
-  { id: 'analytics',   label: '📈 Analytics'  },
+  { id: 'overview',    label: ' Overview'   },
+  { id: 'riders',      label: ' My Riders'  },
+  { id: 'batches',     label: ' Batches'    },
+  { id: 'financials',  label: ' Financials' },
+  { id: 'analytics',   label: ' Analytics'  },
 ];
 
 export default function DeliveryManagement() {
@@ -1960,7 +1960,7 @@ export default function DeliveryManagement() {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12,
       }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#fff' }}>🛵 Delivery Management</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#fff' }}> Delivery Management</h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>
             Manage your riders, batches, and delivery operations
           </p>

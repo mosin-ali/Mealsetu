@@ -7,7 +7,7 @@ const Reports = ({ reportFilter, onFilterChange, onDownloadPDF, reports }) => {
       <div className="reports-header">
         <h3>Earnings & Reports</h3>
         <button className="download-pdf-btn" onClick={onDownloadPDF}>
-          📥 Download PDF
+           Download PDF
         </button>
       </div>
       <div className="filter-section">

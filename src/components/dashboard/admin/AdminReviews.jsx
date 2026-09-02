@@ -124,7 +124,7 @@ const VendorReviewsPanel = ({ vendor, onBack }) => {
 
       {/* Filter tabs */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        {[['all', 'All Reviews'], ['flagged', '🚩 Flagged'], ['hidden', '👁 Hidden']].map(([val, lbl]) => (
+        {[['all', 'All Reviews'], ['flagged', ' Flagged'], ['hidden', '👁 Hidden']].map(([val, lbl]) => (
           <button key={val} onClick={() => { setFilter(val); setPage(1); }} style={{
             padding: '7px 16px', borderRadius: '20px', border: 'none', cursor: 'pointer',
             fontWeight: '600', fontSize: '13px',

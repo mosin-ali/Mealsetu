@@ -157,7 +157,7 @@ const CustomerLoyalty = () => {
         alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1e2d5a' }}>
-            ⭐ Customer Loyalty Insights
+             Customer Loyalty Insights
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
             Loyalty levels, points, and spending behaviour
@@ -166,7 +166,7 @@ const CustomerLoyalty = () => {
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={fetchData} style={{ ...inputStyle, cursor: 'pointer',
             color: '#64748b', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-            🔄 Refresh
+             Refresh
           </button>
           <button onClick={exportCSV} style={{
             background: '#f26522', color: '#fff', border: 'none',
@@ -174,7 +174,7 @@ const CustomerLoyalty = () => {
             fontWeight: 700, fontSize: 13,
             boxShadow: '0 2px 8px rgba(242,101,34,0.25)'
           }}>
-            📥 Export CSV
+             Export CSV
           </button>
         </div>
       </div>
@@ -183,9 +183,9 @@ const CustomerLoyalty = () => {
       <div style={{ display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 16, marginBottom: 20 }}>
         {[
-          { icon: '👥', label: 'Total Customers',   value: data.totalCustomers,           sub: 'All-time unique customers' },
-          { icon: '🔁', label: 'Repeat Customers',  value: `${repeatCount} (${repeatPct}%)`, sub: 'Ordered more than once' },
-          { icon: '💰', label: 'Avg Lifetime Value', value: `₹${(avgLtv || 0).toLocaleString('en-IN')}`, sub: 'Revenue per customer' },
+          { icon: '', label: 'Total Customers',   value: data.totalCustomers,           sub: 'All-time unique customers' },
+          { icon: '', label: 'Repeat Customers',  value: `${repeatCount} (${repeatPct}%)`, sub: 'Ordered more than once' },
+          { icon: '', label: 'Avg Lifetime Value', value: `₹${(avgLtv || 0).toLocaleString('en-IN')}`, sub: 'Revenue per customer' },
         ].map(card => (
           <div key={card.label} style={{ background: '#fff', borderRadius: 14,
             padding: '20px 22px', border: '1px solid #e8ecf0',

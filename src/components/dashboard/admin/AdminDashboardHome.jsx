@@ -82,18 +82,18 @@ const AdminDashboardHome = ({ onTabChange }) => {
 
   if (loading) return (
     <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8' }}>
-      <div style={{ fontSize: '36px', marginBottom: '12px' }}>📊</div>
+      <div style={{ fontSize: '36px', marginBottom: '12px' }}> </div>
       <div style={{ fontSize: '14px' }}>Loading dashboard…</div>
     </div>
   );
 
   if (error) return (
     <div style={{ textAlign: 'center', padding: '80px' }}>
-      <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+      <div style={{ fontSize: '48px', marginBottom: '16px' }}></div>
       <div style={{ fontWeight: '700', color: '#1a1a2e', fontSize: '18px', marginBottom: '8px' }}>Dashboard unavailable</div>
       <div style={{ color: '#64748b', fontSize: '14px', marginBottom: '24px' }}>{error}</div>
       <button onClick={() => { setLoading(true); load(); }} style={{ padding: '10px 28px', background: '#f26522', color: 'white', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
-        🔄 Retry
+         Retry
       </button>
     </div>
   );
@@ -114,7 +114,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
       {/* ── HEADER ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '22px', color: '#1a1a2e' }}>{greeting}, Admin 👋</h2>
+          <h2 style={{ margin: 0, fontSize: '22px', color: '#1a1a2e' }}>{greeting}, Admin </h2>
           <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '13px' }}>Here's what's happening on MealSetu today</p>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -133,16 +133,16 @@ const AdminDashboardHome = ({ onTabChange }) => {
               disabled={!!exporting}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: exporting ? '#f1f5f9' : ORANGE, border: 'none', borderRadius: '8px', cursor: exporting ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', color: exporting ? '#94a3b8' : 'white' }}
             >
-              {exporting ? '⏳ Downloading…' : '📥 Export ▾'}
+              {exporting ? '⏳ Downloading…' : ' Export ▾'}
             </button>
 
             {showExportMenu && (
               <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 200, minWidth: '230px', overflow: 'hidden' }}>
                 {[
-                  { key: 'orders',   icon: '📦', label: 'All Orders CSV',        sub: 'All orders across all vendors' },
-                  { key: 'users',    icon: '👥', label: 'All Users CSV',         sub: 'Platform user list' },
-                  { key: 'delivery', icon: '🛵', label: 'Delivery Report CSV',   sub: "This month's delivery data" },
-                  { key: 'summary',  icon: '📊', label: 'Platform Summary CSV',  sub: 'Monthly business overview' },
+                  { key: 'orders',   icon: '', label: 'All Orders CSV',        sub: 'All orders across all vendors' },
+                  { key: 'users',    icon: '', label: 'All Users CSV',         sub: 'Platform user list' },
+                  { key: 'delivery', icon: '', label: 'Delivery Report CSV',   sub: "This month's delivery data" },
+                  { key: 'summary',  icon: '', label: 'Platform Summary CSV',  sub: 'Monthly business overview' },
                 ].map(item => (
                   <div
                     key={item.key}
@@ -170,7 +170,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
       {/* ── CRITICAL ALERTS BANNER ── */}
       {critical.length > 0 && (
         <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '14px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '18px' }}>🚨</span>
+          <span style={{ fontSize: '18px' }}></span>
           <span style={{ fontWeight: '700', color: '#dc2626', fontSize: '14px' }}>
             {critical.length} critical issue{critical.length > 1 ? 's' : ''} need attention
           </span>
@@ -189,10 +189,10 @@ const AdminDashboardHome = ({ onTabChange }) => {
       {/* ── REVENUE STAT CARDS ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '20px' }}>
         {[
-          { icon: '💰', label: "Today's Revenue",      value: fmtCurrency(s.revenue?.today),    sub: `${s.orders?.today || 0} orders today`, color: ORANGE },
-          { icon: '📅', label: 'This Month',            value: fmtCurrency(s.revenue?.thisMonth), color: '#0ea5e9' },
-          { icon: '🏆', label: 'All-Time Revenue',      value: fmtCurrency(s.revenue?.allTime),  color: '#8b5cf6' },
-          { icon: '✅', label: 'Active Subscriptions',  value: s.orders?.active || 0,            sub: 'Currently running', color: '#16a34a' },
+          { icon: '', label: "Today's Revenue",      value: fmtCurrency(s.revenue?.today),    sub: `${s.orders?.today || 0} orders today`, color: ORANGE },
+          { icon: '', label: 'This Month',            value: fmtCurrency(s.revenue?.thisMonth), color: '#0ea5e9' },
+          { icon: '', label: 'All-Time Revenue',      value: fmtCurrency(s.revenue?.allTime),  color: '#8b5cf6' },
+          { icon: '', label: 'Active Subscriptions',  value: s.orders?.active || 0,            sub: 'Currently running', color: '#16a34a' },
         ].map(c => (
           <div key={c.label} style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px', borderTop: `4px solid ${c.color}` }}>
             <div style={{ fontSize: '26px', marginBottom: '8px' }}>{c.icon}</div>
@@ -256,7 +256,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
 
         {/* Plan mix */}
         <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}>🍱 Active Plan Mix</div>
+          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}> Active Plan Mix</div>
           {(charts.planBreakdown || []).length === 0 ? (
             <div style={{ textAlign: 'center', color: '#94a3b8', padding: '32px 0' }}>No active plans</div>
           ) : (() => {
@@ -286,7 +286,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
         {/* Recent orders */}
         <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: '700', fontSize: '15px' }}>📦 Recent Orders</span>
+            <span style={{ fontWeight: '700', fontSize: '15px' }}> Recent Orders</span>
             <button onClick={() => onTabChange('orders')} style={{ background: 'none', border: 'none', color: ORANGE, cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
               View All →
             </button>
@@ -331,7 +331,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
         {/* System alerts */}
         <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={{ fontWeight: '700', fontSize: '15px' }}>⚠️ System Alerts</span>
+            <span style={{ fontWeight: '700', fontSize: '15px' }}> System Alerts</span>
             {alerts.length > 0 && (
               <span style={{ background: '#dc2626', color: 'white', borderRadius: '20px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>
                 {alerts.length}
@@ -341,7 +341,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
           <div style={{ padding: '12px', maxHeight: '340px', overflowY: 'auto' }}>
             {alerts.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '32px', color: '#16a34a' }}>
-                <div style={{ fontSize: '32px', marginBottom: '8px' }}>✅</div>
+                <div style={{ fontSize: '32px', marginBottom: '8px' }}></div>
                 <div style={{ fontWeight: '700' }}>All systems healthy!</div>
                 <div style={{ fontSize: '12px', color: '#94a3b8' }}>No issues detected</div>
               </div>
@@ -367,13 +367,13 @@ const AdminDashboardHome = ({ onTabChange }) => {
       {/* ── TOP VENDORS ── */}
       {(charts.topVendors || []).length > 0 && (
         <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}>🏆 Top Vendors by Revenue</div>
+          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}> Top Vendors by Revenue</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
             {charts.topVendors.map((v, i) => {
               const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
               return (
                 <div key={i} style={{ background: '#f8fafc', borderRadius: '10px', padding: '14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ fontSize: '24px', flexShrink: 0 }}>{medals[i] || '🏪'}</div>
+                  <div style={{ fontSize: '24px', flexShrink: 0 }}>{medals[i] || ''}</div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a1a2e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.kitchenName}</div>
                     <div style={{ fontSize: '12px', color: '#16a34a', fontWeight: '700' }}>₹{(v.revenue || 0).toLocaleString('en-IN')}</div>

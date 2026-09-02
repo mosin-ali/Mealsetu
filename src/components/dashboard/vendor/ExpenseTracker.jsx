@@ -25,17 +25,17 @@ const CATEGORIES = [
 ];
 
 const CAT_ICON = {
-  'Rent':                '🏠',
-  'Ingredients':         '🛒',
-  'Staff Salaries':      '👥',
-  'Gas/Fuel':            '⛽',
-  'Packaging':           '📦',
-  'Electricity':         '⚡',
-  'Marketing':           '📢',
-  'Maintenance':         '🔧',
-  'Transport':           '🚛',
-  'Platform Commission': '🏦',
-  'Other':               '💼',
+  'Rent':                '',
+  'Ingredients':         '',
+  'Staff Salaries':      '',
+  'Gas/Fuel':            '',
+  'Packaging':           '',
+  'Electricity':         '',
+  'Marketing':           '',
+  'Maintenance':         '',
+  'Transport':           '',
+  'Platform Commission': '',
+  'Other':               '',
 };
 
 const currentMonth = () => {
@@ -449,8 +449,8 @@ const BudgetModal = ({ budgets, onClose, onSaved }) => {
 
   return (
     <Overlay onClose={onClose}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: '#1E293B' }}>
-        🎯 Set Monthly Budget
+      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: '#254578' }}>
+         Set Monthly Budget
       </h3>
       <p style={{ margin: '0 0 18px', fontSize: 12, color: C.slate }}>
         Leave blank to skip a category. Bars turn yellow at 80%, red when over.
@@ -481,7 +481,7 @@ const BudgetModal = ({ budgets, onClose, onSaved }) => {
         {err && <p style={{ color: C.red, fontSize: 12, margin: '8px 0 0' }}>{err}</p>}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
           <Btn outline color={C.slate} onClick={onClose}>Cancel</Btn>
-          <Btn disabled={saving} color={C.blue}>{saving ? 'Saving…' : '💾 Save Budget'}</Btn>
+          <Btn disabled={saving} color={C.blue}>{saving ? 'Saving…' : ' Save Budget'}</Btn>
         </div>
       </form>
     </Overlay>
@@ -531,7 +531,7 @@ const ExpenseModal = ({ expense, onClose, onSaved }) => {
   return (
     <Overlay onClose={onClose}>
       <h3 style={{ margin: '0 0 18px', fontSize: 16, fontWeight: 700, color: '#1E293B' }}>
-        {isEdit ? '✏️ Edit Expense' : '➕ Add Expense'}
+        {isEdit ? ' Edit Expense' : ' Add Expense'}
       </h3>
       <form onSubmit={handleSubmit}>
         <FormRow label="Date">
@@ -597,7 +597,7 @@ const ExpenseModal = ({ expense, onClose, onSaved }) => {
           />
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: form.isRecurring ? C.blue : '#1E293B' }}>
-              🔁 Recurring monthly
+               Recurring monthly
             </div>
             <div style={{ fontSize: 10, color: C.slate, marginTop: 1 }}>
               Auto-adds this expense every month (Rent, Salaries, etc.)
@@ -639,7 +639,7 @@ const generateInsights = (summary, budgets, trend) => {
       );
       const excess  = worst.total - budgets[worst.category];
       list.push({
-        icon: '🚨', color: C.red, priority: 0,
+        icon: '', color: C.red, priority: 0,
         title: `${worst.category} budget exceeded`,
         detail: `Over by ${fmtCurrency(excess)} · Spent ${fmtCurrency(worst.total)} of ${fmtCurrency(budgets[worst.category])} budget`,
       });
@@ -659,7 +659,7 @@ const generateInsights = (summary, budgets, trend) => {
     }
     if (spike) {
       list.push({
-        icon: '📈', color: '#F59E0B', priority: 1,
+        icon: '', color: '#F59E0B', priority: 1,
         title: `${spike.category} jumped ${spike.pct}% vs last month`,
         detail: `${fmtCurrency(spike.prev)} → ${fmtCurrency(spike.total)} — check if this is expected`,
       });
@@ -675,7 +675,7 @@ const generateInsights = (summary, budgets, trend) => {
     const worsened  = diff !== null && diff >= 5;
     const direction = improved ? 'Improved' : 'Worsened';
     list.push({
-      icon: improved ? '✅' : worsened ? '⚠️' : '💡',
+      icon: improved ? '' : worsened ? '' : '',
       color: ratio < 60 ? C.green : ratio < 80 ? '#F59E0B' : C.red,
       priority: worsened ? 2 : 5,
       title: `${ratio}% of revenue spent on expenses`,
@@ -690,13 +690,13 @@ const generateInsights = (summary, budgets, trend) => {
     const last3 = trend.slice(-3);
     if (last3.every((m) => m.profit > 0)) {
       list.push({
-        icon: '🎉', color: C.green, priority: 6,
+        icon: '', color: C.green, priority: 6,
         title: `${last3.length} consecutive profitable months`,
         detail: last3.map((m) => m.monthLabel).join(' → ') + ' all in profit',
       });
     } else if (last3.every((m) => m.profit < 0)) {
       list.push({
-        icon: '🔴', color: C.red, priority: 1,
+        icon: '', color: C.red, priority: 1,
         title: `${last3.length} consecutive loss months`,
         detail: 'Consider raising prices or cutting your top expense category',
       });
@@ -709,7 +709,7 @@ const generateInsights = (summary, budgets, trend) => {
     const pct = Math.round((top.total / totalExpenses) * 100);
     if (pct >= 40) {
       list.push({
-        icon: CAT_ICON[top.category] || '💼', color: C.orange, priority: 4,
+        icon: CAT_ICON[top.category] || '', color: C.orange, priority: 4,
         title: `${top.category} is ${pct}% of all expenses`,
         detail: `${fmtCurrency(top.total)} out of ${fmtCurrency(totalExpenses)} total`,
       });
@@ -721,7 +721,7 @@ const generateInsights = (summary, budgets, trend) => {
     const needed = Math.ceil(totalExpenses / avgOrderValue);
     if (orderCount >= needed) {
       list.push({
-        icon: '🏁', color: C.green, priority: 3,
+        icon: '', color: C.green, priority: 3,
         title: 'Break-even already reached this month!',
         detail: `${orderCount} orders at avg ${fmtCurrency(avgOrderValue)} — target was ${needed} orders`,
       });
@@ -731,7 +731,7 @@ const generateInsights = (summary, budgets, trend) => {
   // 6. No data nudge
   if (totalExpenses === 0 && revenue === 0) {
     list.push({
-      icon: '👋', color: C.blue, priority: 10,
+      icon: '', color: C.blue, priority: 10,
       title: 'Start adding expenses to unlock insights',
       detail: 'Smart analysis appears here once you record your first expense',
     });
@@ -791,7 +791,7 @@ const RecurringPanel = ({ expenses, onStopRecurring }) => {
 
   if (!recurring.length) return (
     <div style={{ textAlign: 'center', padding: '16px 0' }}>
-      <div style={{ fontSize: 28, marginBottom: 6 }}>🔁</div>
+      <div style={{ fontSize: 28, marginBottom: 6 }}></div>
       <div style={{ fontSize: 12, color: C.slate }}>
         No recurring expenses yet.<br />
         Tick "Recurring monthly" when adding Rent, Salaries, etc.
@@ -809,7 +809,7 @@ const RecurringPanel = ({ expenses, onStopRecurring }) => {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <span style={{ fontSize: 16, flexShrink: 0 }}>
-              {CAT_ICON[exp.category] || '💼'}
+              {CAT_ICON[exp.category] || ''}
             </span>
             <div style={{ minWidth: 0 }}>
               <div style={{
@@ -883,7 +883,7 @@ const BreakEvenCard = ({ summary, month }) => {
         border: `1px solid ${reached ? '#86EFAC' : pct >= 80 ? '#FDE68A' : '#FDBA74'}`,
       }}>
         <div style={{ fontSize: 24, marginBottom: 4 }}>
-          {reached ? '🎉' : pct >= 80 ? '⚡' : '🎯'}
+          {reached ? '' : pct >= 80 ? '' : ''}
         </div>
         {reached ? (
           <>
@@ -941,10 +941,10 @@ const BreakEvenCard = ({ summary, month }) => {
       {/* Stats grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {[
-          { icon: '🧾', label: 'Orders this month', value: orderCount },
-          { icon: '📊', label: 'Break-even target', value: breakEvenOrders > 0 ? `${breakEvenOrders} orders` : '—' },
-          { icon: '💵', label: 'Avg order value',   value: avgOrderValue > 0 ? fmtCurrency(avgOrderValue) : '—' },
-          { icon: '📅', label: 'Daily avg (so far)', value: `${dailyCurrent}/day` },
+          { icon: '', label: 'Orders this month', value: orderCount },
+          { icon: '', label: 'Break-even target', value: breakEvenOrders > 0 ? `${breakEvenOrders} orders` : '—' },
+          { icon: '', label: 'Avg order value',   value: avgOrderValue > 0 ? fmtCurrency(avgOrderValue) : '—' },
+          { icon: '', label: 'Daily avg (so far)', value: `${dailyCurrent}/day` },
         ].map(({ icon, label, value }) => (
           <div key={label} style={{
             background: C.slateLight, borderRadius: 8, padding: '8px 10px',
@@ -1022,7 +1022,7 @@ const ExpenseTracker = () => {
           fetchSummary();
           fetchExpenses();
           const cats = r.expenses?.map((e) => e.category).join(', ') || '';
-          showToast('success', `🔁 ${r.created} recurring expense${r.created > 1 ? 's' : ''} auto-added for this month${cats ? ` (${cats})` : ''}`);
+          showToast('success', ` ${r.created} recurring expense${r.created > 1 ? 's' : ''} auto-added for this month${cats ? ` (${cats})` : ''}`);
         }
       })
       .catch(() => {});
@@ -1051,7 +1051,7 @@ const ExpenseTracker = () => {
     try {
       await updateExpense(id, { isRecurring: false });
       setExpenses((prev) => prev.map((e) => e._id === id ? { ...e, isRecurring: false } : e));
-      showToast('info', '🔁 Recurring stopped — this expense won\'t auto-add next month');
+      showToast('info', ' Recurring stopped — this expense won\'t auto-add next month');
     } catch (e) {
       alert('Failed: ' + e.message);
     }
@@ -1102,7 +1102,7 @@ const ExpenseTracker = () => {
       }}>
         <div>
           <h2 style={{ margin: 0, color: '#fff', fontSize: 20, fontWeight: 800 }}>
-            💰 Expense Tracker
+             Expense Tracker
           </h2>
           <p style={{ margin: '4px 0 0', color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>
             Record expenses · set budgets · track profit · export reports
@@ -1119,9 +1119,9 @@ const ExpenseTracker = () => {
             }}
           />
           <Btn outline color="#fff" onClick={() => setShowBudget(true)}
-            style={{ borderColor: 'rgba(255,255,255,0.4)', color: '#fff' }}
+            style={{ borderColor: 'rgba(255,255,255,0.4)', color: '#000000' }}
           >
-            🎯 Set Budget
+             Set Budget
           </Btn>
           <Btn onClick={() => setShowModal(true)}>+ Add Expense</Btn>
         </div>
@@ -1134,7 +1134,7 @@ const ExpenseTracker = () => {
           borderRadius: 12, padding: '12px 18px', marginBottom: 16,
           display: 'flex', alignItems: 'flex-start', gap: 12,
         }}>
-          <span style={{ fontSize: 20, lineHeight: 1.2 }}>🚨</span>
+          <span style={{ fontSize: 20, lineHeight: 1.2 }}></span>
           <div>
             <div style={{ fontWeight: 700, color: C.red, fontSize: 13, marginBottom: 4 }}>
               Budget exceeded in {overBudgetCategories.length} categor{overBudgetCategories.length > 1 ? 'ies' : 'y'}
@@ -1153,26 +1153,26 @@ const ExpenseTracker = () => {
       {/* ── P&L Summary cards ── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
         <SummaryCard
-          icon="📈" label="Revenue"
+          icon="" label="Revenue"
           value={fmtCurrency(summary?.revenue)}
           sub="Paid orders this month"
           color={C.blue}
         />
         <SummaryCard
-          icon="💸" label="Total Expenses"
+          icon="" label="Total Expenses"
           value={fmtCurrency(summary?.totalExpenses)}
           sub={`${expenses.length} entr${expenses.length !== 1 ? 'ies' : 'y'}`}
           color={C.red}
         />
         <SummaryCard
-          icon={profit >= 0 ? '✅' : '⚠️'}
+          icon={profit >= 0 ? '' : ''}
           label="Net Profit"
           value={fmtCurrency(profit)}
           sub={profit < 0 ? 'Running at loss' : 'After all expenses'}
           color={profit >= 0 ? C.green : C.red}
         />
         <SummaryCard
-          icon={growthPos === null ? '📊' : growthPos ? '🔺' : '🔻'}
+          icon={growthPos === null ? '' : growthPos ? '' : ''}
           label="vs Last Month"
           value={growth === null ? '—' : `${growth > 0 ? '+' : ''}${growth}%`}
           sub={loadingS ? 'Loading…' : `Prev: ${fmtCurrency(summary?.prevProfit)}`}
@@ -1188,7 +1188,7 @@ const ExpenseTracker = () => {
         }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}>
-              📈 Revenue vs Expenses Trend
+               Revenue vs Expenses Trend
             </div>
             <div style={{ fontSize: 11, color: C.slate, marginTop: 2 }}>
               Monthly P&amp;L over the last {trendMonths} months — hover bars for details
@@ -1212,7 +1212,7 @@ const ExpenseTracker = () => {
           }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}>
-                🧠 Smart Insights
+                 Smart Insights
               </div>
               <div style={{ fontSize: 11, color: C.slate, marginTop: 2 }}>
                 Auto-generated from your P&amp;L data
@@ -1261,17 +1261,17 @@ const ExpenseTracker = () => {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <Btn small outline color={C.blue} disabled={exporting.monthly} onClick={() => handleExport('monthly')}>
-                {exporting.monthly ? 'Exporting…' : '📥 Monthly CSV'}
+                {exporting.monthly ? 'Exporting…' : ' Monthly CSV'}
               </Btn>
               <Btn small outline color={C.green} disabled={exporting.yearly} onClick={() => handleExport('yearly')}>
-                {exporting.yearly ? 'Exporting…' : '📥 Yearly CSV'}
+                {exporting.yearly ? 'Exporting…' : ' Yearly CSV'}
               </Btn>
             </div>
           </div>
 
           {loadingE ? <Spinner /> : expenses.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center' }}>
-              <div style={{ fontSize: 36, marginBottom: 10 }}>🧾</div>
+              <div style={{ fontSize: 36, marginBottom: 10 }}></div>
               <div style={{ fontWeight: 600, color: '#1E293B', fontSize: 14 }}>No expenses recorded</div>
               <div style={{ color: C.slate, fontSize: 12, margin: '6px 0 14px' }}>
                 Click "+ Add Expense" to start tracking
@@ -1314,7 +1314,7 @@ const ExpenseTracker = () => {
                               padding: '3px 9px', borderRadius: 12, fontSize: 11,
                               fontWeight: 600,
                             }}>
-                              {CAT_ICON[exp.category] || '💼'}{' '}
+                              {CAT_ICON[exp.category] || ''}{' '}
                               {exp.category === 'Other' && exp.customCategory
                                 ? exp.customCategory
                                 : exp.category}
@@ -1324,7 +1324,7 @@ const ExpenseTracker = () => {
                                 background: '#EFF6FF', color: C.blue,
                                 padding: '2px 6px', borderRadius: 8,
                                 fontSize: 10, fontWeight: 700,
-                              }}>🔁</span>
+                              }}></span>
                             )}
                           </div>
                         </td>
@@ -1343,7 +1343,7 @@ const ExpenseTracker = () => {
                                 border: 'none', borderRadius: 6, padding: '4px 10px',
                                 fontSize: 11, fontWeight: 600, cursor: 'pointer',
                               }}
-                            >✏️ Edit</button>
+                            > Edit</button>
                             <button
                               onClick={() => setDeleteConf(exp._id)}
                               style={{
@@ -1382,7 +1382,7 @@ const ExpenseTracker = () => {
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14,
             }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}>📊 By Category</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}> By Category</div>
               <button
                 onClick={() => setShowBudget(true)}
                 style={{
@@ -1392,7 +1392,7 @@ const ExpenseTracker = () => {
                   fontSize: 11, fontWeight: 600, cursor: 'pointer',
                 }}
               >
-                {hasBudgets ? '✏️ Edit Budget' : '🎯 Set Budget'}
+                {hasBudgets ? ' Edit Budget' : ' Set Budget'}
               </button>
             </div>
             {!hasBudgets && (
@@ -1418,7 +1418,7 @@ const ExpenseTracker = () => {
           {/* Recurring Expenses */}
           <Card>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B', marginBottom: 14 }}>
-              🔁 Recurring Expenses
+               Recurring Expenses
             </div>
             <RecurringPanel expenses={expenses} onStopRecurring={handleStopRecurring} />
           </Card>
@@ -1426,7 +1426,7 @@ const ExpenseTracker = () => {
           {/* Break-Even Calculator */}
           <Card>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B', marginBottom: 14 }}>
-              ⚖️ Break-Even Calculator
+               Break-Even Calculator
             </div>
             <BreakEvenCard summary={summary} month={month} />
           </Card>
@@ -1437,7 +1437,7 @@ const ExpenseTracker = () => {
             border: `1px solid ${profit >= 0 ? '#86EFAC' : '#FCA5A5'}`,
           }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: profit >= 0 ? C.green : C.red, marginBottom: 10 }}>
-              {profit >= 0 ? '✅ Profitable Month' : '⚠️ Loss This Month'}
+              {profit >= 0 ? ' Profitable Month' : ' Loss This Month'}
             </div>
             {[
               { label: 'Revenue',   value: summary?.revenue,       color: C.blue },
@@ -1463,7 +1463,7 @@ const ExpenseTracker = () => {
                 fontSize: 12, fontWeight: 700,
                 color: growthPos ? C.green : C.red,
               }}>
-                {growthPos ? '🔺' : '🔻'} {growth > 0 ? '+' : ''}{growth}% vs last month
+                {growthPos ? '' : ''} {growth > 0 ? '+' : ''}{growth}% vs last month
               </div>
             )}
           </Card>

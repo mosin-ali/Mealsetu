@@ -456,7 +456,7 @@ const handleSavePricing = async () => {
     }
 
     const formattedPricing = pricing.map(p => ({
-      planType: p.type,  // ✅ FIXED: Schema expects planType
+      planType: p.type,  //  FIXED: Schema expects planType
       price: Number(p.price),
       active: p.active === true
     }));
@@ -792,12 +792,12 @@ const handleSavePricing = async () => {
               
               try {
                 await submitVendorCompliance(formData);
-                alert('✅ Documents submitted for admin review!\\nStatus reset to Pending. Await approval.');
+                alert(' Documents submitted for admin review!\\nStatus reset to Pending. Await approval.');
                 setDocuments({ fssai: null, gst: null }); // Reset form
                 fetchVendorData(); // Refresh profile/status
               } catch (error) {
                 console.error('Compliance submit error:', error);
-                alert('❌ Submit failed: ' + error.message);
+                alert(' Submit failed: ' + error.message);
               }
             };
 
@@ -959,7 +959,7 @@ case 'orders':
                 <div className="cust-card-left">
                   <div className="cust-name">{c.name}</div>
                   <div className="cust-meta">
-                    {c.phone && <span>📞 {c.phone}</span>}
+                    {c.phone && <span> {c.phone}</span>}
                     {c.email && c.email !== '—' && <span>✉️ {c.email}</span>}
                   </div>
                 </div>
@@ -988,7 +988,7 @@ case 'orders':
                   {selectedCustomer.name}
                 </div>
                 <div style={{ fontSize:12, color:'#cbd5e1', marginTop:4, display:'flex', flexWrap:'wrap', gap:'4px 10px' }}>
-                  {selectedCustomer.phone && <span>📞 {selectedCustomer.phone}</span>}
+                  {selectedCustomer.phone && <span> {selectedCustomer.phone}</span>}
                   {selectedCustomer.email && selectedCustomer.email !== '—' &&
                     <span>✉️ {selectedCustomer.email}</span>}
                 </div>
@@ -1028,15 +1028,15 @@ case 'orders':
                     const st = statusStyle(p.status, p.daysLeft);
                     const isExpiringSoon = p.status === 'active' && p.daysLeft !== null && p.daysLeft <= 7 && p.daysLeft > 0;
                     const fields = [
-                      { icon:'📅', label:'Start Date',  val: fmtD(p.startDate) },
-                      { icon:'⏳', label:'Expiry Date', val: fmtD(p.endDate),
+                      { icon:'', label:'Start Date',  val: fmtD(p.startDate) },
+                      { icon:'', label:'Expiry Date', val: fmtD(p.endDate),
                         valColor: p.daysLeft !== null && p.daysLeft <= 7 && p.daysLeft > 0 ? '#ea580c'
                           : p.daysLeft !== null && p.daysLeft <= 0 ? '#dc2626' : undefined },
-                      { icon:'💰', label:'Amount',      val:`₹${(p.amount||0).toLocaleString('en-IN')}` },
-                      { icon:'💳', label:'Payment',     val:`${p.paymentMethod} · ${p.paymentStatus}` },
-                      { icon:'🍽️', label:'Meal Pref',   val: p.mealPreference },
+                      { icon:'', label:'Amount',      val:`₹${(p.amount||0).toLocaleString('en-IN')}` },
+                      { icon:'', label:'Payment',     val:`${p.paymentMethod} · ${p.paymentStatus}` },
+                      { icon:'', label:'Meal Pref',   val: p.mealPreference },
                       p.status === 'active' && p.daysLeft !== null
-                        ? { icon:'⏰', label:'Days Left',
+                        ? { icon:'', label:'Days Left',
                             val: p.daysLeft > 0 ? `${p.daysLeft} days` : 'Expired today',
                             valColor: p.daysLeft <= 3 ? '#dc2626' : p.daysLeft <= 7 ? '#ea580c' : '#16a34a' }
                         : null,
@@ -1102,7 +1102,7 @@ case 'orders':
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Payment Report</h3>
               <button onClick={handleDownloadPDF} disabled={filterLoading} style={{ background: '#f26522', color: 'white', border: 'none', padding: '12px 25px', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}>
-                {filterLoading ? '⏳ Loading...' : '📥 Download PDF'}
+                {filterLoading ? ' Loading...' : ' Download PDF'}
               </button>
             </div>
             <div style={{ marginTop: '20px', display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -1267,7 +1267,7 @@ case 'orders':
                 {/* Kitchen Address */}
                 <div style={{ background: '#fff8f5', border: '1.5px solid #fcd5b8', borderRadius: '14px', padding: '20px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
-                    <span style={{ fontSize: '18px' }}>🏪</span>
+                    <span style={{ fontSize: '18px' }}></span>
                     <span style={{ fontSize: '15px', fontWeight: '700', color: '#c2410c' }}>Kitchen Address</span>
                   </div>
 
@@ -1399,7 +1399,7 @@ case 'orders':
                         whiteSpace: 'nowrap', opacity: detectingVendorGps ? 0.7 : 1,
                       }}
                     >
-                      {detectingVendorGps ? 'Detecting…' : vendorGpsDetected ? '📍 Re-detect' : '📍 Detect'}
+                      {detectingVendorGps ? 'Detecting…' : vendorGpsDetected ? ' Re-detect' : ' Detect'}
                     </button>
                   </div>
                 </div>
@@ -1969,7 +1969,7 @@ case 'orders':
             onClick={() => { setError(''); fetchVendorData(); }}
             style={{ background: '#f26522', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '10px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', width: '100%', marginBottom: '12px' }}
           >
-            🔄 Try Again
+             Try Again
           </button>
           <button
             onClick={() => window.location.reload()}
@@ -2018,7 +2018,7 @@ return (
           <button className={`v-nav-btn ${activeTab === 'manual-customers' ? 'active' : ''}`} onClick={() => { setActiveTab('manual-customers'); setSidebarOpen(false); }}>Add Customer</button>
           <button className={`v-nav-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setSidebarOpen(false); }}>Reports & PDF</button>
           <button className={`v-nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); setSidebarOpen(false); }}>Finance</button>
-          <button className={`v-nav-btn ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSidebarOpen(false); }}>💰 Expenses</button>
+          <button className={`v-nav-btn ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSidebarOpen(false); }}> Expenses</button>
           <button className={`v-nav-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => { setActiveTab('analytics'); setSidebarOpen(false); }}> Sub Analytics</button>
           <button className={`v-nav-btn ${activeTab === 'loyalty' ? 'active' : ''}`} onClick={() => { setActiveTab('loyalty'); setSidebarOpen(false); }}>Customer Loyalty</button>
           <button
@@ -2063,7 +2063,7 @@ return (
           <button className={`v-nav-btn ${activeTab === 'offers' ? 'active' : ''}`} onClick={() => { setActiveTab('offers'); setSidebarOpen(false); }}>Offers</button>
           <button className={`v-nav-btn ${activeTab === 'trials' ? 'active' : ''}`} onClick={() => { setActiveTab('trials'); setSidebarOpen(false); }}>Trial Settings</button>
           <button className={`v-nav-btn ${activeTab === 'loyalty-settings' ? 'active' : ''}`} onClick={() => { setActiveTab('loyalty-settings'); setSidebarOpen(false); }}>Loyalty Settings</button>
-          <button className={`v-nav-btn ${activeTab === 'delivery-management' ? 'active' : ''}`} onClick={() => { setActiveTab('delivery-management'); setSidebarOpen(false); }}>📦 Delivery Mgmt</button>
+          <button className={`v-nav-btn ${activeTab === 'delivery-management' ? 'active' : ''}`} onClick={() => { setActiveTab('delivery-management'); setSidebarOpen(false); }}> Delivery Mangement</button>
           <button className={`v-nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => { setActiveTab('profile'); setSidebarOpen(false); }}>Edit Profile</button>
         </nav>
         <button className="v-nav-btn" onClick={handleLogout} style={{ color: '#ef4444', marginTop: 'auto' }}>Logout</button>
@@ -2074,7 +2074,7 @@ return (
           <div className="notification-container">
             {notifications.map(n => (
               <div key={n.id} className="notification-item">
-                <span>{n.type === 'order' ? '🔔' : '📝'}</span>
+                <span>{n.type === 'order' ? '' : ''}</span>
                 <span>{n.text}</span>
                 <button className="notification-close-btn" onClick={() => setNotifications(notifications.filter(notif => notif.id !== n.id))}>✕</button>
               </div>
@@ -2217,7 +2217,7 @@ const WeeklyMenuPlanner = () => {
   );
 
   if (!hasData) {
-    alert('⚠️ Please fill Jain menu first before enabling');
+    alert(' Please fill Jain menu first before enabling');
     return;
   }
 }
@@ -2305,7 +2305,7 @@ await saveJainMenu({
       <div style={{ background: '#fff8f0', padding: '20px', borderRadius: '12px', border: '2px solid #f26522', marginBottom: '25px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
           <div>
-            <h3 style={{ color: '#f26522', margin: 0, fontSize: '18px' }}>🟢 Jain Menu Settings</h3>
+            <h3 style={{ color: '#f26522', margin: 0, fontSize: '18px' }}> Jain Menu Settings</h3>
             <p style={{ color: '#a3aed0', margin: '5px 0 0 0', fontSize: '14px' }}>
               Offer Jain (no onion/garlic) menu to customers
             </p>
@@ -2364,7 +2364,7 @@ await saveJainMenu({
               {DAYS_OF_WEEK.map(day => (
                 <div key={day} style={{ background: '#f0fdf4', borderRadius: '12px', padding: '20px', border: '1px solid #bbf7d0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px', paddingBottom: '10px', borderBottom: '2px solid #16a34a' }}>
-                    <span style={{ fontSize: '20px' }}>🟢</span>
+                    <span style={{ fontSize: '20px' }}></span>
                     <h4 style={{ margin: 0, color: '#166534', fontSize: '16px' }}>{day}</h4>
                   </div>
 

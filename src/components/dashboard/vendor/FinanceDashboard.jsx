@@ -9,11 +9,11 @@ const PLAN_COLORS = {
   Monthly: { bg: '#ede9fe', color: '#6d28d9' },
   Weekly:  { bg: '#dbeafe', color: '#1d4ed8' },
   Trial:   { bg: '#f1f5f9', color: '#475569' },
-  Tiffin:  { bg: '#fef9c3', color: '#92400e' },
+  OneDay:  { bg: '#fef9c3', color: '#92400e' },
 };
 
 const PlanBadge = ({ planType }) => {
-  const c = PLAN_COLORS[planType] || PLAN_COLORS.Tiffin;
+  const c = PLAN_COLORS[planType] || PLAN_COLORS.OneDay;
   return (
     <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12,
       fontWeight: 700, background: c.bg, color: c.color }}>
@@ -92,7 +92,7 @@ const FinanceDashboard = () => {
   const avgVal = paidOrders.length ? Math.round(totalRevenue / paidOrders.length) : 0;
 
   // Plan breakdown (all orders, not just paid — mirrors how orders are counted)
-  const PLAN_TYPES = ['Trial', 'Weekly', 'Monthly', 'Tiffin'];
+  const PLAN_TYPES = ['Trial', 'Weekly', 'Monthly', 'OneDay'];
   const planBreakdown = PLAN_TYPES.map(type => {
     const pl  = orders.filter(o => o.planType === type);
     const rev = pl.filter(o => (o.paymentStatus || '').toLowerCase() === 'paid')
@@ -171,7 +171,7 @@ const FinanceDashboard = () => {
         alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1e2d5a' }}>
-            💰 Financial Dashboard
+             Financial Dashboard
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
             Revenue overview and commission tracker
@@ -183,7 +183,7 @@ const FinanceDashboard = () => {
           display: 'flex', alignItems: 'center', gap: 6,
           boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
         }}>
-          🔄 Refresh
+           Refresh
         </button>
       </div>
 
@@ -203,7 +203,7 @@ const FinanceDashboard = () => {
           )}
         />
         <StatCard
-          icon="👥"
+          icon=""
           label="Active Subscribers"
           value={stats?.activeSubscribers ?? '—'}
           valueColor="#1e2d5a"
@@ -211,14 +211,14 @@ const FinanceDashboard = () => {
           sub2={`${orders.length} total orders on record`}
         />
         <StatCard
-          icon="📊"
+          icon=""
           label="Avg Order Value"
           value={`₹${fmt(avgVal)}`}
           sub="Per paid transaction"
           sub2={`Based on ${paidOrders.length} paid orders`}
         />
         <StatCard
-          icon="⏳"
+          icon=""
           label="Pending Payments"
           value={`₹${fmt(pendingCashAmt)}`}
           valueColor={pendingCashAmt > 0 ? '#ef4444' : '#16a34a'}
@@ -238,7 +238,7 @@ const FinanceDashboard = () => {
         {/* Plan Breakdown */}
         <div className="fd-breakdown">
           <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#1e2d5a' }}>
-            📊 Plan Breakdown
+             Plan Breakdown
           </h3>
           <div className="fd-tbl">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -274,7 +274,7 @@ const FinanceDashboard = () => {
         {/* Commission Summary */}
         <div className="fd-commission">
           <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#1e2d5a' }}>
-            🏦 Commission Summary
+             Commission Summary
           </h3>
           {!cw ? (
             <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', paddingTop: 20 }}>

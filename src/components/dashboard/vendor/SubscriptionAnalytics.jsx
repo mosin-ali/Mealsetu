@@ -216,7 +216,7 @@ const SubscriptionAnalytics = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1e2d5a' }}>
-            📈 Subscription Analytics
+             Subscription Analytics
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: GREY }}>
             Understand your subscriber behaviour and growth trends
@@ -237,7 +237,7 @@ const SubscriptionAnalytics = () => {
             </span>
           )}
           <button onClick={() => fetchData(false)} style={{ padding: '8px 16px', background: PRIMARY, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
-            🔄 Refresh
+             Refresh
           </button>
         </div>
       </div>
@@ -245,27 +245,27 @@ const SubscriptionAnalytics = () => {
       {/* ══ ROW 1: KEY METRICS ══════════════════════════════════════════ */}
       <div className="sa-metric-grid">
 
-        <MetricCard icon="📊" label="Total Subscriptions"
+        <MetricCard icon="" label="Total Subscriptions"
           value={summary.totalSubscriptions}
           sub="All time" />
 
-        <MetricCard icon="✅" label="Active Now"
+        <MetricCard icon="" label="Active Now"
           value={summary.activeNow}
           valueColor={GREEN}
           sub="Active or upcoming plan" />
 
-        <MetricCard icon="🔄" label="Renewal Rate"
+        <MetricCard icon="" label="Renewal Rate"
           value={`${summary.renewalRate}%`}
           valueColor={BLUE}
           sub="Last 30 days"
           extra={<ProgressBar pct={summary.renewalRate} color={BLUE} />} />
 
-        <MetricCard icon="📉" label="Churn Rate"
+        <MetricCard icon="" label="Churn Rate"
           value={`${summary.churnRate}%`}
           valueColor={churnColor(summary.churnRate)}
           sub="Did not renew last 30 days" />
 
-        <MetricCard icon="🧪" label="Trial Conversion"
+        <MetricCard icon="" label="Trial Conversion"
           value={`${summary.trialConversionRate}%`}
           valueColor={PURPLE}
           sub="Trials that became paid" />
@@ -480,7 +480,7 @@ const SubscriptionAnalytics = () => {
                   color:      trialConversion.conversionRate >= 50 ? GREEN      : trialConversion.conversionRate >= 30 ? AMBER      : '#ef4444',
                   border: `1px solid ${trialConversion.conversionRate >= 50 ? '#bbf7d0' : trialConversion.conversionRate >= 30 ? '#fde68a' : '#fecaca'}`,
                 }}>
-                  {trialConversion.conversionRate >= 50 ? '✅' : trialConversion.conversionRate >= 30 ? '⚠️' : '📉'} {trialConversion.conversionRate}% Conversion Rate
+                  {trialConversion.conversionRate >= 50 ? '' : trialConversion.conversionRate >= 30 ? '' : ''} {trialConversion.conversionRate}% Conversion Rate
                 </span>
               </div>
             </div>
@@ -492,14 +492,14 @@ const SubscriptionAnalytics = () => {
       {/* ══ ROW 6: EXPIRING SOON ══════════════════════════════════════════ */}
       {expiringSoon.length === 0 ? (
         <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 14, padding: '18px 22px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 22 }}>✅</span>
+          <span style={{ fontSize: 22 }}></span>
           <span style={{ fontWeight: 700, color: GREEN, fontSize: 14 }}>No subscriptions expiring in the next 7 days</span>
         </div>
       ) : (
         <Card>
           <div style={{ marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: AMBER, display: 'flex', alignItems: 'center', gap: 8 }}>
-              ⏰ Expiring in Next 7 Days
+               Expiring in Next 7 Days
             </h3>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: GREY }}>
               {expiringSoon.length} subscriber{expiringSoon.length !== 1 ? 's' : ''} without an upcoming plan — email reminder sent automatically

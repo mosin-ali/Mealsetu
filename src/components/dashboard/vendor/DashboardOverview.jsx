@@ -170,7 +170,7 @@ const DashboardOverview = ({
       {/* Overdue Warning Banner */}
       {pendingPayoutData.overdueAmount > 0 && (
         <div className="overdue-banner">
-          <span>⚠️ <strong>WARNING:</strong> You have an overdue commission payment of ₹{pendingPayoutData.overdueAmount}. Please pay now to avoid account suspension.</span>
+          <span> <strong>WARNING:</strong> You have an overdue commission payment of ₹{pendingPayoutData.overdueAmount}. Please pay now to avoid account suspension.</span>
           <button className="overdue-pay-btn" onClick={() => onTabChange('commission')}>
             Pay Now
           </button>
@@ -182,7 +182,7 @@ const DashboardOverview = ({
         <div className="profile-image">
           {profile?.profileImage
             ? <img src={profile.profileImage} alt="Kitchen" />
-            : '🍳'}
+            : ''}
         </div>
         <div>
           <h2>{profile?.kitchenName || 'Your Kitchen'}</h2>
@@ -258,7 +258,7 @@ const DashboardOverview = ({
                 transition: 'all 0.2s'
               }}
             >
-              🌙 Dinner
+               Dinner
             </button>
           </div>
 
@@ -294,7 +294,7 @@ const DashboardOverview = ({
                 <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#94a3b8' }}>R: {prepList.lunch.regular} · J: {prepList.lunch.jain}</p>
               </div>
               <div style={{ flex: 1, background: '#f5f3ff', borderRadius: '12px', padding: '12px', border: '1px solid #ddd6fe' }}>
-                <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: '600', color: '#7c3aed' }}>🌙 Dinner</p>
+                <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: '600', color: '#7c3aed' }}> Dinner</p>
                 <p style={{ margin: 0, fontSize: '20px', fontWeight: '900', color: '#2b3674' }}>{prepList.dinner.total}</p>
                 <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#94a3b8' }}>R: {prepList.dinner.regular} · J: {prepList.dinner.jain}</p>
               </div>
@@ -309,7 +309,7 @@ const DashboardOverview = ({
           {isClosureOverdue ? (
             <div style={{ marginTop: '12px', border: '1.5px solid #dc2626', borderRadius: '10px', padding: '16px' }}>
               <div style={{ textAlign: 'center', marginBottom: '12px' }}>
-                <span style={{ fontSize: '36px' }}>⚠️</span>
+                <span style={{ fontSize: '36px' }}></span>
                 <p style={{ fontWeight: '700', color: '#dc2626', margin: '8px 0 4px' }}>Closure Overdue</p>
                 <p style={{ color: '#6b7280', fontSize: '13px', margin: 0 }}>
                   Your kitchen was scheduled to reopen on{' '}
@@ -323,7 +323,7 @@ const DashboardOverview = ({
                 onClick={handleManualReopen}
                 style={{ width: '100%', padding: '12px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}
               >
-                ✅ Reopen Kitchen Now
+                 Reopen Kitchen Now
               </button>
             </div>
 
@@ -331,7 +331,7 @@ const DashboardOverview = ({
           ) : isPlannedClosed ? (
             <div style={{ marginTop: '12px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <span style={{ fontSize: '40px' }}>🗓️</span>
+                <span style={{ fontSize: '40px' }}></span>
                 <p style={{ fontWeight: '700', color: '#2b3674', margin: '8px 0 4px' }}>Planned Closure Active</p>
                 <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 4px' }}>
                   Closed from <strong>{new Date(closure.startDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>
@@ -339,7 +339,7 @@ const DashboardOverview = ({
                 </p>
               </div>
               <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '12px', fontSize: '13px', color: '#16a34a', textAlign: 'center' }}>
-                ✅ Kitchen will reopen automatically on <strong>{new Date(closure.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}</strong>. No action needed.
+                 Kitchen will reopen automatically on <strong>{new Date(closure.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}</strong>. No action needed.
               </div>
               <button
                 onClick={handleManualReopen}
@@ -353,7 +353,7 @@ const DashboardOverview = ({
           ) : isEmergencyClosed ? (
             <div style={{ marginTop: '12px' }}>
               <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-                <span style={{ fontSize: '40px' }}>🚨</span>
+                <span style={{ fontSize: '40px' }}></span>
                 <p style={{ fontWeight: '700', color: '#dc2626', margin: '8px 0 4px' }}>Emergency Closure Active</p>
                 <div style={{ display: 'inline-block', background: '#fee2e2', color: '#dc2626', borderRadius: '20px', padding: '4px 14px', fontSize: '13px', fontWeight: '700', margin: '4px 0 8px' }}>
                   Day {daysSinceClosure} of {expectedDays || '?'}
@@ -371,7 +371,7 @@ const DashboardOverview = ({
                 onClick={handleReopenKitchen}
                 style={{ width: '100%', padding: '12px', background: '#dcfce7', color: '#16a34a', border: '1.5px solid #86efac', borderRadius: '10px', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}
               >
-                ✅ Reopen Kitchen Now
+                 Reopen Kitchen Now
               </button>
             </div>
 
@@ -379,7 +379,7 @@ const DashboardOverview = ({
           ) : kitchenStatus.isOpen ? (
             <>
               <div className="status-display">
-                <span className="status-emoji">👨‍🍳</span>
+                <span className="status-emoji"></span>
                 <p className="status-text">Kitchen is Live</p>
                 <p className="status-subtext">Accepting new trial orders.</p>
               </div>
@@ -388,7 +388,7 @@ const DashboardOverview = ({
                   onClick={() => setShowClosureModal(true)}
                   style={{ width: '100%', padding: '12px', background: '#fee2e2', color: '#dc2626', border: '1.5px solid #fca5a5', borderRadius: '10px', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}
                 >
-                  🔒 Close Kitchen
+                   Close Kitchen
                 </button>
               </div>
             </>
@@ -405,7 +405,7 @@ const DashboardOverview = ({
                   onClick={handleReopenKitchen}
                   style={{ width: '100%', padding: '12px', background: '#dcfce7', color: '#16a34a', border: '1.5px solid #86efac', borderRadius: '10px', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}
                 >
-                  🟢 Reopen Kitchen
+                   Reopen Kitchen
                 </button>
               </div>
             </>
@@ -462,7 +462,7 @@ const DashboardOverview = ({
                         color: closureType === t ? (t === 'emergency' ? '#dc2626' : '#2563eb') : '#94a3b8'
                       }}
                     >
-                      {t === 'planned' ? '📅 Planned' : '🚨 Emergency'}
+                      {t === 'planned' ? ' Planned' : ' Emergency'}
                     </button>
                   ))}
                 </div>
@@ -470,8 +470,8 @@ const DashboardOverview = ({
                 {/* Info box */}
                 <div style={{ background: closureType === 'emergency' ? '#fff5f5' : '#f0f9ff', border: `1px solid ${closureType === 'emergency' ? '#fca5a5' : '#bae6fd'}`, borderRadius: '10px', padding: '12px', marginBottom: '18px', fontSize: '13px', color: closureType === 'emergency' ? '#dc2626' : '#0369a1' }}>
                   {closureType === 'emergency'
-                    ? '🚨 Emergency closure takes effect immediately. Subscribers will be notified right away. Plans extended on reopen based on actual days closed.'
-                    : '📅 Planned closure extends all active plans immediately. Upcoming plan dates are shifted by the same number of days.'}
+                    ? ' Emergency closure takes effect immediately. Subscribers will be notified right away. Plans extended on reopen based on actual days closed.'
+                    : ' Planned closure extends all active plans immediately. Upcoming plan dates are shifted by the same number of days.'}
                 </div>
 
                 {/* BUG 3 — Planned: Start + End with validation + preview */}
@@ -561,7 +561,7 @@ const DashboardOverview = ({
                       color: (!canConfirm || closureLoading || isSubmittingClosure) ? '#94a3b8' : '#fff'
                     }}
                   >
-                    {closureLoading ? 'Closing…' : '🔒 Confirm Close'}
+                    {closureLoading ? 'Closing…' : ' Confirm Close'}
                   </button>
                 </div>
               </>

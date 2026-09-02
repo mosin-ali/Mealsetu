@@ -581,7 +581,7 @@ const Reports = () => {
               textAlign: 'center', padding: '48px 0',
               color: '#9ca3af', fontSize: 15
             }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+              <div style={{ fontSize: 32, marginBottom: 8 }}></div>
               No open disputes. All clear!
             </div>
           ) : (

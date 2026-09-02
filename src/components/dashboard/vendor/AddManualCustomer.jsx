@@ -236,7 +236,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-        <h3 style={{ margin: 0, color: '#2b3674' }}>➕ Manual / Offline Customers</h3>
+        <h3 style={{ margin: 0, color: '#2b3674' }}> Manual / Offline Customers</h3>
         <div style={{ display: 'flex', gap: '15px' }}>
           <button 
             onClick={toggleForm} 
@@ -263,7 +263,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
                 cursor: 'pointer' 
               }}
             >
-              📥 PDF Export
+               PDF Export
             </button>
           )}
         </div>
@@ -392,7 +392,7 @@ const AddManualCustomer = ({ vendorProfile }) => {
               </div>
               {(formData.address.latitude) && (
                 <p style={{ marginTop: '8px', fontSize: '11px', color: '#16a34a', fontWeight: '600' }}>
-                  ✅ Location detected — delivery navigation & proximity alerts will work
+                   Location detected — delivery navigation & proximity alerts will work
                 </p>
               )}
             </div>
@@ -489,14 +489,14 @@ const AddManualCustomer = ({ vendorProfile }) => {
                 fontSize: '14px'
               }}
             >
-              📥 Export PDF
+               Export PDF
             </button>
           )}
         </div>
         {manualCustomers.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 20px', color: '#6b7280' }}>
             <p style={{ fontSize: '18px', marginBottom: '10px' }}>📝 No manual customers yet</p>
-            <p>Click "➕ Add New" above to add your first offline customer</p>
+            <p>Click " Add New" above to add your first offline customer</p>
           </div>
         ) : (
 <div className="w-full overflow-x-auto" style={{ maxHeight: '500px', overflowY: 'auto' }}>

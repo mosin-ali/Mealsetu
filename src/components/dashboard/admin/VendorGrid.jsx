@@ -9,7 +9,25 @@ const apiFetch = async (url, opts = {}) => {
   if (!r.ok) throw new Error(data.message || `Request failed (${r.status})`);
   return data;
 };
-
+const formatAddress = (address) => {
+  if (!address) return '';
+  if (typeof address === 'string') return address;
+  if (typeof address === 'object') {
+    if (address.fullAddress && typeof address.fullAddress === 'string') {
+      return address.fullAddress;
+    }
+    return [
+      address.flatHouseNo,
+      address.shopNo,
+      address.street,
+      address.area,
+      address.landmark,
+      address.city,
+      address.pincode
+    ].filter(Boolean).join(', ');
+  }
+  return '';
+};
 // ── Full detailed card (Users tab only) ────────────────────────────────────
 const FullVendorCard = ({ vendor, onClick }) => (
   <div
@@ -46,7 +64,7 @@ const FullVendorCard = ({ vendor, onClick }) => (
         color: 'white', padding: '4px 12px', borderRadius: '20px',
         fontSize: '11px', fontWeight: '700', backdropFilter: 'blur(4px)',
       }}>
-        {vendor.isApproved ? '✅ Active' : '⏸️ Inactive'}
+        {vendor.isApproved ? ' Active' : '⏸ Inactive'}
       </div>
 
       {vendor.fssaiNumber && (
@@ -79,15 +97,15 @@ const FullVendorCard = ({ vendor, onClick }) => (
           {vendor.kitchenName}
         </div>
         <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '2px' }}>
-          👤 {vendor.ownerName || '—'}
+           {vendor.ownerName || '—'}
         </div>
         <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {vendor.email && <span>✉️ {vendor.email}</span>}
-          {vendor.phone && vendor.phone !== 'N/A' && <span>📱 {vendor.phone}</span>}
+          {vendor.email && <span> {vendor.email}</span>}
+          {vendor.phone && vendor.phone !== 'N/A' && <span> {vendor.phone}</span>}
         </div>
-        {vendor.address && (
+       {vendor.address && (
           <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px' }}>
-            📍 {vendor.address}{vendor.pincode ? ` - ${vendor.pincode}` : ''}
+             {formatAddress(vendor.address)}
           </div>
         )}
       </div>
@@ -123,7 +141,7 @@ const FullVendorCard = ({ vendor, onClick }) => (
         flexWrap: 'wrap', gap: '6px',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span>⭐</span>
+          <span></span>
           <span style={{ fontWeight: '700', fontSize: '13px', color: '#1a1a2e' }}>
             {vendor.rating ? vendor.rating.toFixed(1) : '0.0'}
           </span>
@@ -131,11 +149,11 @@ const FullVendorCard = ({ vendor, onClick }) => (
         </div>
         {vendor.riderCount > 0 && (
           <div style={{ fontSize: '11px', color: '#8b5cf6', fontWeight: '600', background: '#fdf4ff', padding: '3px 8px', borderRadius: '6px' }}>
-            🛵 {vendor.riderCount} riders
+             {vendor.riderCount} riders
           </div>
         )}
         <div style={{ fontSize: '10px', color: '#94a3b8' }}>
-          📅 {vendor.joinDate
+           {vendor.joinDate
             ? new Date(vendor.joinDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })
             : '—'}
         </div>
@@ -274,11 +292,11 @@ const SimpleVendorCard = ({ vendor, statType, onClick }) => {
               color: vendor.isApproved ? '#16a34a' : '#dc2626',
               padding: '2px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '700',
             }}>
-              {vendor.isApproved ? '✅ Active' : '⏸️ Inactive'}
+              {vendor.isApproved ? '✅ Active' : '⏸ Inactive'}
             </span>
             {location && (
               <span style={{ fontSize: '10px', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                📍 {location}
+                {location}
               </span>
             )}
           </div>
@@ -331,10 +349,10 @@ const SimpleVendorCard = ({ vendor, statType, onClick }) => {
 
 // ── Titles & subtitles ─────────────────────────────────────────────────────
 const TITLES = {
-  users:   '👥 User Management',
-  orders:  '📦 Order Management',
-  reviews: '⭐ Review Moderation',
-  riders:  '🛵 Delivery Management',
+  users:   ' User Management',
+  orders:  ' Order Management',
+  reviews: ' Review Moderation',
+  riders:  ' Delivery Management',
 };
 
 const SUBTITLES = {
@@ -358,12 +376,13 @@ const VendorGrid = ({ onSelectVendor, statType = 'users' }) => {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = vendors.filter(v =>
-    !search ||
-    (v.kitchenName || '').toLowerCase().includes(search.toLowerCase()) ||
-    (v.ownerName   || '').toLowerCase().includes(search.toLowerCase()) ||
-    (v.address     || '').toLowerCase().includes(search.toLowerCase())
-  );
+ const filtered = vendors.filter(v => {
+    const searchLower = search.toLowerCase();
+    return !search ||
+      (v.kitchenName || '').toLowerCase().includes(searchLower) ||
+      (v.ownerName   || '').toLowerCase().includes(searchLower) ||
+      formatAddress(v.address).toLowerCase().includes(searchLower);
+  });
 
   const gridStyle = statType === 'users'
     ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }
@@ -373,7 +392,7 @@ const VendorGrid = ({ onSelectVendor, statType = 'users' }) => {
     <div>
       {/* Header */}
       <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ margin: 0 }}>{TITLES[statType] || '🏪 Vendors'}</h2>
+        <h2 style={{ margin: 0 }}>{TITLES[statType] || ' Vendors'}</h2>
         <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '13px' }}>
           {SUBTITLES[statType] || 'Select a vendor to continue'}
         </p>
@@ -398,13 +417,13 @@ const VendorGrid = ({ onSelectVendor, statType = 'users' }) => {
         </div>
       ) : error ? (
         <div style={{ padding: '80px', textAlign: 'center' }}>
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>⚠️</div>
+          <div style={{ fontSize: '40px', marginBottom: '12px' }}></div>
           <div style={{ fontWeight: '700', color: '#1a1a2e', marginBottom: '8px' }}>Could not load vendors</div>
           <div style={{ color: '#64748b', fontSize: '13px' }}>{error}</div>
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ padding: '80px', textAlign: 'center', color: '#94a3b8' }}>
-          <div style={{ fontSize: '48px', marginBottom: '12px' }}>🏪</div>
+          <div style={{ fontSize: '48px', marginBottom: '12px' }}></div>
           <div style={{ fontWeight: '600' }}>No vendors found</div>
         </div>
       ) : (

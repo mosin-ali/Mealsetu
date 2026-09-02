@@ -118,7 +118,7 @@ const ForceCloseModal = ({ batch, onClose, onClosed }) => {
     }
   };
 
-  const slotEmoji = batch.mealSlot === 'lunch' ? '🌞' : '🌙';
+  const slotEmoji = batch.mealSlot === 'lunch' ? '' : '';
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
@@ -142,7 +142,7 @@ const ForceCloseModal = ({ batch, onClose, onClosed }) => {
                 {batch.mealSlot.charAt(0).toUpperCase() + batch.mealSlot.slice(1)} — {fmtDate(batch.batchDate)}
               </div>
               <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-                🛵 {batch.riderName}  ·  Started {fmtTime(batch.startedAt)}  ·  Stuck for <strong style={{ color: '#dc2626' }}>{batch.stuckFor}</strong>
+                 {batch.riderName}  ·  Started {fmtTime(batch.startedAt)}  ·  Stuck for <strong style={{ color: '#dc2626' }}>{batch.stuckFor}</strong>
               </div>
               <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
                 {batch.deliveredOrders}/{batch.totalOrders} delivered · <span style={{ color: '#f59e0b' }}>{batch.pendingOrders} pending</span>
@@ -190,7 +190,7 @@ const ForceCloseModal = ({ batch, onClose, onClosed }) => {
 
           {/* Warning notice */}
           <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#92400e', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-            <span style={{ fontSize: 14 }}>⚠️</span>
+            <span style={{ fontSize: 14 }}></span>
             <span><strong>{batch.pendingOrders} pending order{batch.pendingOrders !== 1 ? 's' : ''}</strong> will be marked as failed. This cannot be undone.</span>
           </div>
 
@@ -200,7 +200,7 @@ const ForceCloseModal = ({ batch, onClose, onClosed }) => {
               Cancel
             </button>
             <button type="submit" disabled={loading || !reason} style={{ flex: 2, padding: '10px 0', borderRadius: 8, border: 'none', background: loading || !reason ? '#94a3b8' : '#dc2626', color: '#fff', fontSize: 14, fontWeight: 700, cursor: loading || !reason ? 'not-allowed' : 'pointer' }}>
-              {loading ? 'Closing…' : '🔴 Force Close Batch'}
+              {loading ? 'Closing…' : ' Force Close Batch'}
             </button>
           </div>
         </form>
@@ -259,7 +259,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
     }
   };
 
-  const slotEmoji = slot => slot === 'lunch' ? '🌞' : '🌙';
+  const slotEmoji = slot => slot === 'lunch' ? '' : '';
 
   return (
     <div style={{ position: 'relative' }}>
@@ -277,7 +277,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
           ← Back
         </button>
         <div style={{ flex: 1 }}>
-          <h2 style={{ margin: 0, fontSize: '20px' }}>🛵 {vendor.kitchenName} — Riders</h2>
+          <h2 style={{ margin: 0, fontSize: '20px' }}> {vendor.kitchenName} — Riders</h2>
           <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '13px' }}>{riders.length} delivery riders · today's stats shown</p>
         </div>
         <button onClick={() => setShowAddModal(true)} style={{ padding: '9px 18px', background: ORANGE, color: 'white', border: 'none', borderRadius: '9px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
@@ -289,7 +289,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
       {!loadingBatches && stuckBatches.length > 0 && (
         <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '14px', padding: '16px 20px', marginBottom: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <span style={{ fontSize: '20px' }}>🚨</span>
+            <span style={{ fontSize: '20px' }}></span>
             <div>
               <div style={{ fontWeight: '700', fontSize: '15px', color: '#dc2626' }}>
                 {stuckBatches.length} Stuck Batch{stuckBatches.length > 1 ? 'es' : ''} Detected
@@ -324,7 +324,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
                 {/* Rider */}
                 <div style={{ flex: 1, minWidth: '120px' }}>
                   <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '2px' }}>Rider</div>
-                  <div style={{ fontWeight: '600', fontSize: '13px', color: '#374151' }}>🛵 {b.riderName}</div>
+                  <div style={{ fontWeight: '600', fontSize: '13px', color: '#374151' }}> {b.riderName}</div>
                   {b.riderPhone && <div style={{ fontSize: '11px', color: '#94a3b8' }}>{b.riderPhone}</div>}
                 </div>
 
@@ -349,7 +349,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
                   onClick={() => setForceCloseTarget(b)}
                   style={{ padding: '9px 18px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
-                  🔴 Force Close
+                   Force Close
                 </button>
               </div>
             ))}
@@ -362,7 +362,7 @@ const VendorRidersPanel = ({ vendor, onBack }) => {
         <div style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>Loading riders…</div>
       ) : riders.length === 0 ? (
         <div style={{ padding: '60px', textAlign: 'center' }}>
-          <div style={{ fontSize: '40px', marginBottom: '10px' }}>🛵</div>
+          <div style={{ fontSize: '40px', marginBottom: '10px' }}></div>
           <div style={{ color: '#64748b' }}>No riders assigned to this vendor.</div>
           <button onClick={() => setShowAddModal(true)} style={{ marginTop: '16px', padding: '10px 20px', background: ORANGE, color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
             + Add First Rider

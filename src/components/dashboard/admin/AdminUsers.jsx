@@ -119,7 +119,7 @@ const VendorUsersPanel = ({ vendor, onBack }) => {
           disabled={exporting}
           style={{ padding: '8px 16px', background: exporting ? '#f1f5f9' : ORANGE, color: exporting ? '#94a3b8' : 'white', border: 'none', borderRadius: '8px', cursor: exporting ? 'not-allowed' : 'pointer', fontWeight: '600', fontSize: '13px', flexShrink: 0 }}
         >
-          {exporting ? '⏳ Downloading…' : '📥 Export CSV'}
+          {exporting ? ' Downloading…' : ' Export CSV'}
         </button>
       </div>
 
@@ -131,7 +131,7 @@ const VendorUsersPanel = ({ vendor, onBack }) => {
           onChange={e => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: '200px', padding: '9px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '14px' }}
         />
-        {[['all', 'All'], ['active', '🟢 Active'], ['inactive', '🔴 Inactive'], ['manual', '📋 Offline']].map(([val, lbl]) => (
+        {[['all', 'All'], ['active', ' Active'], ['inactive', ' Inactive'], ['manual', ' Offline']].map(([val, lbl]) => (
           <button key={val} onClick={() => setFilter(val)} style={{
             padding: '8px 14px', borderRadius: '20px', border: 'none', cursor: 'pointer',
             fontWeight: '600', fontSize: '12px',

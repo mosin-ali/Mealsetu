@@ -4,14 +4,14 @@ import './AdminSidebar.css';
 const AdminSidebar = ({ activeTab, onTabChange, onLogout, isOpen, onClose, alertCounts = {} }) => {
 
   const menuItems = [
-    { key: 'dashboard',  label: '📊 Dashboard' },
-    { key: 'requests',   label: '🏪 Vendor Requests' },
-    { key: 'users',      label: '👥 Users' },
-    { key: 'orders',     label: '📦 Orders' },
-    { key: 'reviews',    label: '⭐ Reviews' },
-    { key: 'delivery',   label: '🛵 Delivery' },
-    { key: 'commission', label: '💰 Commission' },
-    { key: 'profile',    label: '👤 Profile' },
+    { key: 'dashboard',  label: ' Dashboard' },
+    { key: 'requests',   label: ' Vendor Requests' },
+    { key: 'users',      label: ' Users' },
+    { key: 'orders',     label: ' Orders' },
+    { key: 'reviews',    label: ' Reviews' },
+    { key: 'delivery',   label: ' Delivery' },
+    { key: 'commission', label: ' Commission' },
+    { key: 'profile',    label: ' Profile' },
   ];
 
   const badgeFor = (key) => {
@@ -62,7 +62,7 @@ const AdminSidebar = ({ activeTab, onTabChange, onLogout, isOpen, onClose, alert
       </nav>
 
       <div className="admin-sidebar-logout" onClick={onLogout}>
-        🚪 Logout
+         Logout
       </div>
 
     </aside>

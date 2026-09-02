@@ -21,7 +21,15 @@ const WelcomeCard = ({ user, onDetectLocation, onSecuritySettings }) => {
         />
         <div className="welcome-text">
           <h1>Welcome, {user.name}!</h1>
-          <p>{user.email} | {user.address}</p>
+          <p>{user.email} | {typeof user.address === 'object' 
+  ? [
+      user.address.flatHouseNo,
+      user.address.street,
+      user.address.area,
+      user.address.city,
+      user.address.pincode
+    ].filter(Boolean).join(', ')
+  : user.address || ''}</p>
         </div>
       </div>
       <div className="welcome-actions">

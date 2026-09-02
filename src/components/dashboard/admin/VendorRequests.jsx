@@ -107,7 +107,25 @@ const VendorRequests = () => {
   };
 
   const getInitials = (name) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2);
-
+const formatAddress = (address) => {
+    if (!address) return 'N/A';
+    if (typeof address === 'string') return address;
+    if (typeof address === 'object') {
+      if (address.fullAddress && typeof address.fullAddress === 'string') {
+        return address.fullAddress;
+      }
+      return [
+        address.flatHouseNo,
+        address.shopNo,
+        address.street,
+        address.area,
+        address.landmark,
+        address.city,
+        address.pincode
+      ].filter(Boolean).join(', ');
+    }
+    return 'N/A';
+  };
   return (
     <div className="vendor-requests-container">
       {successMessage && (
@@ -180,10 +198,10 @@ const VendorRequests = () => {
                     <Phone size={16} />
                     <span>{vendor.phone || fullVendor.phone || 'N/A'}</span>
                   </div>
-                  <div className="info-row">
+                 <div className="info-row">
                     <MapPin size={16} />
-                    <span>{vendor.address}, {vendor.pincode}</span>
-                  </div>
+                           <span>{formatAddress(vendor.address)}</span>
+                       </div>
                   <div className="info-row">
                     <Calendar size={16} />
                     <span>Joined {formatDate(vendor.createdAt)}</span>

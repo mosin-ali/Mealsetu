@@ -115,6 +115,25 @@ const VendorManagement = () => {
     if (path.startsWith('http')) return path;
     return `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
   };
+  const formatAddress = (address) => {
+  if (!address) return 'N/A';
+  if (typeof address === 'string') return address;
+  if (typeof address === 'object') {
+    if (address.fullAddress && typeof address.fullAddress === 'string') {
+      return address.fullAddress;
+    }
+    return [
+      address.flatHouseNo,
+      address.shopNo,
+      address.street,
+      address.area,
+      address.landmark,
+      address.city,
+      address.pincode
+    ].filter(Boolean).join(', ') || 'N/A';
+  }
+  return 'N/A';
+};
 
   return (
     <div className="vendor-management-page">
@@ -189,7 +208,7 @@ const VendorManagement = () => {
                 </div>
                 <div className="vm-info-row">
                   <span className="vm-info-label">Address:</span>
-                  <span>{vendor.address || 'N/A'}</span>
+               <span>{formatAddress(vendor.address)}</span>
                 </div>
                 <div className="vm-info-row">
                   <span className="vm-info-label">Pincode:</span>
