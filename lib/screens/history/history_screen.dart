@@ -335,7 +335,7 @@ class _HistoryScreenState extends State<HistoryScreen>
     final orderId      = order['_id'] as String? ?? '';
     final vendor       = order['vendorId'] as Map? ?? {};
     final kitchenName  = vendor['kitchenName'] as String? ?? 'Unknown Kitchen';
-    final address      = vendor['address']     as String? ?? '';
+   final address      = _parseAddress(vendor['address']); 
     final deliveryStatus = order['deliveryStatus'] as String? ?? '';
     final isDelivering = deliveryStatus == 'assigned' ||
         deliveryStatus == 'preparing' ||
@@ -846,5 +846,33 @@ class _HistoryScreenState extends State<HistoryScreen>
                       .toList(),
                 ),
     );
+  }
+  String _parseAddress(dynamic addressData) {
+    if (addressData == null) return '';
+    if (addressData is String) return addressData;
+
+    if (addressData is Map) {
+      if (addressData['fullAddress'] != null &&
+          addressData['fullAddress'].toString().isNotEmpty) {
+        return addressData['fullAddress'].toString();
+      }
+
+      final parts =
+          [
+                addressData['flatHouseNo'],
+                addressData['shopNo'],
+                addressData['street'],
+                addressData['area'],
+                addressData['city'],
+                addressData['pincode'],
+              ]
+              .where(
+                (part) => part != null && part.toString().trim().isNotEmpty,
+              )
+              .join(', ');
+
+      return parts;
+    }
+    return '';
   }
 }

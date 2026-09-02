@@ -1306,9 +1306,15 @@ class _State extends State<VendorDetailScreen> {
               height: 48,
               child: ElevatedButton(
                 onPressed: () {
-                  setState(() => _step = 2);
-                  _preCheckCanPurchase();
-                },
+                    setState(() {
+                      _step = 2;
+                      // Force 'Online' if they selected Weekly/Monthly
+                      if (_plan?.planCode != 'ONEDAY') {
+                        _payMethod = 'Online';
+                      }
+                    });
+                    _preCheckCanPurchase();
+                  },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _orange,
                   foregroundColor: Colors.white,
@@ -1391,11 +1397,28 @@ class _State extends State<VendorDetailScreen> {
                 color: Theme.of(context).colorScheme.onSurface)),
         const SizedBox(height: 12),
         // Payment method cards
-        Row(children: [
-          Expanded(child: _payCard('Cash',   '💵', 'Cash')),
-          const SizedBox(width: 10),
-          Expanded(child: _payCard('Online', '💳', 'Online\nUPI/Card')),
-        ]),
+      // Payment method cards
+        Row(
+          children: [
+            if (_plan?.planCode == 'ONEDAY') ...[
+              Expanded(child: _payCard('Cash', '💵', 'Cash')),
+              const SizedBox(width: 10),
+            ],
+            Expanded(child: _payCard('Online', '💳', 'Online\nUPI/Card')),
+          ],
+        ),
+        if (_plan?.planCode != 'ONEDAY')
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Text(
+              'Cash payment is only available for 1-Day plans.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
         const SizedBox(height: 14),
         // canPurchase warning
         if (_canPurchase == false)

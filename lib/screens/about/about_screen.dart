@@ -209,7 +209,7 @@ Text(
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Mr. Yash Panchal',
+                          'Mr. ',
                           style: GoogleFonts.poppins(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,

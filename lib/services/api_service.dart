@@ -16,12 +16,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const bool _physicalDevice = true;          // ← flip to true for real phone
-const String _wifiIp         ='10.89.151.52';   // ← replace X with your WiFi IP
+const String _wifiIp         ='192.168.10.52';   // ← replace X with your WiFi IP
 
 String _resolveBaseUrl() {
   if (kIsWeb)           return 'http://localhost:5000/api';        // Chrome
   if (_physicalDevice)  return 'http://$_wifiIp:5000/api';         // real phone
-  return                       'http://10.89.151.52:5000/api';         // emulator
+  return                       'http://192.168.10.52/api';        // emulator
 }
 
 /// Singleton Dio wrapper used by every service in the app.
