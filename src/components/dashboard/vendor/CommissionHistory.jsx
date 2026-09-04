@@ -1,36 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { onEvent, offEvent } from '../../../utils/socket';
 import styles from './CommissionHistory.module.css';
-import { getVendorCommissionSummary, getVendorCommissionHistory, createCommissionPaymentOrder, verifyCommissionPaymentRazorpay, getVendorWeekOrderBreakdown } from '../../../utils/api.js';
-import { loadRazorpayScript } from '../../common/RazorpayCheckout';
+import { getVendorCommissionSummary, getVendorCommissionHistory } from '../../../utils/api.js';
 
-const StatusBadge = ({ status }) => {
-  const cfg = {
-    paid:    { bg: '#dcfce7', color: '#16a34a', label: 'Paid' },
-    overdue: { bg: '#fee2e2', color: '#dc2626', label: 'Overdue' },
-    pending: { bg: '#fef3c7', color: '#d97706', label: 'Pending' }
-  }[status] || { bg: '#f3f4f6', color: '#374151', label: status };
-
-  return (
-    <span style={{
-      padding: '3px 10px', borderRadius: 10,
-      fontSize: 12, fontWeight: 600,
-      background: cfg.bg, color: cfg.color
-    }}>
-      {cfg.label}
-    </span>
-  );
-};
-
-const CommissionHistory = () => {
-  const [summary, setSummary]   = useState(null);
-  const [history, setHistory]   = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [paymentError, setPaymentError] = useState(null);
-  const [selectedWeek, setSelectedWeek]         = useState(null);
-  const [weekOrders, setWeekOrders]             = useState(null);
-  const [loadingBreakdown, setLoadingBreakdown] = useState(false);
+// onGoToExpenses is optional — pass it from VendorDashboard as
+// onGoToExpenses={() => setActiveTab('expenses')} to deep-link the button below.
+const CommissionHistory = ({ onGoToExpenses }) => {
+  const [summary, setSummary] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { fetchCommissionData(); }, []);
 
@@ -43,19 +21,12 @@ const CommissionHistory = () => {
   const fetchCommissionData = async () => {
     try {
       setLoading(true);
-      const summaryRes = await getVendorCommissionSummary();
-      console.log('=== COMMISSION SUMMARY RAW ===', JSON.stringify(summaryRes));
-      console.log('=== summary.currentWeek ===', JSON.stringify(summaryRes?.currentWeek));
-      console.log('=== summary.lifetimeEarnings ===', summaryRes?.lifetimeEarnings);
-
-      const historyRes = await getVendorCommissionHistory();
-      console.log('=== COMMISSION HISTORY RAW ===', JSON.stringify(historyRes));
-      console.log('=== history length ===', Array.isArray(historyRes?.commissions) ? historyRes.commissions.length : 'NOT ARRAY — keys: ' + Object.keys(historyRes || {}).join(','));
-
-      const summaryData = summaryRes;
-      const historyData = historyRes;
-      setSummary(summaryData);
-      setHistory(historyData.commissions || []);
+      const [summaryRes, historyRes] = await Promise.all([
+        getVendorCommissionSummary(),
+        getVendorCommissionHistory()
+      ]);
+      setSummary(summaryRes);
+      setHistory(historyRes?.commissions || []);
     } catch (error) {
       console.error('Commission data error:', error);
     } finally {
@@ -63,410 +34,167 @@ const CommissionHistory = () => {
     }
   };
 
-  const handleRazorpayCommissionPayment = async (commission) => {
-    try {
-      setSubmitting(true);
-      const loaded = await loadRazorpayScript();
-      if (!loaded) {
-        alert('Could not load payment gateway. Check internet connection.');
-        setSubmitting(false);
-        return;
-      }
-
-      const orderData = await createCommissionPaymentOrder({ commissionId: commission._id });
-
-      const options = {
-        key:         orderData.keyId,
-        amount:      orderData.amount,
-        currency:    orderData.currency,
-        name:        'MealSetu Commission',
-        description: `Commission for ${orderData.week}`,
-        order_id:    orderData.orderId,
-        theme:       { color: '#f26522' },
-        modal: { ondismiss: () => setSubmitting(false) },
-        handler: async (response) => {
-          try {
-            await verifyCommissionPaymentRazorpay({
-              razorpay_order_id:   response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature:  response.razorpay_signature,
-              commissionId:        commission._id
-            });
-            setSubmitting(false);
-            fetchCommissionData();
-            alert('Commission paid successfully!');
-          } catch {
-            setSubmitting(false);
-            alert('Payment done but verification failed. Contact support. ID: ' +
-              response.razorpay_payment_id);
-          }
-        }
-      };
-
-      const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', () => setSubmitting(false));
-      rzp.open();
-    } catch (error) {
-      setSubmitting(false);
-      const code    = error?.code || error?.response?.data?.code;
-      const message = error?.response?.data?.message || error?.message;
-      if (code === 'WEEK_STILL_OPEN' || code === 'NOT_LOCKED' || code === 'ALREADY_PAID') {
-        setPaymentError(message);
-        return;
-      }
-      setPaymentError('Payment failed. Please try again or contact support.');
-    }
-  };
-
-  // Use the API's rolling-week calculation as the authoritative current week.
-  // This prevents a stale future-week draft from appearing as "current".
-  const currentWeek = summary?.currentWeek || null;
-
-  // History table excludes the current week (it's shown in the prominent card above).
-  const pastWeeks = currentWeek?.week
-    ? history.filter(h => h.week !== currentWeek.week)
-    : history;
-
-  // All unpaid locked commissions (overdue first, then pending by due date)
-  const unpaidLocked = history
-    .filter(c => (c.status === 'overdue' || c.status === 'pending') && c.isLocked)
-    .sort((a, b) => {
-      if (a.status === 'overdue' && b.status !== 'overdue') return -1;
-      if (b.status === 'overdue' && a.status !== 'overdue') return  1;
-      return new Date(a.due_date) - new Date(b.due_date);
-    });
-
-  // For banners: most urgent unpaid locked commission
-  const urgentCommission = unpaidLocked[0] || null;
-
-  const handleWeekClick = async (commission) => {
-    if (!commission.weekStart || !commission.weekEnd) return;
-    setSelectedWeek(commission);
-    setWeekOrders(null);
-    setLoadingBreakdown(true);
-    try {
-      const data = await getVendorWeekOrderBreakdown(commission.weekStart, commission.weekEnd);
-      setWeekOrders(data);
-    } catch (err) {
-      console.error('Week breakdown error:', err);
-    } finally {
-      setLoadingBreakdown(false);
-    }
-  };
-
-  const handleRaiseDispute = async (commission) => {
-    const note = window.prompt('Describe the issue with this settlement amount:');
-    if (!note || !note.trim()) return;
-    try {
-      const token = localStorage.getItem('token');
-      await fetch(`/api/vendor/commission/${commission._id}/dispute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ note: note.trim() })
-      });
-      alert('Dispute raised. Admin will review within 24 hours.');
-      fetchCommissionData();
-    } catch {
-      alert('Could not raise dispute. Please try again.');
-    }
-  };
-
-  const handleDownloadInvoice = async (commissionId) => {
-    const token = localStorage.getItem('token');
-    try {
-      const resp = await fetch(`/api/vendor/commission/invoice/${commissionId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const blob = await resp.blob();
-      const url  = window.URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = `MealSetu_Settlement_${commissionId}.pdf`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Invoice download failed: ' + err.message);
-    }
-  };
-
   const fmtDate = (d, opts) => d ? new Date(d).toLocaleDateString('en-IN', opts) : '—';
-  const shortDate = (d) => fmtDate(d, { day: 'numeric', month: 'short' });
-  const longDate  = (d) => fmtDate(d, { day: 'numeric', month: 'long', year: 'numeric' });
+  const longDate = (d) => fmtDate(d, { day: 'numeric', month: 'long', year: 'numeric' });
+  const inr = (n) => `₹${(n || 0).toLocaleString('en-IN')}`;
 
   if (loading) return <div className="loading">Loading commissions...</div>;
 
   return (
     <div className={styles.commissionContainer}>
+      {/* HOW COMMISSION WORKS — always visible, so new vendors know upfront */}
+<details style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 12, padding: '14px 18px', marginBottom: 20 }}>
+  <summary style={{ cursor: 'pointer', fontWeight: 700, color: '#1e293b', fontSize: 14 }}>
+    ℹ️ How commission works
+  </summary>
+  <div style={{ marginTop: 10, fontSize: 13, color: '#475569', lineHeight: 1.7 }}>
+    <p style={{ margin: '0 0 8px' }}>
+      Every month, MealSetu takes a small commission on your <strong>net earnings</strong> (your revenue
+      minus any expenses you've logged). The rate depends on your tier — the more you earn, the higher
+      the rate. Your current rate is <strong>{summary?.commission_rate || 0}%</strong> ({summary?.tier_name || 'Starter'} tier).
+    </p>
+    <p style={{ margin: '0 0 8px' }}>
+      Commission is <strong>deducted automatically</strong> on the 1st of every month — you never need to
+      pay manually. Financial Year {summary?.financialYear || ''} runs April to March.
+    </p>
+    <p style={{ margin: 0 }}>
+      <strong>Your first cycle is different:</strong> instead of a full calendar month, it runs from the
+      day you joined to the end of that month. Every cycle after that covers a full calendar month.
+    </p>
+  </div>
+</details>
 
-      {/* MULTIPLE UNPAID WEEKS — each shown as its own payable card */}
-      {unpaidLocked.length > 0 && (
-        <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {unpaidLocked.map((c, idx) => {
-            const isOverdue = c.status === 'overdue';
-            const dueSoon   = !isOverdue && c.due_date &&
-              new Date(c.due_date) < new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
-            const borderColor = isOverdue ? '#dc2626' : dueSoon ? '#d97706' : '#f97316';
-            const bg          = isOverdue ? '#fef2f2' : dueSoon ? '#fffbeb' : '#fff7ed';
-            const accentColor = isOverdue ? '#dc2626' : dueSoon ? '#d97706' : '#ea580c';
+{summary?.isFirstCycle && summary?.status !== 'auto_deducted' && (
+  <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', padding: '14px 18px', borderRadius: 12, marginBottom: 20 }}>
+    <strong style={{ color: '#1d4ed8' }}>👋 This is your first billing cycle</strong>
+    <p style={{ margin: '4px 0 0', color: '#1e40af', fontSize: 13 }}>
+      It covers {summary?.periodStart ? new Date(summary.periodStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }) : ''} –{' '}
+      {summary?.periodEnd ? new Date(summary.periodEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : ''} only
+      (a partial month, since you joined mid-month). Every cycle after this runs a full calendar month.
+    </p>
+  </div>
+)}
 
-            return (
-              <div key={c._id || idx} style={{
-                background: bg, border: `1.5px solid ${borderColor}`,
-                borderRadius: 10, padding: '14px 18px',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                flexWrap: 'wrap', gap: 12
-              }}>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 700, color: accentColor, fontSize: 14 }}>
-                    {isOverdue ? '⚠️ Commission Overdue' : dueSoon ? '⏰ Due Soon' : '📋 Commission Due'}
-                    {unpaidLocked.length > 1 && (
-                      <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: '#9ca3af' }}>
-                        (Week {idx + 1} of {unpaidLocked.length})
-                      </span>
-                    )}
-                  </p>
-                  <p style={{ margin: '4px 0 0', color: '#374151', fontSize: 13 }}>
-                    <strong>₹{c.commission_amount?.toLocaleString('en-IN')}</strong>
-                    {c.weekStart && c.weekEnd
-                      ? ` · ${shortDate(c.weekStart)} – ${fmtDate(c.weekEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`
-                      : ''}
-                  </p>
-                  <p style={{ margin: '2px 0 0', color: '#6b7280', fontSize: 12 }}>
-                    {isOverdue
-                      ? `Was due on ${longDate(c.due_date)}. Pay now to avoid service interruption.`
-                      : `Due by ${longDate(c.due_date)}.`}
-                  </p>
-                </div>
-                <button
-                  onClick={() => { setPaymentError(null); handleRazorpayCommissionPayment(c); }}
-                  disabled={submitting}
-                  style={{
-                    background: submitting ? '#9ca3af' : accentColor, color: 'white',
-                    border: 'none', borderRadius: 8, padding: '10px 20px',
-                    fontWeight: 600, fontSize: 13,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {submitting ? 'Processing...' : `Pay ₹${c.commission_amount?.toLocaleString('en-IN')}`}
-                </button>
-              </div>
-            );
-          })}
+      {/* STATUS BANNER */}
+      {summary?.status === 'auto_deducted' && (
+        <div style={{
+          background: '#dcfce7', border: '1px solid #16a34a',
+          padding: '16px 20px', borderRadius: 12, marginBottom: 24,
+          display: 'flex', alignItems: 'center', gap: 12
+        }}>
+          <span style={{ fontSize: 24 }}>✅</span>
+          <div>
+            <strong style={{ color: '#15803d' }}>Commission Auto-Deducted</strong>
+            <p style={{ margin: '4px 0 0', color: '#166534', fontSize: 13 }}>
+              {inr(summary?.commission_due)} was automatically deducted for {summary?.current_month} on{' '}
+              {summary?.auto_deducted_at ? longDate(summary.auto_deducted_at) : 'month end'}. No action required.
+            </p>
+          </div>
         </div>
       )}
 
-      {/* SUMMARY CARDS — current rolling week (from API) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {summary?.status === 'not_generated' && (
+        <div style={{
+          background: '#fff7ed', border: '1px solid #f97316',
+          padding: '16px 20px', borderRadius: 12, marginBottom: 24
+        }}>
+          <strong style={{ color: '#c2410c' }}>⏳ Commission Calculation Pending</strong>
+          <p style={{ margin: '4px 0 0', color: '#9a3412', fontSize: 13 }}>
+            Commission for {summary?.current_month} will be automatically calculated and deducted on the 1st of next month.
+            The numbers below update live as you take orders and log expenses.
+          </p>
+        </div>
+      )}
+
+      {/* SUMMARY CARDS — 4 cards, no duplicate value shown twice.
+          Net Earnings is folded into the Commission card as context instead
+          of being its own card (it was showing the exact same ₹ as Gross
+          whenever expenses were ₹0, which just looked like a bug). */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+
         <div className={`${styles.card} ${styles.cardGreen}`}>
-          <h3>Total Earnings</h3>
-          <div className="amount">₹{(summary?.currentWeek?.total_earning || 0).toLocaleString('en-IN')}</div>
-          <small>{summary?.currentWeek?.isWeekOpen ? 'Live estimate' : 'This week (closed)'}</small>
+          <h3>This Month's Revenue</h3>
+          <div className="amount">{inr(summary?.gross_earning)}</div>
+          <small>{summary?.orders_count || 0} orders · before expenses</small>
         </div>
-        <div className={`${styles.card} ${styles.cardAmber}`}>
-          <h3>Commission Rate</h3>
-          <div className="amount">{summary?.currentWeek?.commission_rate || 0}%</div>
-          <small>{summary?.currentWeek?.tierSnapshot?.tierName || 'Starter tier'}</small>
-        </div>
+
         <div className={`${styles.card} ${styles.cardRed}`}>
-          <h3>Commission {summary?.currentWeek?.status === 'paid' ? 'Paid' : 'Due'}</h3>
-          <div className="amount">₹{(summary?.currentWeek?.commission_amount || 0).toLocaleString('en-IN')}</div>
-          <small>
-            {summary?.currentWeek?.status === 'paid'
-              ? `Paid ${summary?.currentWeek?.payment_date ? shortDate(summary.currentWeek.payment_date) : ''}`
-              : summary?.currentWeek?.status === 'overdue'
-              ? 'Overdue — pay now'
-              : summary?.currentWeek?.isWeekOpen
-              ? 'Estimate (week open)'
-              : 'Pending payment'}
-          </small>
+          <h3>Expenses Logged</h3>
+          <div className="amount">{inr(summary?.total_expenses)}</div>
+          <small>{summary?.expenses_count || 0} expense entries this month</small>
         </div>
-        <div className={`${styles.card} ${styles.cardBlue}`}>
-          <h3>Net Payout</h3>
-          <div className="amount">₹{((summary?.currentWeek?.total_earning || 0) - (summary?.currentWeek?.commission_amount || 0)).toLocaleString('en-IN')}</div>
-          <small>What you keep</small>
+
+        {/* MERGED CARD — rate % and ₹ commission amount together */}
+        <div className={`${styles.card} ${styles.cardAmber}`}>
+          <h3>Commission</h3>
+          <div className="amount" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span>{summary?.commission_rate || 0}%</span>
+            <span style={{ fontSize: 18, color: '#dc2626' }}>· {inr(summary?.commission_due)}</span>
+          </div>
+          <small>{summary?.tier_name || 'Starter'} tier · on {inr(summary?.net_earning)} net earnings</small>
         </div>
+
+        <div className={`${styles.card} ${styles.cardGreen}`}>
+          <h3>You Keep</h3>
+          <div className="amount" style={{ fontSize: 22 }}>{inr(summary?.vendor_keeps)}</div>
+          <small>Auto-settled monthly</small>
+        </div>
+
       </div>
 
-      {/* LIFETIME TOTALS BAR */}
-      {(summary?.lifetimeEarnings > 0) && (
-        <div style={{
-          display:             'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap:                 12,
-          marginTop:           20,
-          marginBottom:        4
-        }}>
-          {[
-            {
-              label: 'LIFETIME EARNINGS',
-              value: `₹${(summary.lifetimeEarnings).toLocaleString('en-IN')}`,
-              sub: 'From all finalized weeks',
-              color: '#374151', bg: '#f9fafb', border: '#e5e7eb'
-            },
-            {
-              label: 'COMMISSION PAID',
-              value: `₹${(summary.lifetimeCommission).toLocaleString('en-IN')}`,
-              sub: 'Actually paid to MealSetu',
-              color: '#dc2626', bg: '#fef2f2', border: '#fecaca'
-            },
-            {
-              label: 'COMMISSION PENDING',
-              value: `₹${(summary.lifetimePending || 0).toLocaleString('en-IN')}`,
-              sub: 'Locked but not yet paid',
-              color: '#d97706', bg: '#fffbeb', border: '#fde68a'
-            },
-            {
-              label: 'NET EARNED (ALL TIME)',
-              value: `₹${(summary.lifetimeNet).toLocaleString('en-IN')}`,
-              sub: 'After deducting paid commission',
-              color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0'
-            }
-          ].map(item => (
-            <div key={item.label} style={{
-              background:   item.bg,
-              border:       `1px solid ${item.border}`,
-              borderRadius: 10,
-              padding:      '14px 18px'
-            }}>
-              <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>{item.label}</p>
-              <p style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 700, color: item.color }}>{item.value}</p>
-              <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>{item.sub}</p>
-            </div>
-          ))}
+      {/* LIFETIME TOTALS */}
+      {(summary?.lifetimeNetEarning > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginTop: 20 }}>
+          <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 10, padding: '14px 18px' }}>
+            <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>LIFETIME NET EARNINGS</p>
+            <p style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 700, color: '#374151' }}>{inr(summary.lifetimeNetEarning)}</p>
+          </div>
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '14px 18px' }}>
+            <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>LIFETIME COMMISSION DEDUCTED</p>
+            <p style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 700, color: '#dc2626' }}>{inr(summary.lifetimeCommission)}</p>
+          </div>
         </div>
       )}
 
-      {/* CHANGE 6 — Current week card */}
-      {currentWeek && (
-        <div style={{
-          background: 'white',
-          border: `2px solid ${
-            currentWeek.status === 'overdue' ? '#dc2626'
-            : currentWeek.status === 'paid'  ? '#16a34a'
-            : '#f97316'
-          }`,
-          borderRadius: 12, padding: 20, marginTop: 24
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 12, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Current Week — {currentWeek.week || currentWeek.month}
-              </p>
-              <p style={{ margin: '4px 0 0', fontSize: 13, color: '#374151' }}>
-                {currentWeek.weekStart && currentWeek.weekEnd
-                  ? `${fmtDate(currentWeek.weekStart, { day: 'numeric', month: 'long' })} – ${longDate(currentWeek.weekEnd)}`
-                  : '—'}
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
-                <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', fontFamily: 'monospace' }}>
-                  {currentWeek.settlementNumber ||
-                    `MS-${currentWeek.financialYear || currentWeek.week?.split('-W')[0] || 'FY'}-W${currentWeek.week?.split('-W')[1] || '??'}-${String(currentWeek._id || '').slice(-4).toUpperCase()}`
-                  }
-                </p>
-                {currentWeek._id && (
-                  <button
-                    onClick={() => handleDownloadInvoice(currentWeek._id)}
-                    style={{
-                      background: 'none', border: '1px solid #e5e7eb',
-                      borderRadius: 6, padding: '2px 10px',
-                      fontSize: 11, cursor: 'pointer', color: '#6b7280',
-                      display: 'flex', alignItems: 'center', gap: 4
-                    }}
-                  >
-                    ⬇ Download Invoice
-                  </button>
-                )}
-              </div>
-            </div>
-            <StatusBadge status={currentWeek.status} />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 16 }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase' }}>Total Earnings</p>
-              <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18 }}>
-                ₹{(currentWeek.total_earning || 0).toLocaleString('en-IN')}
-              </p>
-            </div>
-            <div>
-              <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase' }}>Commission Rate</p>
-              <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18 }}>
-                {currentWeek.commission_rate}%
-              </p>
-            </div>
-            <div>
-              <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase' }}>Commission Due</p>
-              <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18, color: '#dc2626' }}>
-                ₹{(currentWeek.commission_amount || 0).toLocaleString('en-IN')}
-              </p>
-            </div>
-            <div>
-              <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase' }}>You Keep</p>
-              <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18, color: '#16a34a' }}>
-                ₹{((currentWeek.total_earning || 0) - (currentWeek.commission_amount || 0)).toLocaleString('en-IN')}
-              </p>
-            </div>
-          </div>
-
-          {currentWeek.status !== 'paid' && (
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f3f4f6' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>
-                  Due by: <strong>{longDate(currentWeek.due_date)}</strong>
-                </p>
-                {currentWeek.isLocked ? (
-                  <button
-                    onClick={() => { setPaymentError(null); handleRazorpayCommissionPayment(currentWeek); }}
-                    disabled={submitting}
-                    style={{
-                      background: submitting ? '#9ca3af' : '#f97316', color: 'white',
-                      border: 'none', borderRadius: 8, padding: '10px 24px',
-                      fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 14
-                    }}
-                  >
-                    {submitting ? 'Processing...' : `Pay ₹${currentWeek.commission_amount} via Razorpay`}
-                  </button>
-                ) : (
-                  <span style={{ fontSize: 13, color: '#9ca3af', fontStyle: 'italic' }}>
-                    Settlement finalizing — pay button activates after week closes
-                  </span>
-                )}
-              </div>
-              {paymentError && (
-                <div style={{
-                  background: '#fef2f2', border: '1px solid #fecaca',
-                  borderRadius: 8, padding: '10px 14px', marginTop: 10,
-                  fontSize: 13, color: '#dc2626', display: 'flex',
-                  justifyContent: 'space-between', alignItems: 'center'
-                }}>
-                  <span>⚠️ {paymentError}</span>
-                  <button
-                    onClick={() => setPaymentError(null)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}
-                  >✕</button>
-                </div>
-              )}
-            </div>
-          )}
+      {/* EXPENSES POINTER — reuses your existing Expenses tab, no duplicate UI here */}
+      <div style={{
+        marginTop: 24, background: 'white', border: '1px solid #e5e7eb',
+        borderRadius: 12, padding: '16px 20px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12
+      }}>
+        <div>
+          <p style={{ margin: 0, fontWeight: 700, color: '#1e293b' }}>Track your expenses</p>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
+            Ingredients, gas, packaging, staff costs, rent — anything you log this month is subtracted from
+            gross revenue before commission is calculated.
+          </p>
         </div>
-      )}
+        <button
+          onClick={onGoToExpenses}
+          style={{
+            background: '#f97316', color: 'white', border: 'none',
+            borderRadius: 8, padding: '10px 20px', fontWeight: 600, fontSize: 13, cursor: 'pointer'
+          }}
+        >
+          Open Expenses →
+        </button>
+      </div>
 
-      {/* CHANGE 6 — Past weeks table */}
-      {pastWeeks.length > 0 && (
+      {/* HISTORY TABLE */}
+      {history.length > 0 ? (
         <div className={styles.sectionCard} style={{ marginTop: 24 }}>
           <div className={styles.sectionHeader}>
-            <h2>Commission History ({pastWeeks.length})</h2>
+            <h2>Commission History ({history.length})</h2>
             <button className={styles.refreshBtn} onClick={fetchCommissionData}>Refresh</button>
           </div>
           <div className="w-full overflow-x-auto">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
-                  {['PERIOD', 'EARNINGS', 'RATE', 'COMMISSION', 'YOU KEPT', 'STATUS', 'INVOICE'].map(h => (
+                  {['PERIOD', 'REVENUE', 'EXPENSES', 'COMMISSION', 'YOU KEPT', 'STATUS'].map(h => (
                     <th key={h} style={{
                       padding: '10px 12px',
-                      textAlign: ['EARNINGS', 'RATE', 'COMMISSION', 'YOU KEPT'].includes(h) ? 'right' : 'left',
+                      textAlign: ['REVENUE', 'EXPENSES', 'COMMISSION', 'YOU KEPT'].includes(h) ? 'right' : 'left',
                       fontSize: 11, fontWeight: 600, color: '#6b7280',
                       textTransform: 'uppercase', letterSpacing: '0.5px',
                       borderBottom: '1px solid #e5e7eb'
@@ -477,119 +205,58 @@ const CommissionHistory = () => {
                 </tr>
               </thead>
               <tbody>
-                {pastWeeks.map((w) => {
-                  const kept = (w.total_earning || 0) - (w.commission_amount || 0);
-                  const paidOnTime = w.payment_date && w.due_date &&
-                    new Date(w.payment_date) <= new Date(w.due_date);
+                {history.map((c) => {
+                  const gross = c.gross_earning ?? c.total_earning ?? 0;
+                  const net   = c.net_earning   ?? c.total_earning ?? 0;
+                  const kept  = net - (c.commission_amount || 0);
+
+                  const periodLabel = (() => {
+                    if (c.periodStart && c.periodEnd) {
+  const label = `${fmtDate(c.periodStart, { day: 'numeric', month: 'short' })} – ${fmtDate(c.periodEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  return c.isFirstCycle ? `${label} (First Cycle)` : label;
+}
+                    if (c.month && /^\d{4}-\d{2}$/.test(c.month)) {
+                      const [year, month] = c.month.split('-');
+                      return new Date(year, month - 1, 1).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+                    }
+                    if (c.month && c.month.includes('-W')) {
+                      if (c.notes && c.notes.includes('Week:')) {
+                        return c.notes.split('Week:')[1]?.split('|')[0]?.trim();
+                      }
+                      return c.month;
+                    }
+                    if (c.weekStart && c.weekEnd) {
+                      return `${fmtDate(c.weekStart, { day: 'numeric', month: 'short' })} – ${fmtDate(c.weekEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+                    }
+                    return c.month || c.week || 'N/A';
+                  })();
+
+                  const statusCfg = {
+                    paid:                  { bg: '#dcfce7', color: '#16a34a', label: '✓ Paid' },
+                    auto_deducted:         { bg: '#dbeafe', color: '#1d4ed8', label: '⚡ Auto Deducted' },
+                    overdue:               { bg: '#fef2f2', color: '#ef4444', label: '⚠ Overdue' },
+                    pending_verification:  { bg: '#fef3c7', color: '#d97706', label: '🕐 Verifying' },
+                    pending:               { bg: '#fef3c7', color: '#d97706', label: '⏳ Pending' },
+                  }[c.status] || { bg: '#f3f4f6', color: '#374151', label: c.status };
 
                   return (
-                    <tr
-                      key={w._id}
-                      onClick={() => handleWeekClick(w)}
-                      style={{
-                        borderBottom: '1px solid #f3f4f6',
-                        cursor: w.weekStart ? 'pointer' : 'default',
-                        background: w.status === 'overdue' ? '#fef2f2' : 'white',
-                        transition: 'background 0.15s'
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#f9fafb'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = w.status === 'overdue' ? '#fef2f2' : 'white'; }}
-                    >
-                      <td style={{ padding: '10px 12px' }}>
-                        <span style={{ fontWeight: 500 }}>
-                          {w.weekStart && w.weekEnd
-                            ? `${shortDate(w.weekStart)} – ${fmtDate(w.weekEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`
-                            : (w.week || w.month)}
-                        </span>
-                        <br />
-                        <span style={{ fontSize: 11, color: '#9ca3af' }}>{w.week || w.month}</span>
-                      </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                        ₹{(w.total_earning || 0).toLocaleString('en-IN')}
-                      </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}>
-                        {w.commission_rate}%
+                    <tr key={c._id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: 500 }}>{periodLabel}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>{inr(gross)}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: (c.total_expenses || 0) > 0 ? '#f59e0b' : '#9ca3af' }}>
+                        {(c.total_expenses || 0) > 0 ? `-${inr(c.total_expenses)}` : '—'}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#dc2626' }}>
-                        ₹{(w.commission_amount || 0).toLocaleString('en-IN')}
+                        {inr(c.commission_amount)} <span style={{ color: '#9ca3af', fontWeight: 400 }}>({c.commission_rate}%)</span>
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#16a34a' }}>
-                        ₹{kept.toLocaleString('en-IN')}
-                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#16a34a' }}>{inr(kept)}</td>
                       <td style={{ padding: '10px 12px' }}>
                         <span style={{
-                          padding: '3px 9px', borderRadius: 10, fontSize: 11, fontWeight: 600,
-                          background: w.status === 'paid'    ? '#dcfce7'
-                                    : w.status === 'overdue' ? '#fee2e2' : '#fef3c7',
-                          color:      w.status === 'paid'    ? '#16a34a'
-                                    : w.status === 'overdue' ? '#dc2626' : '#d97706'
+                          padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700,
+                          background: statusCfg.bg, color: statusCfg.color
                         }}>
-                          {w.status === 'paid'
-                            ? `✓ Paid${w.payment_date ? (paidOnTime ? ' on time' : ' late') + ' · ' + shortDate(w.payment_date) : ''}`
-                            : w.status === 'overdue' ? 'Overdue' : 'Pending'}
+                          {statusCfg.label}
                         </span>
-                        {(w.status === 'pending' || w.status === 'overdue') && w.isLocked && (
-                          <button
-                            onClick={() => handleRazorpayCommissionPayment(w)}
-                            disabled={submitting}
-                            style={{
-                              display: 'block', marginTop: 4,
-                              background: 'none', border: '1px solid #f97316',
-                              color: '#f97316', borderRadius: 6,
-                              padding: '2px 8px', fontSize: 11,
-                              cursor: submitting ? 'not-allowed' : 'pointer'
-                            }}
-                          >
-                            Pay Now
-                          </button>
-                        )}
-                      </td>
-                      <td style={{ padding: '10px 12px' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          <button
-                            onClick={() => handleDownloadInvoice(w._id)}
-                            style={{
-                              background: 'none', border: '1px solid #e5e7eb',
-                              borderRadius: 6, padding: '4px 10px',
-                              fontSize: 11, cursor: 'pointer', color: '#6b7280'
-                            }}
-                          >
-                            ⬇ Invoice
-                          </button>
-                          {w.status !== 'paid' && !w.disputeStatus && (
-                            <button
-                              onClick={() => handleRaiseDispute(w)}
-                              style={{
-                                background: 'none', border: '1px solid #fecaca',
-                                borderRadius: 6, padding: '4px 10px',
-                                fontSize: 11, cursor: 'pointer', color: '#dc2626'
-                              }}
-                            >
-                              ⚑ Dispute
-                            </button>
-                          )}
-                          {(w.disputeStatus === 'raised' || w.disputeStatus === 'under_review') && (
-                            <span style={{
-                              fontSize: 11, color: '#d97706',
-                              padding: '4px 8px', background: '#fef3c7',
-                              borderRadius: 6
-                            }}>
-                              🔍 Under Review
-                            </span>
-                          )}
-                          {w.disputeStatus === 'resolved' && (
-                            <span
-                              title={w.disputeResolutionNote || 'Dispute resolved by admin'}
-                              style={{
-                                fontSize: 11, color: '#16a34a',
-                                padding: '4px 8px', background: '#dcfce7',
-                                borderRadius: 6, cursor: 'help'
-                              }}
-                            >
-                              ✓ Resolved{w.disputeResolutionNote ? ` · "${w.disputeResolutionNote.slice(0, 40)}${w.disputeResolutionNote.length > 40 ? '…' : ''}"` : ''}
-                            </span>
-                          )}
-                        </div>
                       </td>
                     </tr>
                   );
@@ -598,139 +265,11 @@ const CommissionHistory = () => {
             </table>
           </div>
         </div>
-      )}
-
-      {history.length === 0 && (
+      ) : (
         <div className={styles.sectionCard} style={{ marginTop: 24 }}>
           <p style={{ textAlign: 'center', color: '#9ca3af', padding: '32px 0' }}>
-            No commission records yet. First one generates at the end of your first week.
+            No commission records yet. Your first one is generated on the 1st of next month and deducted automatically.
           </p>
-        </div>
-      )}
-
-      {/* ORDER BREAKDOWN MODAL */}
-      {selectedWeek && (
-        <div
-          style={{
-            position: 'fixed', inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 1000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 20
-          }}
-          onClick={() => { setSelectedWeek(null); setWeekOrders(null); }}
-        >
-          <div
-            style={{
-              background: 'white', borderRadius: 14,
-              width: '100%', maxWidth: 700,
-              maxHeight: '85vh', overflowY: 'auto',
-              padding: 28
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Settlement Breakdown</h2>
-                <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 13 }}>
-                  {selectedWeek.weekStart && selectedWeek.weekEnd
-                    ? `${shortDate(selectedWeek.weekStart)} – ${fmtDate(selectedWeek.weekEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`
-                    : selectedWeek.week}
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={() => handleDownloadInvoice(selectedWeek._id)}
-                  style={{
-                    background: '#f97316', color: 'white',
-                    border: 'none', borderRadius: 8,
-                    padding: '8px 16px', fontWeight: 600,
-                    cursor: 'pointer', fontSize: 13
-                  }}
-                >
-                  Download Invoice
-                </button>
-                <button
-                  onClick={() => { setSelectedWeek(null); setWeekOrders(null); }}
-                  style={{
-                    background: '#f3f4f6', border: 'none',
-                    borderRadius: 8, padding: '8px 16px',
-                    cursor: 'pointer', fontSize: 13
-                  }}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            {loadingBreakdown ? (
-              <p style={{ textAlign: 'center', color: '#9ca3af', padding: 40 }}>Loading orders...</p>
-            ) : weekOrders ? (
-              <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
-                  {[
-                    { label: 'ORDERS',          value: weekOrders.totalOrders,                                                          color: '#374151' },
-                    { label: 'GROSS',           value: `₹${(weekOrders.grossEarnings || 0).toLocaleString('en-IN')}`,                   color: '#374151' },
-                    { label: 'WALLET USED',     value: weekOrders.totalWalletDeductions > 0 ? `-₹${weekOrders.totalWalletDeductions.toLocaleString('en-IN')}` : '₹0', color: weekOrders.totalWalletDeductions > 0 ? '#f59e0b' : '#9ca3af',
-                      tooltip: 'Amount customers paid using loyalty wallet credit. Commission is calculated on Gross − Wallet.' },
-                    { label: 'COMMISSION',      value: `-₹${(weekOrders.commissionAmount || 0).toLocaleString('en-IN')}`,               color: '#dc2626' },
-                    { label: 'YOU KEEP',        value: `₹${(weekOrders.netEarnings || 0).toLocaleString('en-IN')}`,                     color: '#16a34a' }
-                  ].map(item => (
-                    <div key={item.label} title={item.tooltip || ''} style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 14px', cursor: item.tooltip ? 'help' : 'default' }}>
-                      <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>{item.label}</p>
-                      <p style={{ margin: '4px 0 0', fontSize: 17, fontWeight: 700, color: item.color }}>{item.value}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {weekOrders.orders?.length > 0 ? (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: '#f9fafb' }}>
-                        {['DATE', 'CUSTOMER', 'PLAN', 'GROSS', 'WALLET', 'COMMISSION', 'YOUR SHARE'].map(h => (
-                          <th key={h} style={{
-                            padding: '8px 10px',
-                            textAlign: ['DATE', 'CUSTOMER', 'PLAN'].includes(h) ? 'left' : 'right',
-                            fontSize: 10, fontWeight: 600, color: '#6b7280',
-                            borderBottom: '1px solid #e5e7eb'
-                          }}>
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {weekOrders.orders.map((order, i) => (
-                        <tr key={i} style={{ borderTop: '1px solid #f3f4f6' }}>
-                          <td style={{ padding: '10px 10px', color: '#374151' }}>
-                            {shortDate(order.orderDate)}
-                          </td>
-                          <td style={{ padding: '10px 10px', color: '#374151' }}>{order.customerName}</td>
-                          <td style={{ padding: '10px 10px', color: '#6b7280' }}>{order.planType}</td>
-                          <td style={{ padding: '10px 10px', textAlign: 'right', color: '#374151', fontWeight: 500 }}>
-                            ₹{order.grossAmount}
-                          </td>
-                          <td style={{ padding: '10px 10px', textAlign: 'right', color: order.walletDeduction > 0 ? '#f59e0b' : '#9ca3af', fontSize: 12 }}>
-                            {order.walletDeduction > 0 ? `-₹${order.walletDeduction}` : '—'}
-                          </td>
-                          <td style={{ padding: '10px 10px', textAlign: 'right', color: '#dc2626' }}>
-                            -₹{order.commissionCut}
-                          </td>
-                          <td style={{ padding: '10px 10px', textAlign: 'right', color: '#16a34a', fontWeight: 600 }}>
-                            ₹{order.netAmount}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <p style={{ color: '#9ca3af', textAlign: 'center', padding: 30 }}>
-                    No orders found for this week
-                  </p>
-                )}
-              </>
-            ) : null}
-          </div>
         </div>
       )}
 

@@ -11,6 +11,10 @@ const getTierName = (earning, tiers) => {
   return tier?.tierName || 'Starter';
 };
 
+// A commission is "settled" whether the vendor paid manually (legacy weekly
+// flow) or it was auto-deducted (new monthly flow) — treat both as closed.
+const isSettled = (c) => c.status === 'paid' || c.status === 'auto_deducted';
+
 const Reports = () => {
   const [tiers, setTiers]         = useState([]);
   const [vendors, setVendors]     = useState([]);
@@ -32,9 +36,9 @@ const Reports = () => {
 
   const now = new Date();
 
-  // ── Derived summary stats ──────────────────────────────────────
+  // ── Derived summary stats (single source of truth — declared once) ──────
   const totalOutstanding = vendors
-    .filter(c => c.status !== 'paid')
+    .filter(c => !isSettled(c))
     .reduce((sum, c) => sum + (c.commission_amount || 0), 0);
 
   const overdueVendors = vendors.filter(c => c.status === 'overdue');
@@ -42,14 +46,19 @@ const Reports = () => {
   const overdueAmount  = overdueVendors.reduce((sum, c) => sum + (c.commission_amount || 0), 0);
 
   const thirtyDaysAgo  = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
   const paidThisMonth  = vendors
-    .filter(c => c.status === 'paid' && c.payment_date && new Date(c.payment_date) > thirtyDaysAgo)
+    .filter(c => isSettled(c) && c.payment_date && new Date(c.payment_date) > thirtyDaysAgo)
     .reduce((sum, c) => sum + (c.commission_amount || 0), 0);
 
-  const totalVendors   = vendors.length;
-  const paidOnTimeCount = vendors.filter(c => c.status === 'paid' && c.paidOnTime === true).length;
-  const collectionRate = totalVendors > 0 ? Math.round((paidOnTimeCount / totalVendors) * 100) : 0;
-  // ──────────────────────────────────────────────────────────────
+  const autoDeductedThisMonth = vendors
+    .filter(c => c.status === 'auto_deducted' && c.payment_date && new Date(c.payment_date) > thirtyDaysAgo)
+    .reduce((sum, c) => sum + (c.commission_amount || 0), 0);
+
+  const totalVendors    = vendors.length;
+  const paidOnTimeCount = vendors.filter(c => isSettled(c) && c.paidOnTime === true).length;
+  const collectionRate  = totalVendors > 0 ? Math.round((paidOnTimeCount / totalVendors) * 100) : 0;
+  // ──────────────────────────────────────────────────────────────────────
 
   const downloadCommissionCSV = async () => {
     try {
@@ -124,20 +133,22 @@ const Reports = () => {
       if (statusFilter !== 'all' && v.status !== statusFilter) return false;
       if (searchQuery && !v.vendor_name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       if (selectedMonth) {
-        const ws = v.weekStart ? new Date(v.weekStart) : null;
-        if (!ws) return false;
-        const cm = `${ws.getFullYear()}-${String(ws.getMonth() + 1).padStart(2, '0')}`;
-        if (cm !== selectedMonth) return false;
+        // Monthly records already carry v.month as 'YYYY-MM'; legacy weekly
+        // records only have weekStart, so derive the month from that.
+        const cm = v.month || (v.weekStart
+          ? `${new Date(v.weekStart).getFullYear()}-${String(new Date(v.weekStart).getMonth() + 1).padStart(2, '0')}`
+          : null);
+        if (!cm || cm !== selectedMonth) return false;
       }
-      if (selectedWeek && selectedMonth) {
-        const ws       = new Date(v.weekStart);
+      if (selectedWeek && selectedMonth && v.weekStart) {
+        const ws          = new Date(v.weekStart);
         const weekInMonth = Math.ceil(ws.getDate() / 7);
         if (String(weekInMonth) !== selectedWeek) return false;
       }
       return true;
     })
     .sort((a, b) => {
-      const order = { overdue: 0, pending: 1, paid: 2 };
+      const order = { overdue: 0, pending: 1, auto_deducted: 2, paid: 2 };
       return (order[a.status] ?? 1) - (order[b.status] ?? 1);
     });
 
@@ -307,16 +318,16 @@ const Reports = () => {
       <div className="reports-section">
         <h2>Vendor Commissions ({filteredVendors.length})</h2>
 
-        {/* CHANGE 3 — Summary bar */}
-        {totalOutstanding > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        {/* Summary bar — now 5 cards, includes Auto-Deducted */}
+        {(totalOutstanding > 0 || autoDeductedThisMonth > 0) && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
             <div style={{ background: '#fef2f2', borderRadius: 10, padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
               <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>TOTAL OUTSTANDING</p>
               <p style={{ margin: '6px 0 0', fontSize: 22, fontWeight: 700, color: '#dc2626' }}>
                 ₹{totalOutstanding.toLocaleString('en-IN')}
               </p>
               <p style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
-                across {vendors.filter(c => c.status !== 'paid').length} vendors
+                across {vendors.filter(c => !isSettled(c)).length} vendors
               </p>
             </div>
             <div style={{ background: '#fff7ed', borderRadius: 10, padding: '14px 18px', borderLeft: '4px solid #f97316' }}>
@@ -327,6 +338,13 @@ const Reports = () => {
               <p style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
                 {overdueCount} vendor{overdueCount !== 1 ? 's' : ''}
               </p>
+            </div>
+            <div style={{ background: '#ecfdf5', borderRadius: 10, padding: '14px 18px', borderLeft: '4px solid #059669' }}>
+              <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>AUTO-DEDUCTED THIS MONTH</p>
+              <p style={{ margin: '6px 0 0', fontSize: 22, fontWeight: 700, color: '#059669' }}>
+                ₹{autoDeductedThisMonth.toLocaleString('en-IN')}
+              </p>
+              <p style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>no vendor action needed</p>
             </div>
             <div style={{ background: '#f0fdf4', borderRadius: 10, padding: '14px 18px', borderLeft: '4px solid #16a34a' }}>
               <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>COLLECTED THIS MONTH</p>
@@ -353,6 +371,7 @@ const Reports = () => {
             <option value="all">All Status</option>
             <option value="pending">Pending</option>
             <option value="overdue">Overdue</option>
+            <option value="auto_deducted">Auto-Deducted</option>
             <option value="paid">Paid</option>
           </select>
 
@@ -420,12 +439,12 @@ const Reports = () => {
             <thead>
               <tr>
                 <th>Vendor</th>
-                <th>Week</th>
+                <th>Period</th>
                 <th>Gross</th>
-                <th title="Total wallet credit used by customers this week">Wallet Used</th>
+                <th title="Total wallet credit used by customers">Wallet Used</th>
                 <th>Rate</th>
                 <th>Due</th>
-                <th>Due Date / Paid</th>
+                <th>Settled Date</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -435,24 +454,22 @@ const Reports = () => {
                 <tr><td colSpan="9" className="no-data">No vendor commission records found.</td></tr>
               ) : (
                 filteredVendors.map((v) => {
-                  const isOverdue = v.status === 'overdue';
-                  const isDueSoon = v.status === 'pending' && v.due_date &&
+                  const isAuto     = v.status === 'auto_deducted';
+                  const isOverdue  = v.status === 'overdue';
+                  const isDueSoon  = v.status === 'pending' && v.due_date &&
                     new Date(v.due_date) < new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
                   const paidOnTime = v.payment_date && v.due_date &&
                     new Date(v.payment_date) <= new Date(v.due_date);
 
                   return (
                     <tr key={v._id} style={{
-                      background: isOverdue ? '#fef2f2' : isDueSoon ? '#fffbeb' : 'white'
+                      background: isOverdue ? '#fef2f2' : isDueSoon ? '#fffbeb' : isAuto ? '#f0fdf4' : 'white'
                     }}>
 
-                      {/* CHANGE 5 — Vendor name + tier badge */}
+                      {/* Vendor name + tier badge */}
                       <td>
                         <button
-                          onClick={() => {
-                            console.log('Drill-down: vendorId =', v.vendorId, '| commission._id =', v._id);
-                            setDrillVendorId(v.vendorId);
-                          }}
+                          onClick={() => setDrillVendorId(v.vendorId)}
                           style={{
                             background: 'none', border: 'none', color: '#f97316',
                             cursor: 'pointer', fontWeight: 600,
@@ -476,12 +493,14 @@ const Reports = () => {
                         )}
                       </td>
 
-                      {/* CHANGE 1 — Human-readable week dates */}
+                      {/* Period — shows month label for new records, week dates for legacy */}
                       <td>
                         <span style={{ fontWeight: 600, fontSize: 13 }}>
                           {v.weekStart && v.weekEnd
                             ? `${new Date(v.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(v.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
-                            : (v.week || v.month)}
+                            : v.month
+                              ? new Date(`${v.month}-01`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+                              : (v.week || '—')}
                         </span>
                         <br />
                         <span style={{ fontSize: 11, color: '#9ca3af' }}>{v.week || v.month}</span>
@@ -496,20 +515,22 @@ const Reports = () => {
                       <td>{v.commission_rate}%</td>
                       <td style={{ fontWeight: 600 }}>₹{v.commission_amount?.toLocaleString('en-IN')}</td>
 
-                      {/* CHANGE 2 — Always show due date + paid status */}
+                      {/* Settled date — payment_date covers both manual-paid and auto-deducted */}
                       <td>
-                        <span style={{ color: isOverdue ? '#dc2626' : '#374151', fontSize: 13 }}>
-                          {v.due_date
-                            ? new Date(v.due_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-                            : '—'}
-                        </span>
+                        {!isAuto && (
+                          <span style={{ color: isOverdue ? '#dc2626' : '#374151', fontSize: 13 }}>
+                            {v.due_date
+                              ? new Date(v.due_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                              : '—'}
+                          </span>
+                        )}
                         {v.payment_date && (
                           <div style={{ marginTop: 3 }}>
                             <span style={{
                               fontSize: 11,
-                              color: paidOnTime ? '#16a34a' : '#f97316'
+                              color: isAuto ? '#059669' : (paidOnTime ? '#16a34a' : '#f97316')
                             }}>
-                              {paidOnTime ? '✓ Paid on time' : 'Paid late'}
+                              {isAuto ? '⚡ Deducted' : (paidOnTime ? '✓ Paid on time' : 'Paid late')}
                               {' · '}
                               {new Date(v.payment_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                             </span>
@@ -517,17 +538,21 @@ const Reports = () => {
                         )}
                       </td>
 
+                      {/* STATUS — this is where the auto-deducted badge lives */}
                       <td>
                         <span style={{
                           padding: '3px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600,
-                          background: isOverdue  ? '#fee2e2'
-                                    : isDueSoon ? '#fef3c7'
+                          background: isAuto      ? '#dcfce7'
+                                    : isOverdue    ? '#fee2e2'
+                                    : isDueSoon    ? '#fef3c7'
                                     : v.status === 'paid' ? '#dcfce7' : '#f3f4f6',
-                          color:     isOverdue  ? '#dc2626'
-                                    : isDueSoon ? '#d97706'
+                          color:      isAuto      ? '#16a34a'
+                                    : isOverdue    ? '#dc2626'
+                                    : isDueSoon    ? '#d97706'
                                     : v.status === 'paid' ? '#16a34a' : '#374151'
                         }}>
-                          {isOverdue ? 'Overdue'
+                          {isAuto ? '⚡ Auto-Deducted'
+                            : isOverdue ? 'Overdue'
                             : isDueSoon ? 'Due Soon'
                             : v.status === 'paid' ? 'Paid' : 'Pending'}
                         </span>
@@ -540,8 +565,9 @@ const Reports = () => {
                         )}
                       </td>
 
+                      {/* ACTIONS — Mark Paid hidden once settled (paid or auto-deducted) */}
                       <td>
-                        {v.status !== 'paid' && (
+                        {!isSettled(v) && (
                           <button className="confirm-btn" onClick={() => handleAdminMarkPaid(v._id)}>
                             Mark Paid
                           </button>
@@ -553,7 +579,7 @@ const Reports = () => {
                               background: '#fef2f2', color: '#dc2626',
                               border: '1px solid #fecaca', borderRadius: 6,
                               padding: '4px 10px', fontSize: 11,
-                              cursor: 'pointer', marginTop: v.status !== 'paid' ? 4 : 0,
+                              cursor: 'pointer', marginTop: !isSettled(v) ? 4 : 0,
                               display: 'block'
                             }}
                           >
@@ -590,7 +616,7 @@ const Reports = () => {
                 <thead>
                   <tr>
                     <th>Vendor</th>
-                    <th>Week</th>
+                    <th>Period</th>
                     <th>Commission</th>
                     <th>Raised On</th>
                     <th>Dispute Note</th>

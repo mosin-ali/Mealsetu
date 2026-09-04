@@ -3,6 +3,7 @@ import { getDashboardStats, getVendorOrders, getVendorCommissionSummary } from '
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmt    = (n) => (n || 0).toLocaleString('en-IN');
+const inr    = (n) => `₹${fmt(n)}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 const PLAN_COLORS = {
@@ -45,7 +46,7 @@ const StatCard = ({ icon, label, value, valueColor = '#f26522', sub, sub2, badge
 );
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-const FinanceDashboard = () => {
+const FinanceDashboard = ({ onGoToCommission }) => {
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);
   const [stats,      setStats]      = useState(null);
@@ -79,7 +80,6 @@ const FinanceDashboard = () => {
   const lmStart  = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const lmEnd    = new Date(now.getFullYear(), now.getMonth(), 0);
 
-  // All paid orders (use stats.totalRevenue as truth; orders used for breakdown)
   const paidOrders   = orders.filter(o => (o.paymentStatus || '').toLowerCase() === 'paid');
   const totalRevenue = stats?.totalRevenue ?? paidOrders.reduce((s, o) => s + (o.amount || 0), 0);
 
@@ -91,7 +91,6 @@ const FinanceDashboard = () => {
 
   const avgVal = paidOrders.length ? Math.round(totalRevenue / paidOrders.length) : 0;
 
-  // Plan breakdown (all orders, not just paid — mirrors how orders are counted)
   const PLAN_TYPES = ['Trial', 'Weekly', 'Monthly', 'OneDay'];
   const planBreakdown = PLAN_TYPES.map(type => {
     const pl  = orders.filter(o => o.planType === type);
@@ -102,20 +101,12 @@ const FinanceDashboard = () => {
   });
   const totalCount = planBreakdown.reduce((s, p) => s + p.count, 0);
 
-  // Cash pending
   const pendingCashAmt = stats?.cashPaymentsTotal
     ? orders.filter(o => o.paymentMethod === 'Cash' && (o.paymentStatus || '').toLowerCase() !== 'paid')
              .reduce((s, o) => s + (o.amount || 0), 0)
     : 0;
   const pendingCashCount = orders.filter(o =>
     o.paymentMethod === 'Cash' && (o.paymentStatus || '').toLowerCase() !== 'paid').length;
-
-  // Commission fields (from getVendorCommissionSummary response shape)
-  const cw           = commission?.currentWeek;
-  const commGross    = cw?.total_earning    ?? 0;
-  const commRate     = cw?.commission_rate  ?? 0;
-  const commOwed     = cw?.commission_amount ?? 0;
-  const commNet      = commission?.lifetimeNet ?? (commGross - commOwed);
 
   // ── Loading / Error ────────────────────────────────────────────────────────
   if (loading) return (
@@ -147,7 +138,6 @@ const FinanceDashboard = () => {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: 24, background: '#f0f4f8', minHeight: '100vh' }}>
-      {/* ── Responsive CSS ── */}
       <style>{`
         .fd-stat-grid {
           display: grid;
@@ -156,7 +146,7 @@ const FinanceDashboard = () => {
         }
         .fd-middle { display: flex; gap: 16px; margin-top: 20px; flex-wrap: wrap; }
         .fd-breakdown  { flex: 1.4 1 280px; background:#fff; border-radius:14px; padding:20px 22px; border:1px solid #e8ecf0; box-shadow:0 1px 4px rgba(0,0,0,.06); }
-        .fd-commission { flex: 1 1 220px;   background:#fff; border-radius:14px; padding:20px 22px; border:1px solid #e8ecf0; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+        .fd-commission { flex: 1 1 260px;   background:#fff; border-radius:14px; padding:20px 22px; border:1px solid #e8ecf0; box-shadow:0 1px 4px rgba(0,0,0,.06); }
         .fd-tbl { overflow-x: auto; }
         .fd-tbl table { min-width: 400px; }
         @media (max-width: 640px) {
@@ -187,14 +177,14 @@ const FinanceDashboard = () => {
         </button>
       </div>
 
-      {/* ── Stat Cards ── */}
+      {/* ── Stat Cards — MONTHLY is now the primary number, all-time is just context ── */}
       <div className="fd-stat-grid">
         <StatCard
           icon="₹"
-          label="Total Revenue"
-          value={`₹${fmt(thisMonRev || totalRevenue)}`}
-          sub={thisMonRev !== totalRevenue ? 'This month' : 'All time'}
-          sub2={thisMonRev !== totalRevenue ? `All time: ₹${fmt(totalRevenue)}` : `${orders.length} total orders`}
+          label="This Month's Revenue"
+          value={inr(thisMonRev)}
+          sub={`${thisMonOrders.length} paid orders this month`}
+          sub2={`All time: ${inr(totalRevenue)} · ${orders.length} orders`}
           badge={trend !== null && (
             <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700,
               color: +trend >= 0 ? '#16a34a' : '#ef4444' }}>
@@ -213,14 +203,14 @@ const FinanceDashboard = () => {
         <StatCard
           icon=""
           label="Avg Order Value"
-          value={`₹${fmt(avgVal)}`}
+          value={inr(avgVal)}
           sub="Per paid transaction"
           sub2={`Based on ${paidOrders.length} paid orders`}
         />
         <StatCard
           icon=""
           label="Pending Payments"
-          value={`₹${fmt(pendingCashAmt)}`}
+          value={inr(pendingCashAmt)}
           valueColor={pendingCashAmt > 0 ? '#ef4444' : '#16a34a'}
           sub={`${pendingCashCount} cash orders unpaid`}
           badge={
@@ -256,14 +246,14 @@ const FinanceDashboard = () => {
                 <tr key={p.plan} style={{ borderBottom: '1px solid #f8fafc' }}>
                   <td style={{ padding: '11px 10px' }}><PlanBadge planType={p.plan} /></td>
                   <td style={{ padding: '11px 10px', color: '#1a202c', fontSize: 14, fontWeight: 600 }}>{p.count}</td>
-                  <td style={{ padding: '11px 10px', color: '#1a202c', fontSize: 14 }}>₹{fmt(p.revenue)}</td>
+                  <td style={{ padding: '11px 10px', color: '#1a202c', fontSize: 14 }}>{inr(p.revenue)}</td>
                   <td style={{ padding: '11px 10px', color: '#64748b', fontSize: 13 }}>{p.pct}%</td>
                 </tr>
               ))}
               <tr style={{ borderTop: '2px solid #e8ecf0' }}>
                 <td style={{ padding: '11px 10px', fontWeight: 800, color: '#f26522', fontSize: 14 }}>Total</td>
                 <td style={{ padding: '11px 10px', fontWeight: 800, color: '#f26522', fontSize: 14 }}>{totalCount}</td>
-                <td style={{ padding: '11px 10px', fontWeight: 800, color: '#f26522', fontSize: 14 }}>₹{fmt(totalRevenue)}</td>
+                <td style={{ padding: '11px 10px', fontWeight: 800, color: '#f26522', fontSize: 14 }}>{inr(totalRevenue)}</td>
                 <td style={{ padding: '11px 10px', fontWeight: 800, color: '#f26522', fontSize: 14 }}>100%</td>
               </tr>
             </tbody>
@@ -271,35 +261,62 @@ const FinanceDashboard = () => {
           </div>
         </div>
 
-        {/* Commission Summary */}
+        {/* Commission Summary — FIXED: reads the flat monthly shape returned
+            by getVendorCommissionSummary() directly. The old code read
+            commission?.currentWeek, a field that response no longer has,
+            which is why this card always showed "No commission data". */}
         <div className="fd-commission">
           <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#1e2d5a' }}>
              Commission Summary
           </h3>
-          {!cw ? (
+
+          {!commission ? (
             <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', paddingTop: 20 }}>
-              No commission data yet for this week
+              Couldn't load commission data
             </div>
           ) : (
             <>
+              {/* Status pill */}
+              {commission.status === 'auto_deducted' ? (
+                <div style={{
+                  background: '#dcfce7', border: '1px solid #86efac', borderRadius: 8,
+                  padding: '8px 12px', marginBottom: 14, fontSize: 12, color: '#166534', fontWeight: 600
+                }}>
+                  ✅ Auto-deducted for {commission.current_month}
+                </div>
+              ) : (
+                <div style={{
+                  background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8,
+                  padding: '8px 12px', marginBottom: 14, fontSize: 12, color: '#c2410c', fontWeight: 600
+                }}>
+                  ⏳ Live estimate — auto-deducts on the 1st
+                </div>
+              )}
+
               {[
-                { label: 'Gross Revenue',   value: `₹${fmt(commGross)}`, color: '#1a202c'  },
-                { label: 'Commission Rate', value: `${commRate}%`,        color: '#1a202c'  },
-                { label: 'Commission Owed', value: `₹${fmt(commOwed)}`,   color: '#ef4444', bold: true },
-                { label: 'Net Earnings',    value: `₹${fmt(commNet)}`,    color: '#16a34a', bold: true },
+                { label: 'Gross Revenue',   value: inr(commission.gross_earning) },
+                { label: 'Expenses',        value: (commission.total_expenses > 0 ? '-' : '') + inr(commission.total_expenses), color: commission.total_expenses > 0 ? '#f59e0b' : '#94a3b8' },
+                { label: 'Net Earnings',    value: inr(commission.net_earning) },
+                { label: `Commission (${commission.commission_rate || 0}%)`, value: '-' + inr(commission.commission_due), color: '#ef4444', bold: true },
+                { label: 'You Keep',        value: inr(commission.vendor_keeps), color: '#16a34a', bold: true },
               ].map(r => (
                 <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between',
                   alignItems: 'center', padding: '11px 0', borderBottom: '1px solid #f1f5f9' }}>
                   <span style={{ color: '#64748b', fontSize: 13 }}>{r.label}</span>
-                  <span style={{ color: r.color, fontWeight: r.bold ? 700 : 500,
+                  <span style={{ color: r.color || '#1a202c', fontWeight: r.bold ? 700 : 500,
                     fontSize: r.bold ? 16 : 14 }}>{r.value}</span>
                 </div>
               ))}
-              <button style={{ marginTop: 18, width: '100%', background: '#f26522',
-                color: '#fff', border: 'none', padding: '11px', borderRadius: 10,
-                cursor: 'pointer', fontWeight: 700, fontSize: 14,
-                boxShadow: '0 2px 8px rgba(242,101,34,0.25)' }}>
-                Pay Commission →
+
+              {/* No "Pay Commission" button — commission is auto-deducted,
+                  there is nothing for the vendor to pay. */}
+              <button
+                onClick={onGoToCommission}
+                style={{ marginTop: 18, width: '100%', background: '#f3f4f6',
+                  color: '#374151', border: '1px solid #e5e7eb', padding: '11px', borderRadius: 10,
+                  cursor: 'pointer', fontWeight: 700, fontSize: 14 }}
+              >
+                View Full Commission History →
               </button>
             </>
           )}

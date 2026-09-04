@@ -818,9 +818,8 @@ const handleSavePricing = async () => {
 
       case 'cash-payments':
         return <CashPayments />;
-
-      case 'commission':
-        return <CommissionHistory />;
+case 'commission':
+        return <CommissionHistory onGoToExpenses={() => setActiveTab('expenses')} />;
 
       case 'menu':
         return <WeeklyMenuPlanner />;

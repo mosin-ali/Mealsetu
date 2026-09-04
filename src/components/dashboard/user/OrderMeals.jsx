@@ -577,7 +577,20 @@ const continueWithUpcomingPlan = async () => {
                       <h3 className="vendor-name">{t.name}</h3>
                       <p className="vendor-type">{t.type}</p>
                       <div style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 8px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        📍 {t.address ? t.address.split(',').slice(-2).join(', ') : (t.pincode || 'Navsari')}
+                     📍 {
+  typeof t.address === 'string'
+    ? t.address.split(',').slice(-2).join(', ')
+    : t.address && typeof t.address === 'object'
+      ? (
+          t.address.city ||
+          t.address.area ||
+          t.address.locality ||
+          t.address.pincode ||
+          t.pincode ||
+          'Location not available'
+        )
+      : (t.pincode || 'Navsari')
+}
                         {isPincodeSearch && userPincode && <span style={{ background: '#dcfce7', color: '#16a34a', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>Nearby ✓</span>}
                         {t.distanceKm !== null && t.distanceKm !== undefined && <span style={{ background: '#eff6ff', color: '#2563eb', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700', marginLeft: '6px' }}>📍 {t.distanceKm} km away</span>}
                       </div>
