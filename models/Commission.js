@@ -37,11 +37,22 @@ month: {
     type: Number, 
     required: true 
   },
+  // ── MONTHLY AUTO-DEDUCTION ────────────────────────────────
+  gross_earning: { type: Number, default: 0 },
+  total_expenses: { type: Number, default: 0 },
+  net_earning: { type: Number, default: 0 },
+  auto_deducted: { type: Boolean, default: false },
+  auto_deducted_at: { type: Date, default: null },
+  deduction_method: { type: String, enum: ['auto', 'manual'], default: 'auto' },
   status: {
     type: String,
-    enum: ['pending', 'paid', 'overdue', 'pending_verification'],
+    enum: ['pending', 'auto_deducted', 'paid', 'overdue', 'pending_verification'],
     default: 'pending'
-  },
+  }, 
+  periodStart: { type: Date, default: null },
+  periodEnd: { type: Date, default: null },
+  isFirstCycle: { type: Boolean, default: false },
+  financialMonthNumber: { type: Number, default: null }, // 1=April...12=March
   payment_proof_url: {
     type: String
   },

@@ -1443,225 +1443,91 @@ const submitVendorCompliance = async (req, res) => {
 // @route   GET /api/vendor/commission/summary
 const getCommissionSummary = async (req, res) => {
   try {
-    console.log('=== getCommissionSummary CALLED ===');
-    console.log('req.user._id:', req.user?._id);
-    const { getCommissionWeek } = require('../utils/commissionWeekCalculator');
+    const Expense = require('../models/Expense');
+    const CommissionSetting = require('../models/CommissionSetting');
+    const { getCurrentOpenPeriod, getFinancialYearLabel } = require('../utils/commissionPeriod');
 
     const vendor = await Vendor.findOne({ ownerId: req.user._id });
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
     const vendorId = vendor._id;
-    console.log('vendorId:', vendorId);
-
     const now = new Date();
 
-    // Rolling week anchored to vendor's first order — matches cron exactly
     const firstOrder = await Order.findOne({ vendorId })
       .sort({ orderDate: 1, createdAt: 1 })
-      .select('createdAt orderDate startDate')
-      .lean();
-
+      .select('createdAt orderDate startDate').lean();
     const anchorDate = firstOrder?.createdAt || firstOrder?.orderDate || firstOrder?.startDate;
-    console.log('=== firstOrder found ===', anchorDate || 'NOT FOUND');
+
     if (!anchorDate) {
       return res.json({
-        success:            true,
-        currentWeek:        null,
-        isWeekOpen:         false,
-        canPay:             false,
-        lifetimeEarnings:   0,
-        lifetimeCommission: 0,
-        lifetimeNet:        0
+        success: true, status: 'not_generated',
+        gross_earning: 0, total_expenses: 0, net_earning: 0,
+        commission_rate: 0, commission_due: 0, vendor_keeps: 0,
+        tier_name: 'Starter', current_month: now.toLocaleString('en-IN', { month: 'long', year: 'numeric' }),
+        orders_count: 0, expenses_count: 0, auto_deducted: false,
+        lifetimeNetEarning: 0, lifetimeCommission: 0
       });
     }
 
-    const weekInfo = getCommissionWeek(anchorDate, now);
-    if (!weekInfo || isNaN(new Date(weekInfo.weekStart).getTime())) {
-      return res.json({
-        success:            true,
-        currentWeek:        null,
-        isWeekOpen:         false,
-        canPay:             false,
-        lifetimeEarnings:   0,
-        lifetimeCommission: 0,
-        lifetimeNet:        0
-      });
-    }
+    const openPeriod = await getCurrentOpenPeriod(Commission, vendorId, anchorDate, now);
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    const isWeekOpen = now <= new Date(weekInfo.weekEnd);
-
-    const start = new Date(weekInfo.weekStart);
-    start.setUTCHours(0, 0, 0, 0);
-    const end = new Date(weekInfo.weekEnd);
-    end.setUTCHours(23, 59, 59, 999);
-
-    // Check if existing locked record
-    let commission = await Commission.findOne({ vendorId, week: weekInfo.weekKey });
-
-    // Lifetime aggregation — earnings from all locked records; commission only from PAID ones.
-    // Unlocked drafts (created during page visits) are excluded from all totals.
-    const lifetimeAgg = await Commission.aggregate([
-      { $match: { vendorId: vendorId, isLocked: true } },
-      { $group: {
-        _id:              null,
-        lifetimeEarnings: { $sum: '$total_earning' },
-        lifetimeCommission: {
-          $sum: { $cond: [{ $eq: ['$status', 'paid'] }, '$commission_amount', 0] }
-        },
-        lifetimePending: {
-          $sum: { $cond: [{ $in: ['$status', ['pending', 'overdue']] }, '$commission_amount', 0] }
-        }
-      }}
-    ]);
-    const lifetimeEarnings   = lifetimeAgg[0]?.lifetimeEarnings   || 0;
-    const lifetimeCommission = lifetimeAgg[0]?.lifetimeCommission || 0;
-    const lifetimePending    = lifetimeAgg[0]?.lifetimePending    || 0;
-    const lifetimeNet        = lifetimeEarnings - lifetimeCommission;
-
-    // Remove stale unlocked drafts for weeks that haven't started yet.
-    // These were created by the old lockedAt-as-weekStart bug and confuse the history view.
-    await Commission.deleteMany({
-      vendorId,
-      isLocked: false,
-      weekStart: { $gt: weekInfo.weekEnd }
-    });
-
-    // If locked OR already paid — return frozen values, never recalculate
-    if (commission?.isLocked || commission?.status === 'paid') {
-      const dueDate   = new Date(commission.due_date);
-      const isOverdue = dueDate < now && commission.status !== 'paid';
-      const canPay    = commission.status !== 'paid' && commission.isLocked;
-      const daysUntilDue = isOverdue
-        ? -Math.floor((now - dueDate) / 86400000)
-        : Math.ceil((dueDate - now) / 86400000);
-
-      console.log('=== getCommissionSummary RETURNING (locked) ===', JSON.stringify({
-        hasCurrentWeek:   true,
-        weekKey:          commission.week,
-        totalEarning:     commission.total_earning,
-        commissionAmount: commission.commission_amount,
-        status:           commission.status,
-        isLocked:         commission.isLocked,
-        firstOrderExists: !!firstOrder,
-        firstOrderDate:   anchorDate
-      }));
-      return res.json({
-        success:     true,
-        currentWeek: {
-          ...commission.toObject(),
-          isWeekOpen:  false,
-          canPay,
-          isOverdue,
-          isEstimate:  false,
-          daysUntilDue
-        },
-        lifetimeEarnings,
-        lifetimeCommission,
-        lifetimePending,
-        lifetimeNet
-      });
-    }
-
-    // Use canonical week boundaries from the rolling-week calculator.
-    // Never derive start from lockedAt (cron execution time) — that creates
-    // a gap between midnight and 8 AM on the first day of every new week.
-    const weekQueryStart = new Date(weekInfo.weekStart);
-    weekQueryStart.setUTCHours(0, 0, 0, 0);
-    const weekQueryEnd = new Date(weekInfo.weekEnd);
-
-    // Commission counts every order where money was actually received:
-    // - status NOT cancelled / on-hold (active, completed, pending-extension, trial, expired all count)
-    // - paymentStatus = 'Paid'  (excludes unconfirmed cash orders)
     const orders = await Order.find({
-      vendorId,
-      status:        { $nin: ['cancelled', 'on-hold'] },
-      paymentStatus: 'Paid',
+      vendorId, status: { $nin: ['cancelled', 'on-hold'] }, paymentStatus: 'Paid',
       $or: [
-        { createdAt: { $gte: weekQueryStart, $lte: weekQueryEnd } },
-        { orderDate: { $gte: weekQueryStart, $lte: weekQueryEnd } }
+        { createdAt: { $gte: openPeriod.periodStart, $lte: openPeriod.periodEnd } },
+        { orderDate: { $gte: openPeriod.periodStart, $lte: openPeriod.periodEnd } }
       ]
-    }).select('amount walletDeduction status paymentStatus createdAt orderDate').lean();
+    }).select('amount walletDeduction').lean();
 
-    console.log(`[commission] vendorId=${vendorId} weekStart=${weekQueryStart.toISOString()} weekEnd=${weekQueryEnd.toISOString()} orders=${orders.length}`);
+    const grossEarning = orders.reduce((s, o) => s + (o.amount || 0), 0);
+    const walletDeductions = orders.reduce((s, o) => s + (o.walletDeduction || 0), 0);
+    const grossAfterWallet = grossEarning - walletDeductions;
 
-    // Separate gross earnings from wallet deductions for transparency
-    const totalGross           = orders.reduce((s, o) => s + (o.amount || 0), 0);
-    const totalWalletDeductions = orders.reduce((s, o) => s + (o.walletDeduction || 0), 0);
-    // Commission base = gross − wallet (vendor actually received less cash)
-    const totalEarning = totalGross - totalWalletDeductions;
+    const expenses = await Expense.find({ vendorId, month: currentMonth }).lean();
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const netEarning = Math.max(0, grossAfterWallet - totalExpenses);
 
-    // Tier lookup
-    const tier = await CommissionSetting.findOne({
-      isActive:   true,
-      minEarning: { $lte: totalEarning },
-      $or: [
-        { maxEarning: { $gte: totalEarning } },
-        { maxEarning: null }
-      ]
-    }).sort({ minEarning: -1 }).limit(1).lean();
+    const tiers = await CommissionSetting.find({ isActive: true }).sort({ minEarning: 1 });
+    let commissionRate = 3, tierName = 'Starter';
+    for (const tier of tiers) {
+      if (netEarning >= tier.minEarning && (tier.maxEarning === null || netEarning <= tier.maxEarning)) {
+        commissionRate = tier.ratePercent; tierName = tier.tierName; break;
+      }
+    }
+    const commissionDue = Math.round(netEarning * commissionRate / 100);
+    const vendorKeeps = netEarning - commissionDue;
 
-    const rate             = tier?.ratePercent || 3;
-    const commissionAmount = Math.round(totalEarning * rate / 100);
-    const dueDate          = new Date(weekInfo.weekEnd);
-    dueDate.setUTCDate(dueDate.getUTCDate() + 7);
+    const existingCommission = await Commission.findOne({ vendorId, month: currentMonth }).lean();
 
-    const settlementNumber = `MS-${weekInfo.financialYear}-W${String(
-      weekInfo.fyWeekNumber
-    ).padStart(2, '0')}-${String(vendorId).slice(-4).toUpperCase()}`;
+    const lifetimeAgg = await Commission.aggregate([
+      { $match: { vendorId, status: { $in: ['auto_deducted', 'paid'] } } },
+      { $group: { _id: null, lifetimeNet: { $sum: '$net_earning' }, lifetimeCommission: { $sum: '$commission_amount' } } }
+    ]);
 
-    // Upsert — never overwrite a locked record
-    commission = await Commission.findOneAndUpdate(
-      { vendorId, week: weekInfo.weekKey, isLocked: { $ne: true } },
-      {
-        $set: {
-          total_orders:            orders.length,
-          total_earning:           totalGross,           // gross (before wallet)
-          total_wallet_deductions: totalWalletDeductions,
-          commission_rate:         rate,
-          commission_amount:       commissionAmount,     // on base (gross - wallet)
-          due_date:                dueDate,
-          weekStart:               weekInfo.weekStart,
-          weekEnd:                 weekInfo.weekEnd,
-          financialYear:           weekInfo.financialYear,
-          financialWeekNumber:     weekInfo.fyWeekNumber,
-          settlementNumber
-        },
-        $setOnInsert: {
-          status:        'pending',
-          isLocked:      false,
-          reminderCount: 0
-        }
-      },
-      { upsert: true, new: true }
-    );
-
-    const canPay = !isWeekOpen && commission.status !== 'paid' && commission.isLocked;
-
-    console.log('=== getCommissionSummary RETURNING (live) ===', JSON.stringify({
-      hasCurrentWeek:   !!commission,
-      weekKey:          commission?.week,
-      totalEarning:     commission?.total_earning,
-      commissionAmount: commission?.commission_amount,
-      status:           commission?.status,
-      isLocked:         commission?.isLocked,
-      firstOrderExists: !!firstOrder,
-      firstOrderDate:   firstOrder?.createdAt
-    }));
-    return res.json({
-      success:     true,
-      currentWeek: {
-        ...commission.toObject(),
-        isWeekOpen,
-        canPay,
-        isOverdue:   false,
-        isEstimate:  isWeekOpen,
-        daysUntilDue: Math.ceil((dueDate - now) / 86400000)
-      },
-      lifetimeEarnings,
-      lifetimeCommission,
-      lifetimePending,
-      lifetimeNet
+    return res.status(200).json({
+      success: true,
+      gross_earning: grossAfterWallet,
+      total_expenses: totalExpenses,
+      net_earning: existingCommission ? existingCommission.net_earning : netEarning,
+      commission_rate: existingCommission ? existingCommission.commission_rate : commissionRate,
+      commission_due: existingCommission ? existingCommission.commission_amount : commissionDue,
+      vendor_keeps: existingCommission ? (existingCommission.net_earning - existingCommission.commission_amount) : vendorKeeps,
+      tier_name: tierName,
+      current_month: now.toLocaleString('en-IN', { month: 'long', year: 'numeric' }),
+      month: currentMonth,
+      status: existingCommission ? existingCommission.status : 'not_generated',
+      orders_count: orders.length,
+      expenses_count: expenses.length,
+      auto_deducted: existingCommission?.auto_deducted || false,
+      auto_deducted_at: existingCommission?.auto_deducted_at || null,
+      commissionId: existingCommission?._id || null,
+      periodStart: existingCommission?.periodStart || openPeriod.periodStart,
+      periodEnd: existingCommission?.periodEnd || openPeriod.periodEnd,
+      isFirstCycle: existingCommission ? existingCommission.isFirstCycle : openPeriod.isFirstCycle,
+      financialYear: getFinancialYearLabel(now),
+      lifetimeNetEarning: lifetimeAgg[0]?.lifetimeNet || 0,
+      lifetimeCommission: lifetimeAgg[0]?.lifetimeCommission || 0
     });
-
   } catch (err) {
     console.error('[getCommissionSummary]', err);
     return res.status(500).json({ message: err.message });
@@ -1713,7 +1579,7 @@ const getMyCommissions = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const commissions = await Commission.find({ vendorId: vendor._id })
-      .sort({ weekStart: -1 })
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 

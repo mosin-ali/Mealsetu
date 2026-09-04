@@ -1,379 +1,210 @@
+// Backend/cron/weeklyCommission.js
+// NOTE: filename kept as-is so server.js's require path doesn't change.
+// Commission generation is now MONTHLY + AUTO-DEDUCTED. No vendor payment step.
+
 const cron = require('node-cron');
 const Vendor = require('../models/Vendor');
 const Order = require('../models/Order');
 const Commission = require('../models/Commission');
 const CommissionSetting = require('../models/CommissionSetting');
+const Expense = require('../models/Expense'); // your existing expense model
 const { sendEmail } = require('../utils/emailUtils');
-const { getCommissionWeek } = require('../utils/commissionWeekCalculator');
 
-// ===== HELPER: Find commission tier for an earnings amount =====
-const getTierForEarnings = async (amount) => {
+// ===== HELPER: previous calendar month range =====
+const getPreviousMonthRange = () => {
+  const now = new Date();
+  const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const month = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+
+  const startOfMonth = new Date(year, month, 1, 0, 0, 0);
+  const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
+  const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const monthLabel = startOfMonth.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+
+  return { startOfMonth, endOfMonth, monthKey, monthLabel };
+};
+
+// ===== HELPER: tier lookup =====
+const getTierForEarning = async (amount) => {
   const tiers = await CommissionSetting.find({ isActive: true }).sort({ minEarning: 1 });
-
-  let matched = { tierName: 'Starter', ratePercent: 3 };
+  let rate = 3;
+  let tierName = 'Starter';
   for (const tier of tiers) {
-    if (
-      amount >= tier.minEarning &&
-      (tier.maxEarning === null || amount <= tier.maxEarning)
-    ) {
-      matched = tier;
+    if (amount >= tier.minEarning && (tier.maxEarning === null || amount <= tier.maxEarning)) {
+      rate = tier.ratePercent;
+      tierName = tier.tierName;
       break;
     }
   }
-  return matched;
+  return { rate, tierName };
 };
 
-// ===== JOB 1: Every day 8AM — Generate commission for any rolling week that ended yesterday =====
-// Running daily (not just Monday) ensures every vendor's non-Monday week-ends are caught.
-const generateWeeklyCommissions = cron.schedule('0 8 * * *', async () => {
-  console.log('🔄 Commission Generation Cron Started:', new Date().toLocaleString());
+// ===== JOB 1: 1st of every month, 8AM — generate + AUTO-DEDUCT commission =====
+const { getBillingPeriod } = require('../utils/commissionPeriod');
 
+const generateMonthlyCommissions = cron.schedule('0 8 1 * *', async () => {
+  console.log('📅 Monthly Commission Cron Started:', new Date().toLocaleString());
   try {
-    const now       = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    yesterday.setUTCHours(12, 0, 0, 0); // midday yesterday — safely inside the previous day
-
-    const vendors = await Vendor.find({
-      isApproved: true,
-      status:     'approved'
-    }).populate('ownerId', 'email name');
-
+    const now = new Date();
+    const vendors = await Vendor.find({ isApproved: true, status: 'approved' }).populate('ownerId', 'email name');
     console.log(`👥 Found ${vendors.length} approved vendors`);
 
     for (const vendor of vendors) {
       try {
-        // Rolling week is anchored to vendor's first order date
-        const firstOrder = await Order.findOne({ vendorId: vendor._id }).sort({ orderDate: 1, createdAt: 1 }).select('createdAt orderDate startDate');
+        const firstOrder = await Order.findOne({ vendorId: vendor._id })
+          .sort({ orderDate: 1, createdAt: 1 })
+          .select('createdAt orderDate startDate');
         if (!firstOrder) continue;
         const anchorDate = firstOrder.createdAt || firstOrder.orderDate || firstOrder.startDate;
         if (!anchorDate) continue;
 
-        const weekInfo = getCommissionWeek(anchorDate, yesterday);
-        if (!weekInfo) continue;
+        const period = getBillingPeriod(anchorDate, now);
+        if (!period) continue; // vendor joined too recently — nothing to bill yet
+        const { periodStart, periodEnd, monthKey, monthLabel, isFirstCycle, financialYear, financialMonthNumber } = period;
 
-        // Only generate if this rolling week actually ended yesterday (i.e. weekEnd = yesterday's date)
-        const weekEndDate = new Date(weekInfo.weekEnd);
-        weekEndDate.setUTCHours(0, 0, 0, 0);
-        const yesterdayDate = new Date(yesterday);
-        yesterdayDate.setUTCHours(0, 0, 0, 0);
-        if (weekEndDate.getTime() !== yesterdayDate.getTime()) continue;
+        const existing = await Commission.findOne({ vendorId: vendor._id, month: monthKey });
+        if (existing) { console.log(`⏭️ [cron] ${vendor.kitchenName} — ${monthKey} already processed`); continue; }
 
-        // Idempotency — skip only if already locked or paid (not unlocked drafts)
-        const existing = await Commission.findOne({
+        const orders = await Order.find({
           vendorId: vendor._id,
-          week:     weekInfo.weekKey
+          status: { $nin: ['cancelled', 'on-hold'] },
+          paymentStatus: 'Paid',
+          $or: [
+            { createdAt: { $gte: periodStart, $lte: periodEnd } },
+            { orderDate: { $gte: periodStart, $lte: periodEnd } }
+          ]
+        }).select('amount walletDeduction');
+
+        const grossEarning = orders.reduce((s, o) => s + (o.amount || 0), 0);
+        const walletDeductions = orders.reduce((s, o) => s + (o.walletDeduction || 0), 0);
+        const grossAfterWallet = grossEarning - walletDeductions;
+
+        // Expense.month is already 'YYYY-MM' — safe to use monthKey even for
+        // a partial first cycle, since periodStart/periodEnd never cross a
+        // month boundary.
+        const expenses = await Expense.find({ vendorId: vendor._id, month: monthKey });
+        const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+
+        const netEarning = Math.max(0, grossAfterWallet - totalExpenses);
+        if (netEarning === 0) { console.log(`⏭️ No net earnings: ${vendor.kitchenName} — ${monthKey}`); continue; }
+
+        const { rate, tierName } = await getTierForEarning(netEarning);
+        const commissionAmount = Math.round(netEarning * rate / 100);
+        const stamp = new Date();
+
+        const cycleNote = isFirstCycle
+          ? `First (partial) cycle: ${periodStart.toLocaleDateString('en-IN')} – ${periodEnd.toLocaleDateString('en-IN')}`
+          : `Full month: ${monthLabel}`;
+
+        await Commission.create({
+          vendorId: vendor._id, month: monthKey, week: null,
+          periodStart, periodEnd, isFirstCycle, financialYear, financialMonthNumber,
+          total_orders: orders.length,
+          total_earning: grossAfterWallet,
+          total_wallet_deductions: walletDeductions,
+          gross_earning: grossEarning,
+          total_expenses: totalExpenses,
+          net_earning: netEarning,
+          commission_rate: rate,
+          commission_amount: commissionAmount,
+          status: 'auto_deducted', auto_deducted: true, auto_deducted_at: stamp,
+          deduction_method: 'auto', isLocked: true, lockedAt: stamp, lockedBy: 'cron',
+          payment_date: stamp, paidOnTime: true,
+          notes: `${cycleNote} | Tier: ${tierName} | Gross: ₹${grossEarning} | Wallet: ₹${walletDeductions} | Expenses: ₹${totalExpenses} | Net: ₹${netEarning}`,
+          tierSnapshot: { tierName, minEarning: null, maxEarning: null, ratePercent: rate },
+          auditLog: [{
+            action: 'auto_deducted', performedBy: 'cron', at: stamp,
+            note: `Auto-deducted. ${cycleNote}. Net ₹${netEarning} × ${rate}% = ₹${commissionAmount}`,
+            valueBefore: {}, valueAfter: { status: 'auto_deducted', commission_amount: commissionAmount }
+          }]
         });
-        if (existing?.isLocked || existing?.status === 'paid') {
-          console.log(`⏭️ [cron] ${vendor.kitchenName} — ${weekInfo.weekKey} already finalized, skip`);
-          continue;
-        }
 
-        // Commission counts every order where money was actually received.
-        // 'pending' orders = extended/scheduled subscriptions paid via UPI — must be included.
-        // Only exclude cancelled / on-hold + unconfirmed cash (paymentStatus != Paid).
-        const weekOrders = await Order.find({
-          vendorId:      vendor._id,
-          createdAt:     { $gte: weekInfo.weekStart, $lte: weekInfo.weekEnd },
-          status:        { $nin: ['cancelled', 'on-hold'] },
-          paymentStatus: 'Paid'
-        });
+        console.log(`✅ [cron] ${vendor.kitchenName} (${isFirstCycle ? 'FIRST cycle' : 'full month'}): ₹${commissionAmount}`);
 
-        const totalGross           = weekOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
-        const totalWalletDeductions = weekOrders.reduce((sum, o) => sum + (o.walletDeduction || 0), 0);
-        // Commission base = gross − wallet deductions (vendor actually received less)
-        const totalEarning = totalGross - totalWalletDeductions;
-
-        if (totalEarning === 0) {
-          console.log(`⏭️ No earnings: ${vendor.kitchenName} — ${weekInfo.weekKey}`);
-          continue;
-        }
-
-        const tier             = await getTierForEarnings(totalEarning);
-        const commissionAmount = Math.round(totalEarning * tier.ratePercent / 100);
-
-        const weekLabel = `${weekInfo.weekStart.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${weekInfo.weekEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`;
-
-        const settlementNum = `MS-${weekInfo.financialYear}-W${String(weekInfo.fyWeekNumber).padStart(2,'0')}-${String(vendor._id).slice(-4).toUpperCase()}`;
-
-        const tierSnapshot = {
-          tierName:    tier.tierName    || 'Starter',
-          minEarning:  tier.minEarning  || 0,
-          maxEarning:  tier.maxEarning  || null,
-          ratePercent: tier.ratePercent || 3
-        };
-
-        if (existing) {
-          // Update existing unlocked draft with final amounts and lock it
-          const updated = await Commission.findByIdAndUpdate(existing._id, {
-            $set: {
-              total_orders:            weekOrders.length,
-              total_earning:           totalGross,
-              total_wallet_deductions: totalWalletDeductions,
-              commission_rate:         tier.ratePercent,
-              commission_amount:       commissionAmount,
-              due_date:                weekInfo.dueDate,
-              isLocked:                true,
-              lockedAt:                now,
-              lockedBy:                'cron',
-              settlementNumber:        settlementNum,
-              tierSnapshot,
-              weekStart:               weekInfo.weekStart,
-              weekEnd:                 weekInfo.weekEnd,
-              financialYear:           weekInfo.financialYear,
-              financialWeekNumber:     weekInfo.fyWeekNumber
-            },
-            $push: {
-              auditLog: {
-                action:      'locked',
-                performedBy: 'cron',
-                at:          now,
-                note:        `Locked by cron. Orders: ${weekOrders.length}, Gross: ₹${totalGross}, Wallet: ₹${totalWalletDeductions}, CommBase: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
-                valueBefore: { total_earning: existing.total_earning, commission_amount: existing.commission_amount },
-                valueAfter:  { total_earning: totalGross, total_wallet_deductions: totalWalletDeductions, commission_amount: commissionAmount, isLocked: true }
-              }
-            }
-          }, { new: true });
-
-          if (!updated) {
-            console.error(`❌ [cron] Failed to lock commission for ${vendor.kitchenName} — ${weekInfo.weekKey}`);
-            continue;
-          }
-          console.log(`🔒 [cron] UPDATED+LOCKED draft: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
-
-        } else {
-          // Create new record (vendor never visited commission page)
-          await Commission.create({
-            vendorId:                vendor._id,
-            week:                    weekInfo.weekKey,
-            month:                   weekInfo.weekKey,
-            weekStart:               weekInfo.weekStart,
-            weekEnd:                 weekInfo.weekEnd,
-            financialYear:           weekInfo.financialYear,
-            financialWeekNumber:     weekInfo.fyWeekNumber,
-            total_orders:            weekOrders.length,
-            total_earning:           totalGross,
-            total_wallet_deductions: totalWalletDeductions,
-            commission_rate:         tier.ratePercent,
-            commission_amount:       commissionAmount,
-            status:              'pending',
-            due_date:            weekInfo.dueDate,
-            notes:               `Week: ${weekLabel}`,
-            isLocked:            true,
-            lockedAt:            now,
-            lockedBy:            'cron',
-            settlementNumber:    settlementNum,
-            reminderCount:       0,
-            tierSnapshot,
-            auditLog: [{
-              action:      'created',
-              performedBy: 'cron',
-              at:          now,
-              note:        `Created by cron. Orders: ${weekOrders.length}, Gross: ₹${totalGross}, Wallet: ₹${totalWalletDeductions}, CommBase: ₹${totalEarning}, Commission: ₹${commissionAmount}`,
-              valueBefore: {},
-              valueAfter:  { isLocked: true, total_earning: totalGross, total_wallet_deductions: totalWalletDeductions, commission_amount: commissionAmount }
-            }]
-          });
-          console.log(`🔒 [cron] CREATED+LOCKED: ${vendor.kitchenName} — ${weekInfo.weekKey} — ₹${commissionAmount}`);
-        }
-
-        // Email vendor — track delivery status in DB
         const vendorEmail = vendor.ownerId?.email;
-        let emailDelivered = null;
-        let emailFailedAt  = null;
         if (vendorEmail) {
           try {
             await sendEmail(
               vendorEmail,
-              `MealSetu — Weekly Commission Due for ${weekLabel}`,
+              `MealSetu — Commission Auto-Deducted for ${monthLabel}`,
               `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-                <div style="background:#f97316;padding:20px;text-align:center;border-radius:10px 10px 0 0">
-                  <h1 style="color:white;margin:0">MealSetu</h1>
+                <div style="background:#1a2240;padding:24px;text-align:center;border-radius:10px 10px 0 0">
+                  <h1 style="color:#f97316;margin:0">MealSetu</h1>
                 </div>
                 <div style="background:white;padding:30px;border-radius:0 0 10px 10px;border:1px solid #e5e7eb">
-                  <h2 style="color:#1a2240">Weekly Commission Statement</h2>
+                  <h2 style="color:#1a2240">${isFirstCycle ? 'Your First Commission Statement' : 'Monthly Commission Statement'}</h2>
                   <p>Dear <strong>${vendor.kitchenName}</strong>,</p>
-                  <p>Your weekly commission has been calculated for <strong>${weekLabel}</strong>.</p>
-                  <div style="background:#f8fafc;padding:20px;border-radius:8px;margin:20px 0;border-left:4px solid #f97316">
-                    <table style="width:100%;border-collapse:collapse">
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Financial Year</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${weekInfo.financialYear}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Week</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${weekInfo.weekKey}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Period</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${weekLabel}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Total Orders</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${weekOrders.length}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Gross Earnings</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">₹${totalGross.toLocaleString('en-IN')}</td>
-                      </tr>
-                      ${totalWalletDeductions > 0 ? `<tr>
-                        <td style="padding:8px 0;color:#64748b">Wallet Deductions</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right;color:#f59e0b">-₹${totalWalletDeductions.toLocaleString('en-IN')}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Commission Base</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">₹${totalEarning.toLocaleString('en-IN')}</td>
-                      </tr>` : ''}
-                      <tr>
-                        <td style="padding:8px 0;color:#64748b">Commission Rate</td>
-                        <td style="padding:8px 0;font-weight:600;text-align:right">${tier.ratePercent}% (${tier.tierName || 'Starter'})</td>
-                      </tr>
-                      <tr style="border-top:2px solid #e5e7eb">
-                        <td style="padding:12px 0;color:#dc2626;font-weight:700;font-size:18px">Commission Due</td>
-                        <td style="padding:12px 0;color:#dc2626;font-weight:700;font-size:18px;text-align:right">₹${commissionAmount.toLocaleString('en-IN')}</td>
-                      </tr>
-                    </table>
-                  </div>
-                  <div style="background:#fef3c7;padding:15px;border-radius:8px;margin:20px 0">
-                    <p style="margin:0;color:#92400e">
-                      ⏰ <strong>Due Date:</strong> ${weekInfo.dueDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-                    </p>
-                  </div>
-                  <p>Please login to your vendor dashboard and pay via Razorpay.</p>
-                  <p style="color:#64748b;font-size:13px;margin-top:30px">Thank you for being part of MealSetu!</p>
+                  ${isFirstCycle
+                ? `<p>Since you joined mid-month, your first billing cycle covers <strong>${periodStart.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })} – ${periodEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</strong> only. From next month onward, every cycle runs the full calendar month.</p>`
+                : `<p>Your commission for <strong>${monthLabel}</strong> has been automatically calculated and deducted. No payment is required from you.</p>`}
+                  <table style="width:100%;border-collapse:collapse;margin:20px 0">
+                    <tr style="background:#f8fafc"><td style="padding:10px;border:1px solid #e2e8f0">Gross Earnings</td><td style="padding:10px;border:1px solid #e2e8f0;text-align:right;font-weight:700">₹${grossEarning.toLocaleString('en-IN')}</td></tr>
+                    ${walletDeductions > 0 ? `<tr><td style="padding:10px;border:1px solid #e2e8f0">Wallet Deductions</td><td style="padding:10px;border:1px solid #e2e8f0;text-align:right;color:#f59e0b;font-weight:700">-₹${walletDeductions.toLocaleString('en-IN')}</td></tr>` : ''}
+                    <tr><td style="padding:10px;border:1px solid #e2e8f0">Total Expenses Deducted</td><td style="padding:10px;border:1px solid #e2e8f0;text-align:right;color:#ef4444;font-weight:700">-₹${totalExpenses.toLocaleString('en-IN')}</td></tr>
+                    <tr style="background:#f8fafc"><td style="padding:10px;border:1px solid #e2e8f0">Net Earnings</td><td style="padding:10px;border:1px solid #e2e8f0;text-align:right;font-weight:700">₹${netEarning.toLocaleString('en-IN')}</td></tr>
+                    <tr><td style="padding:10px;border:1px solid #e2e8f0">Commission Rate (${tierName})</td><td style="padding:10px;border:1px solid #e2e8f0;text-align:right">${rate}%</td></tr>
+                    <tr style="background:#fff7ed"><td style="padding:12px;border:2px solid #f97316;font-weight:700">Commission Auto-Deducted</td><td style="padding:12px;border:2px solid #f97316;text-align:right;color:#f97316;font-weight:800;font-size:18px">₹${commissionAmount.toLocaleString('en-IN')}</td></tr>
+                    <tr style="background:#dcfce7"><td style="padding:12px;border:2px solid #16a34a;font-weight:700">Your Net Payout</td><td style="padding:12px;border:2px solid #16a34a;text-align:right;color:#16a34a;font-weight:800;font-size:18px">₹${(netEarning - commissionAmount).toLocaleString('en-IN')}</td></tr>
+                  </table>
+                  <p style="color:#64748b;font-size:13px">Financial Year ${financialYear} · Commission deducted automatically — no manual payment required.</p>
                 </div>
               </div>`
             );
-            emailDelivered = true;
-            console.log(`📧 Email sent to ${vendorEmail}`);
-          } catch (emailErr) {
-            emailDelivered = false;
-            emailFailedAt  = now;
-            console.error(`❌ Email failed for ${vendor.kitchenName}:`, emailErr.message);
-          }
-
-          // Persist email delivery status on the commission record
-          const commRecord = existing || await Commission.findOne({ vendorId: vendor._id, week: weekInfo.weekKey });
-          if (commRecord) {
-            await Commission.findByIdAndUpdate(commRecord._id, {
-              $set: { emailDelivered, emailFailedAt }
-            });
-          }
+          } catch (emailErr) { console.error(`❌ Email failed for ${vendor.kitchenName}:`, emailErr.message); }
         }
-
       } catch (vendorErr) {
         console.error(`❌ Error processing ${vendor.kitchenName}:`, vendorErr.message);
       }
     }
-
-    // Stale draft cleanup — remove unlocked (never-locked) drafts older than 30 days.
-    // These are created when a vendor visits the commission page but the week never closes
-    // (e.g. zero-order weeks, or weeks left open by a bug).
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const staleResult = await Commission.deleteMany({
-      isLocked: false,
-      status:   { $ne: 'paid' },
-      createdAt: { $lt: thirtyDaysAgo }
-    });
-    if (staleResult.deletedCount > 0) {
-      console.log(`🗑️ Deleted ${staleResult.deletedCount} stale unlocked commission drafts`);
-    }
-
-    console.log('✅ Commission Generation Cron Completed');
+    console.log('✅ Monthly Commission Cron Completed');
   } catch (error) {
-    console.error('❌ Commission Generation Cron Error:', error);
+    console.error('❌ Monthly Commission Cron Error:', error);
   }
-}, {
-  scheduled: false
-});
+}, { scheduled: false });
 
-// ===== JOB 2: Every day 9AM — Mark overdue if due_date has passed and still pending =====
+// ===== JOB 2: Daily 9AM — mark legacy 'pending' commissions overdue =====
+// (Kept for any pre-existing weekly/manual records still in the pipeline;
+//  new monthly records go straight to 'auto_deducted' and never pass through this.)
 const markOverdueCommissions = cron.schedule('0 9 * * *', async () => {
-  console.log('🔄 Overdue Check Cron Started:', new Date().toLocaleString());
-
   try {
-    const now = new Date();
-
     const overdueCommissions = await Commission.find({
-      status:   { $in: ['pending', 'pending_verification'] },
+      status: { $in: ['pending', 'pending_verification'] },
       isLocked: true,
-      due_date: { $lt: now }
-    }).populate('vendorId');
+      due_date: { $lt: new Date() }
+    });
 
-    console.log(`⚠️ Found ${overdueCommissions.length} overdue commissions`);
-
-    for (const commission of overdueCommissions) {
-      try {
-        commission.status = 'overdue';
-        await commission.save();
-      } catch (saveErr) {
-        console.error(`❌ Failed to mark overdue for commission ${commission._id}:`, saveErr.message);
-        continue;
-      }
-
-      console.log(`🔴 Marked overdue: ${commission.vendorId?.kitchenName} — ${commission.week}`);
-
-      try {
-        const vendor = await Vendor.findById(commission.vendorId).populate('ownerId', 'email name');
-        const vendorEmail = vendor?.ownerId?.email;
-
-        if (vendorEmail) {
-          const weekLabel = commission.weekStart && commission.weekEnd
-            ? `${new Date(commission.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(commission.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
-            : (commission.notes || commission.week);
-
-          await sendEmail(
-            vendorEmail,
-            'URGENT: MealSetu Commission Payment Overdue',
-            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-              <div style="background:#dc2626;padding:20px;text-align:center;border-radius:10px 10px 0 0">
-                <h1 style="color:white;margin:0">⚠️ Payment Overdue</h1>
-              </div>
-              <div style="background:white;padding:30px;border-radius:0 0 10px 10px;border:1px solid #fecaca">
-                <p>Dear <strong>${vendor.kitchenName}</strong>,</p>
-                <p>Your commission payment is <strong style="color:#dc2626">OVERDUE</strong>.</p>
-                <div style="background:#fef2f2;padding:20px;border-radius:8px;border-left:4px solid #dc2626;margin:20px 0">
-                  <p style="margin:0"><strong>Week:</strong> ${weekLabel}</p>
-                  <p style="margin:8px 0 0"><strong>Amount Due:</strong>
-                    <span style="color:#dc2626;font-size:20px;font-weight:700">
-                      ₹${commission.commission_amount?.toLocaleString('en-IN')}
-                    </span>
-                  </p>
-                </div>
-                <p>Please pay immediately via your vendor dashboard to avoid service interruption.</p>
-              </div>
-            </div>`
-          );
-        }
-      } catch (emailErr) {
-        console.error('❌ Overdue email failed:', emailErr.message);
-      }
+    for (const c of overdueCommissions) {
+      c.status = 'overdue';
+      await c.save().catch(err => console.error('Overdue save failed:', err.message));
     }
 
-    console.log('✅ Overdue Check Cron Completed');
+    if (overdueCommissions.length > 0) {
+      console.log(`🔴 Marked ${overdueCommissions.length} legacy commission(s) overdue`);
+    }
   } catch (error) {
     console.error('❌ Overdue Check Cron Error:', error);
   }
-}, {
-  scheduled: false
-});
+}, { scheduled: false });
 
 // ===== JOB 3: Every day 7AM — Notify users whose plans expire in 1 or 3 days =====
+// UNCHANGED — this has nothing to do with commissions, kept exactly as it was
+// so plan-expiry notifications keep working.
 const notifyExpiringPlans = cron.schedule('0 7 * * *', async () => {
   console.log('🔔 Plan Expiry Notification Cron Started:', new Date().toLocaleString());
   try {
     const { notifyPlanExpiring } = require('../utils/fcmService');
 
-    const startOfDay = (d) => { const x = new Date(d); x.setUTCHours(0,  0,  0,   0); return x; };
-    const endOfDay   = (d) => { const x = new Date(d); x.setUTCHours(23, 59, 59, 999); return x; };
+    const startOfDay = (d) => { const x = new Date(d); x.setUTCHours(0, 0, 0, 0); return x; };
+    const endOfDay = (d) => { const x = new Date(d); x.setUTCHours(23, 59, 59, 999); return x; };
 
     for (const daysLeft of [1, 3]) {
       const target = new Date();
       target.setDate(target.getDate() + daysLeft);
 
       const expiringOrders = await Order.find({
-        status:  'active',
+        status: 'active',
         endDate: { $gte: startOfDay(target), $lte: endOfDay(target) }
-      }).populate('userId',   'fcmToken name')
+      }).populate('userId', 'fcmToken name')
         .populate('vendorId', 'kitchenName');
 
       console.log(`⏰ ${expiringOrders.length} plans expiring in ${daysLeft} day(s)`);
@@ -393,14 +224,14 @@ const notifyExpiringPlans = cron.schedule('0 7 * * *', async () => {
   }
 }, { scheduled: false });
 
-// ===== START BOTH CRON JOBS =====
+// ===== START ALL CRON JOBS =====
 const startWeeklyCommissionCron = () => {
-  generateWeeklyCommissions.start();
+  generateMonthlyCommissions.start();
   markOverdueCommissions.start();
   notifyExpiringPlans.start();
   console.log('✅ Commission Cron Jobs Started');
-  console.log('   → Commission generation: Every day at 8:00 AM (rolling weeks)');
-  console.log('   → Overdue check: Every day at 9:00 AM');
+  console.log('   → Commission generation: 1st of every month at 8:00 AM (auto-deducted)');
+  console.log('   → Legacy overdue check: Every day at 9:00 AM');
   console.log('   → Plan expiry notifications: Every day at 7:00 AM');
 };
 

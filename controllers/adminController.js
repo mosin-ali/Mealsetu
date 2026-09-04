@@ -626,9 +626,10 @@ const markCommissionPaid = async (req, res) => {
     try {
       const vendorEmail = commission.vendorId?.ownerId?.email;
       const vendorName  = commission.vendorId?.kitchenName || 'Vendor';
-      const weekLabel   = commission.weekStart && commission.weekEnd
+      // Right after: const now = new Date(); const prevStatus = commission.status;
+      const weekLabel = commission.weekStart && commission.weekEnd
         ? `${new Date(commission.weekStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${new Date(commission.weekEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
-        : (commission.notes || commission.week || '');
+        : (commission.notes || commission.week || commission.month || '');
       if (vendorEmail) {
         await sendEmail(
           vendorEmail,
@@ -777,6 +778,12 @@ const getCommissionVendors = async (req, res) => {
           weekStart:         1,
           weekEnd:           1,
           total_earning:     1,
+          total_wallet_deductions: 1,   // ← ADD
+          gross_earning: 1,          // ← ADD
+          total_expenses: 1,          // ← ADD
+          net_earning: 1,          // ← ADD
+          auto_deducted: 1,          // ← ADD
+          auto_deducted_at: 1,          // ← ADD
           commission_rate:   1,
           commission_amount: 1,
           status:            1,
@@ -795,11 +802,11 @@ const getCommissionVendors = async (req, res) => {
       { $sort: { month: -1 } }
     ]);
     
+    // AFTER
     let vendors = commissions;
     if (search) {
-      vendors = vendors.filter(v => v.vendorName.toLowerCase().includes(search.toLowerCase()));
+      vendors = vendors.filter(v => v.vendor_name?.toLowerCase().includes(search.toLowerCase()));
     }
-    
     res.status(200).json({ vendors });
   } catch (error) {
     console.error('Get commission vendors error:', error);
@@ -815,13 +822,17 @@ const getCommissionReportCSV = async (req, res) => {
 
     const query = {};
     if (status && status !== 'all') query.status = status;
+    // AFTER — matches new monthly records (via the `month` string field)
+    // OR legacy weekly records (via weekStart falling in that month)
     if (month) {
       const [year, mon] = month.split('-').map(Number);
-      const monthStart  = new Date(Date.UTC(year, mon - 1, 1));
-      const monthEnd    = new Date(Date.UTC(year, mon, 0, 23, 59, 59, 999));
-      query.weekStart   = { $gte: monthStart, $lte: monthEnd };
+      const monthStart = new Date(Date.UTC(year, mon - 1, 1));
+      const monthEnd = new Date(Date.UTC(year, mon, 0, 23, 59, 59, 999));
+      query.$or = [
+        { month: month },
+        { weekStart: { $gte: monthStart, $lte: monthEnd } }
+      ];
     }
-
     const commissions = await Commission.find(query)
       .populate('vendorId', 'kitchenName address')
       .sort({ weekStart: -1 })
@@ -911,10 +922,11 @@ const getVendorCommissionDetail = async (req, res) => {
     const vendor  = await Vendor.findById(vendorId).select('kitchenName address');
     if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
 
-    const history = await Commission.find({ vendorId }).sort({ weekStart: -1, createdAt: -1 }).lean();
-
-    const totalPaid    = history.filter(h => h.status === 'paid').reduce((s, h) => s + (h.commission_amount || 0), 0);
-    const totalPending = history.filter(h => h.status !== 'paid').reduce((s, h) => s + (h.commission_amount || 0), 0);
+    const history = await Commission.find({ vendorId }).sort({ createdAt: -1 }).lean();
+    const totalPaid = history.filter(h => h.status === 'paid' || h.status === 'auto_deducted')
+      .reduce((s, h) => s + (h.commission_amount || 0), 0);
+    const totalPending = history.filter(h => h.status !== 'paid' && h.status !== 'auto_deducted')
+      .reduce((s, h) => s + (h.commission_amount || 0), 0);
     const overdueCount = history.filter(h => h.status === 'overdue').length;
 
     return res.json({
@@ -1152,9 +1164,11 @@ const resolveCommissionDispute = async (req, res) => {
     } catch (emailErr) {
       console.error('[resolveCommissionDispute] Email failed:', emailErr.message);
     }
+    // Find this, right after the email try/catch in markCommissionPaid:
     if (commission.vendorId?.ownerId?._id) {
-      const { notifyDisputeResolved } = require('../utils/fcmService');
-      notifyDisputeResolved(commission.vendorId.ownerId._id, weekLabel).catch(console.error);
+      const { notifyCommissionPaid } = require('../utils/fcmService');
+      notifyCommissionPaid(commission.vendorId.ownerId._id, weekLabel, commission.commission_amount).catch(console.error);
+      // ^ weekLabel is out of scope here — crashes
     }
 
     res.status(200).json({ success: true, commission });
