@@ -1,13 +1,9 @@
 // Backend/utils/commissionPeriod.js
 // FY = April to March (e.g. "2026-27")
 
-const getFinancialYearLabel = (date) => {
-    const d = new Date(date);
-    const y = d.getFullYear();
-    const m = d.getMonth(); // 0 = Jan
-    return m >= 3 ? `${y}-${String(y + 1).slice(-2)}` : `${y - 1}-${String(y).slice(-2)}`;
-};
-
+// AFTER — reuse your existing, already-correct FY calculator instead of duplicating it
+const { getFinancialYear } = require('./commissionWeekCalculator');
+const getFinancialYearLabel = (date) => getFinancialYear(date); // returns "FY2026-27"
 // 1 = April ... 12 = March
 const getFinancialMonthNumber = (date) => {
     const m = new Date(date).getMonth();

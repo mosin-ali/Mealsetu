@@ -51,6 +51,27 @@ const expenseTotalForMonth = async (vendorId, month) => {
   ]);
   return result[0]?.total || 0;
 };
+// Commission for a given month — uses the finalized Commission record if
+// the cron already generated it (auto_deducted/paid), otherwise gives a
+// live estimate using the current tier table. Keeps this page in sync
+// with what the Commission page actually charges.
+const commissionForMonth = async (vendorId, month, netEarning) => {
+  const existing = await Commission.findOne({ vendorId, month }).lean();
+  if (existing) {
+    return { amount: existing.commission_amount || 0, rate: existing.commission_rate || 0, isFinal: true };
+  }
+  if (netEarning <= 0) return { amount: 0, rate: 0, isFinal: false };
+
+  const tiers = await CommissionSetting.find({ isActive: true }).sort({ minEarning: 1 });
+  let rate = 3;
+  for (const tier of tiers) {
+    if (netEarning >= tier.minEarning && (tier.maxEarning === null || netEarning <= tier.maxEarning)) {
+      rate = tier.ratePercent;
+      break;
+    }
+  }
+  return { amount: Math.round(netEarning * rate / 100), rate, isFinal: false };
+};
 
 // ── Controllers ────────────────────────────────────────────────────────────────
 
@@ -181,13 +202,21 @@ const getExpenseSummary = async (req, res) => {
       Order.countDocuments(orderFilter(start, end)),
     ]);
 
-    const profit     = revenue - totalExpenses;
+    const netEarning = revenue - totalExpenses;
+    const prevNetEarning = prevRevenue - prevTotalExpenses;
+
+    const commission = await commissionForMonth(vendor._id, month, netEarning);
+    const prevCommission = await commissionForMonth(vendor._id, prev, prevNetEarning);
+
+    const profit = revenue - totalExpenses;                 // before commission
+    const profitAfterCommission = profit - commission.amount;              // real take-home
     const prevProfit = prevRevenue - prevTotalExpenses;
+    const prevProfitAfterCommission = prevProfit - prevCommission.amount;
 
     let growth = null;
-    if (prevProfit !== 0) {
-      growth = Math.round(((profit - prevProfit) / Math.abs(prevProfit)) * 1000) / 10;
-    } else if (profit > 0) {
+    if (prevProfitAfterCommission !== 0) {
+      growth = Math.round(((profitAfterCommission - prevProfitAfterCommission) / Math.abs(prevProfitAfterCommission)) * 1000) / 10;
+    } else if (profitAfterCommission > 0) {
       growth = 100;
     }
 
@@ -366,12 +395,16 @@ const getExpenseTrend = async (req, res) => {
         expenseTotalForMonth(vendor._id, mStr),
       ]);
 
+      const netEarningForMonth = revenue - totalExpenses;
+      const commission = await commissionForMonth(vendor._id, mStr, netEarningForMonth);
       trend.push({
-        month:        mStr,
-        monthLabel:   d.toLocaleString('en-IN', { month: 'short', year: '2-digit' }),
+        month: mStr,
+        monthLabel: d.toLocaleString('en-IN', { month: 'short', year: '2-digit' }),
         revenue,
         totalExpenses,
+        commissionAmount: commission.amount,
         profit: revenue - totalExpenses,
+        profitAfterCommission: revenue - totalExpenses - commission.amount,
       });
     }
 
@@ -395,7 +428,8 @@ const getExpenseBudget = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
-
+const CommissionSetting = require('../models/CommissionSetting');
+const Commission = require('../models/Commission');
 // @route PUT /api/vendor/expenses/budget
 const saveExpenseBudget = async (req, res) => {
   try {
