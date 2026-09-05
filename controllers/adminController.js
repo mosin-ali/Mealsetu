@@ -2417,6 +2417,168 @@ const exportPlatformSummaryCSV = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+// ... existing imports and controllers ...
+
+const getDashboardLeaderboard = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const Vendor = require('../models/Vendor');
+    const Commission = require('../models/Commission');
+
+    const now = new Date();
+    const startOfMonth = new Date(
+      now.getFullYear(), now.getMonth(), 1
+    );
+    const endOfMonth = new Date(
+      now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59
+    );
+    const currentMonth = `${now.getFullYear()}-${String(
+      now.getMonth() + 1).padStart(2, '0')}`;
+
+    // Aggregate orders by vendor this month
+    const vendorRevenue = await Order.aggregate([
+      {
+        $match: {
+          orderDate: { $gte: startOfMonth, $lte: endOfMonth }
+        }
+      },
+      {
+        $group: {
+          _id: '$vendorId',
+          totalRevenue: { $sum: '$amount' },
+          totalOrders: { $sum: 1 }
+        }
+      },
+      { $sort: { totalRevenue: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Get vendor details and commission status
+    const leaderboard = await Promise.all(
+      vendorRevenue.map(async (v) => {
+        const vendor = await Vendor.findById(v._id)
+          .select('kitchenName ownerName ownerId')
+          .populate('ownerId', 'name');
+
+        const commission = await Commission.findOne({
+          vendorId: v._id,
+          month: currentMonth
+        });
+
+        const commissionRate = 5;
+        const commissionDue = commission?.commission_amount ||
+          Math.round(v.totalRevenue * commissionRate / 100);
+
+        return {
+          _id: v._id,
+          kitchenName: vendor?.kitchenName || 'Unknown',
+          ownerName: vendor?.ownerId?.name ||
+            vendor?.ownerName || 'N/A',
+          totalRevenue: v.totalRevenue,
+          totalOrders: v.totalOrders,
+          commissionDue,
+          commissionStatus: commission?.status || 'pending'
+        };
+      })
+    );
+
+    // Platform pulse stats
+    const startOfWeek = new Date();
+    startOfWeek.setDate(now.getDate() - 7);
+
+    const vendorsWithNoOrders = await Vendor.aggregate([
+      { $match: { isApproved: true, status: 'approved' } },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { vid: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$vendorId', '$$vid'] },
+                    { $gte: ['$orderDate', startOfWeek] }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'recentOrders'
+        }
+      },
+      {
+        $match: {
+          'recentOrders': { $size: 0 }
+        }
+      },
+      { $count: 'count' }
+    ]);
+
+    const commissionStats = await Commission.aggregate([
+      { $match: { month: currentMonth } },
+      {
+        $group: {
+          _id: null,
+          totalCollected: {
+            $sum: {
+              $cond: [
+                {
+                  $in: ['$status', ['auto_deducted', 'paid']]
+                },
+                '$commission_amount',
+                0
+              ]
+            }
+          },
+          totalPending: {
+            $sum: {
+              $cond: [
+                {
+                  $in: ['$status', ['pending', 'overdue']]
+                },
+                '$commission_amount',
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const avgOrderValue = await Order.aggregate([
+      {
+        $match: {
+          orderDate: { $gte: startOfMonth, $lte: endOfMonth }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avg: { $avg: '$amount' }
+        }
+      }
+    ]);
+
+    res.json({
+      leaderboard,
+      pulse: {
+        vendorsWithNoOrders: vendorsWithNoOrders[0]?.count || 0,
+        commissionCollected:
+          commissionStats[0]?.totalCollected || 0,
+        commissionPending:
+          commissionStats[0]?.totalPending || 0,
+        avgOrderValue:
+          Math.round(avgOrderValue[0]?.avg || 0)
+      }
+    });
+
+  } catch (error) {
+    console.error('getDashboardLeaderboard error:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
 
 module.exports = {
   getPlatformSettings,
@@ -2473,6 +2635,7 @@ module.exports = {
   exportUsersCSV,
   exportDeliveryReportCSV,
   exportPlatformSummaryCSV,
+  getDashboardLeaderboard // Added here
 };
 
 

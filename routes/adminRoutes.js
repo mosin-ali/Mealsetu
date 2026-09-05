@@ -34,6 +34,7 @@ const {
   unflagReview,
   migrateRatings,
   getPlatformDashboard,
+  getDashboardLeaderboard, // <-- ADDED THIS IMPORT
   getSystemAlerts,
   getAdminOrders,
   cancelOrder,
@@ -139,7 +140,7 @@ router.get('/regeocode-vendors', async (req, res) => {
         );
         const geoData = await geoRes.json();
         if (geoData && geoData[0]) {
-          vendor.latitude  = parseFloat(geoData[0].lat);
+          vendor.latitude = parseFloat(geoData[0].lat);
           vendor.longitude = parseFloat(geoData[0].lon);
           await vendor.save();
           updated++;
@@ -182,59 +183,60 @@ router.get('/commission/report/csv', getCommissionReportCSV);
 router.post('/commission/seed-tiers', seedDefaultTiers);
 
 // Vendor commission drill-down
-router.get('/commission/vendor/:vendorId',             getVendorCommissionDetail);
-router.get('/commission/vendor/:vendorId/report',      downloadVendorCommissionReport);
+router.get('/commission/vendor/:vendorId', getVendorCommissionDetail);
+router.get('/commission/vendor/:vendorId/report', downloadVendorCommissionReport);
 router.get('/commission/vendor/:vendorId/week-orders', getAdminVendorWeekOrders);
-router.get('/commission/vendor/:vendorId/payments',    getVendorPaymentHistory);
+router.get('/commission/vendor/:vendorId/payments', getVendorPaymentHistory);
 
 // Commission disputes
-router.get('/commission/disputes',                     getCommissionDisputes);
-router.put('/commission/:id/resolve-dispute',          resolveCommissionDispute);
+router.get('/commission/disputes', getCommissionDisputes);
+router.put('/commission/:id/resolve-dispute', resolveCommissionDispute);
 
 // ── Platform dashboard & alerts ────────────────────────────────────────────
 router.get('/dashboard', getPlatformDashboard);
-router.get('/alerts',    getSystemAlerts);
+router.get('/dashboard/leaderboard', getDashboardLeaderboard); // <-- ADDED THIS ROUTE
+router.get('/alerts', getSystemAlerts);
 
 // ── Order management ───────────────────────────────────────────────────────
-router.get('/orders',              getAdminOrders);
+router.get('/orders', getAdminOrders);
 router.patch('/orders/:id/cancel', cancelOrder);
 
 // ── Enhanced user management ───────────────────────────────────────────────
-router.get('/users/enhanced',         getUsersEnhanced);
-router.patch('/users/:id/suspend',    suspendUser);
-router.patch('/users/:id/activate',   activateUser);
+router.get('/users/enhanced', getUsersEnhanced);
+router.patch('/users/:id/suspend', suspendUser);
+router.patch('/users/:id/activate', activateUser);
 
 // ── Review moderation ──────────────────────────────────────────────────────
-router.get('/reviews/all',          getAdminReviewsEnhanced);
-router.get('/reviews',              getAdminReviews);
-router.patch('/reviews/:id/hide',   hideReview);
+router.get('/reviews/all', getAdminReviewsEnhanced);
+router.get('/reviews', getAdminReviews);
+router.patch('/reviews/:id/hide', hideReview);
 router.patch('/reviews/:id/unhide', unhideReview);
-router.delete('/reviews/:id',       deleteReview);
+router.delete('/reviews/:id', deleteReview);
 router.patch('/reviews/:id/unflag', unflagReview);
 
 // ── One-time migration: sync vendor ratings + backfill isVerifiedPurchase ──
 router.post('/migrate-ratings', migrateRatings);
 
 // ── Vendor drill-down ──────────────────────────────────────────────────────
-router.get('/vendors/:vendorId/detail',                      getVendorDetail);
-router.patch('/vendors/:vendorId/suspend',                   suspendVendor);
-router.get('/vendors/:vendorId/orders',                      getVendorOrders);
-router.patch('/vendors/:vendorId/orders/:orderId/cancel',    cancelVendorOrder);
-router.get('/vendors/:vendorId/reviews',                     getVendorReviews);
-router.get('/vendors/:vendorId/riders',                      getVendorRiders);
-router.patch('/vendors/:vendorId/riders/:riderId/toggle',    toggleVendorRider);
-router.get('/vendors/:vendorId/stuck-batches',               getVendorStuckBatches);
-router.patch('/batches/:batchId/force-close',                forceCloseBatch);
+router.get('/vendors/:vendorId/detail', getVendorDetail);
+router.patch('/vendors/:vendorId/suspend', suspendVendor);
+router.get('/vendors/:vendorId/orders', getVendorOrders);
+router.patch('/vendors/:vendorId/orders/:orderId/cancel', cancelVendorOrder);
+router.get('/vendors/:vendorId/reviews', getVendorReviews);
+router.get('/vendors/:vendorId/riders', getVendorRiders);
+router.patch('/vendors/:vendorId/riders/:riderId/toggle', toggleVendorRider);
+router.get('/vendors/:vendorId/stuck-batches', getVendorStuckBatches);
+router.patch('/batches/:batchId/force-close', forceCloseBatch);
 
 // ── Delivery partner management ────────────────────────────────────────────
-router.post('/delivery-partners',             createDeliveryPartner);
-router.get('/delivery-partners',              getDeliveryPartners);
+router.post('/delivery-partners', createDeliveryPartner);
+router.get('/delivery-partners', getDeliveryPartners);
 router.patch('/delivery-partners/:id/toggle', togglePartnerStatus);
 
 // ── CSV Exports ────────────────────────────────────────────────────────────
-router.get('/export/orders',   exportOrdersCSV);
-router.get('/export/users',    exportUsersCSV);
+router.get('/export/orders', exportOrdersCSV);
+router.get('/export/users', exportUsersCSV);
 router.get('/export/delivery', exportDeliveryReportCSV);
-router.get('/export/summary',  exportPlatformSummaryCSV);
+router.get('/export/summary', exportPlatformSummaryCSV);
 
 module.exports = router;
