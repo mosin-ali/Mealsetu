@@ -79,10 +79,6 @@ const VendorDashboard = () => {
   const [replyInputs, setReplyInputs] = useState({});   // { [complaintId]: string }
   const [replyLoading, setReplyLoading] = useState({}); // { [complaintId]: bool }
 
-  const [notifications, setNotifications] = useState([
-    { id: 1, text: "New Order received from Aryan Patel!", type: "order" },
-    { id: 2, text: "Menu for next week is now live.", type: "menu" }
-  ]);
 
   const [isApproved, setIsApproved] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
@@ -2069,17 +2065,7 @@ return (
       </aside>
 
       <main className="vendor-main">
-        {notifications.length > 0 && (
-          <div className="notification-container">
-            {notifications.map(n => (
-              <div key={n.id} className="notification-item">
-                <span>{n.type === 'order' ? '' : ''}</span>
-                <span>{n.text}</span>
-                <button className="notification-close-btn" onClick={() => setNotifications(notifications.filter(notif => notif.id !== n.id))}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
+     
 
         <header className="vendor-header">
           <div className="vendor-header-left">

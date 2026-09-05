@@ -30,8 +30,11 @@ const AdminDashboardHome = ({ onTabChange }) => {
   const [refreshing, setRefreshing]   = useState(false);
   const [exporting, setExporting]     = useState('');
   const [showExportMenu, setShowExportMenu] = useState(false);
+  
+  // New state for leaderboard and pulse
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [pulse, setPulse] = useState({});
 
-  // Close export menu when clicking outside
   useEffect(() => {
     if (!showExportMenu) return;
     const handler = (e) => setShowExportMenu(false);
@@ -79,6 +82,29 @@ const AdminDashboardHome = ({ onTabChange }) => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Fetch leaderboard data
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(
+          '/api/admin/dashboard/leaderboard',
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+        const data = await res.json();
+        setLeaderboard(data.leaderboard || []);
+        setPulse(data.pulse || {});
+      } catch (err) {
+        console.error('Leaderboard fetch error:', err);
+      }
+    };
+    fetchLeaderboard();
+  }, []);
 
   if (loading) return (
     <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8' }}>
@@ -203,15 +229,74 @@ const AdminDashboardHome = ({ onTabChange }) => {
         ))}
       </div>
 
+      {/* ── NEW INSIGHT CARDS (ROW 2) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+        
+        {/* CARD 1 — Commission Health */}
+        {/* <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px', borderLeft: `4px solid ${ORANGE}` }}>
+          <div style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e', marginBottom: '12px' }}>Commission This Month</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>Collected</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#16a34a' }}>₹{(pulse.commissionCollected || 0).toLocaleString('en-IN')}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>Pending</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626' }}>₹{(pulse.commissionPending || 0).toLocaleString('en-IN')}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Vendors Settled</span>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#1a1a2e' }}>{leaderboard.filter(v => v.commissionStatus === 'auto_deducted' || v.commissionStatus === 'paid').length} / {leaderboard.length}</span>
+            </div>
+          </div>
+        </div> */}
+
+        {/* CARD 2 — Vendor Performance */}
+        {/* <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px', borderLeft: `4px solid #0ea5e9` }}>
+          <div style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e', marginBottom: '12px' }}>Vendor Activity</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>Active / Total</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e' }}>{s.vendors?.active || 0} / {s.vendors?.total || 0}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>0 Orders (This Wk)</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626' }}>{pulse.vendorsWithNoOrders || 0}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Top Earner</span>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#1a1a2e' }}>{leaderboard[0]?.kitchenName || 'N/A'} (₹{(leaderboard[0]?.totalRevenue || 0).toLocaleString('en-IN')})</span>
+            </div>
+          </div>
+        </div> */}
+
+        {/* CARD 3 — Subscription Health */}
+        {/* <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px', borderLeft: `4px solid #16a34a` }}>
+          <div style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e', marginBottom: '12px' }}>Subscription Status</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>Active Subs</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e' }}>{s.orders?.active || 0}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>Expiring This Week</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#f59e0b' }}>{s.orders?.expiring || 0}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>New This Month</span>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#16a34a' }}>{s.orders?.newThisMonth || 0}</span>
+            </div>
+          </div>
+        </div> */}
+
+      </div>
+
       {/* ── MINI-STAT ROW ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
         {[
-          { label: 'Total Users',        value: s.users?.total || 0,                                          sub: `+${s.users?.newToday || 0} today`, color: '#0ea5e9' },
+          { label: 'Total Customer',        value: s.users?.total || 0,                                        sub: `+${s.users?.newToday || 0} today`, color: '#0ea5e9' },
           { label: 'Active Vendors',     value: `${s.vendors?.active || 0}/${s.vendors?.total || 0}`,         color: '#16a34a' },
           { label: 'Pending Approvals',  value: s.vendors?.pending || 0, color: (s.vendors?.pending || 0) > 0 ? '#f59e0b' : '#16a34a', tab: 'requests' },
-          { label: 'Available Riders',   value: `${s.delivery?.available || 0}/${s.delivery?.total || 0}`,    color: '#8b5cf6' },
-          { label: 'Open Complaints',    value: s.complaints?.open || 0, color: (s.complaints?.open || 0) > 0 ? '#dc2626' : '#16a34a' },
-          { label: 'Overdue Commission', value: s.commissions?.overdue || 0, color: (s.commissions?.overdue || 0) > 0 ? '#dc2626' : '#16a34a', tab: 'commission' },
         ].map(m => (
           <div
             key={m.label}
@@ -230,7 +315,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
 
         {/* 7-day revenue bar chart */}
         <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}>📈 Revenue — Last 7 Days</div>
+          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}> Revenue — Last 7 Days</div>
           {trend.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#94a3b8', padding: '32px 0' }}>No data yet</div>
           ) : (
@@ -280,111 +365,199 @@ const AdminDashboardHome = ({ onTabChange }) => {
         </div>
       </div>
 
-      {/* ── BOTTOM 2-COL: RECENT ORDERS + ALERTS ── */}
+      {/* ── BOTTOM 2-COL: LEADERBOARD + PLATFORM PULSE ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px', marginBottom: '20px' }}>
 
-        {/* Recent orders */}
-        <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: '700', fontSize: '15px' }}> Recent Orders</span>
-            <button onClick={() => onTabChange('orders')} style={{ background: 'none', border: 'none', color: ORANGE, cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
-              View All →
-            </button>
+        {/* COMMENTED OUT - not needed
+        <div className="recent-orders-section">
+          ... entire recent orders block ...
+        </div>
+        */}
+
+        {/* ── VENDOR LEADERBOARD ── */}
+        <div style={{
+          background: 'white',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '20px'
+          }}>
+            <h3 style={{ margin: 0, color: '#1a2240', fontSize: '16px' }}>
+              🏆 Vendor Leaderboard — This Month
+            </h3>
+            <span style={{
+              fontSize: '12px',
+              color: '#64748b',
+              background: '#f8fafc',
+              padding: '4px 12px',
+              borderRadius: '20px'
+            }}>
+              By gross revenue
+            </span>
           </div>
-          {recentOrders.length === 0 ? (
-            <div style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No orders yet</div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f8fafc', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
-                    {['Customer', 'Vendor', 'Plan', 'Amount', 'Status'].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: '600', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentOrders.map((o, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                      <td style={{ padding: '10px 16px' }}>
-                        <div style={{ fontWeight: '600', color: '#1a1a2e' }}>{o.customerName}</div>
-                        {o.phone && <div style={{ fontSize: '11px', color: '#94a3b8' }}>{o.phone}</div>}
-                      </td>
-                      <td style={{ padding: '10px 16px', color: '#64748b' }}>{o.kitchenName}</td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span style={{ background: '#fff7ed', color: ORANGE, padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>{o.planType}</span>
-                      </td>
-                      <td style={{ padding: '10px 16px', fontWeight: '700', color: '#1a1a2e' }}>₹{(o.amount || 0).toLocaleString('en-IN')}</td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span style={{ color: statusColors[o.status] || '#94a3b8', background: (statusColors[o.status] || '#94a3b8') + '20', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>
-                          {o.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
+                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Rank</th>
+                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Kitchen</th>
+                <th style={{ padding: '10px', textAlign: 'right', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Revenue</th>
+                <th style={{ padding: '10px', textAlign: 'right', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Orders</th>
+                <th style={{ padding: '10px', textAlign: 'right', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Commission</th>
+                <th style={{ padding: '10px', textAlign: 'center', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leaderboard.map((v, i) => (
+                <tr key={v._id} style={{
+                  borderBottom: '1px solid #f8fafc',
+                  background: i === 0 ? '#fffbeb' : 'white'
+                }}>
+                  <td style={{ padding: '14px 10px' }}>
+                    <span style={{
+                      fontSize: '18px',
+                      fontWeight: '800',
+                      color: i === 0 ? '#f59e0b' :
+                             i === 1 ? '#94a3b8' :
+                             i === 2 ? '#cd7c2f' : '#94a3b8'
+                    }}>
+                      {i === 0 ? '🥇' : i === 1 ? '🥈' :
+                       i === 2 ? '🥉' : `#${i + 1}`}
+                    </span>
+                  </td>
+                  <td style={{ padding: '14px 10px' }}>
+                    <div style={{
+                      fontWeight: '700',
+                      color: '#1a2240',
+                      fontSize: '14px'
+                    }}>
+                      {v.kitchenName}
+                    </div>
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#64748b',
+                      marginTop: '2px'
+                    }}>
+                      {v.ownerName}
+                    </div>
+                  </td>
+                  <td style={{
+                    padding: '14px 10px',
+                    textAlign: 'right',
+                    fontWeight: '700',
+                    color: '#1a2240',
+                    fontSize: '15px'
+                  }}>
+                    ₹{v.totalRevenue?.toLocaleString('en-IN')}
+                  </td>
+                  <td style={{
+                    padding: '14px 10px',
+                    textAlign: 'right',
+                    color: '#64748b'
+                  }}>
+                    {v.totalOrders}
+                  </td>
+                  <td style={{
+                    padding: '14px 10px',
+                    textAlign: 'right',
+                    color: '#f97316',
+                    fontWeight: '600'
+                  }}>
+                    ₹{v.commissionDue?.toLocaleString('en-IN')}
+                  </td>
+                  <td style={{ padding: '14px 10px', textAlign: 'center' }}>
+                    <span style={{
+                      padding: '3px 10px',
+                      borderRadius: '20px',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      background: v.commissionStatus === 'auto_deducted'
+                        ? '#dbeafe' : '#fef3c7',
+                      color: v.commissionStatus === 'auto_deducted'
+                        ? '#1d4ed8' : '#d97706'
+                    }}>
+                      {v.commissionStatus === 'auto_deducted'
+                        ? '⚡ Settled' : '⏳ Pending'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        {/* System alerts */}
-        <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={{ fontWeight: '700', fontSize: '15px' }}> System Alerts</span>
-            {alerts.length > 0 && (
-              <span style={{ background: '#dc2626', color: 'white', borderRadius: '20px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>
-                {alerts.length}
-              </span>
-            )}
-          </div>
-          <div style={{ padding: '12px', maxHeight: '340px', overflowY: 'auto' }}>
-            {alerts.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '32px', color: '#16a34a' }}>
-                <div style={{ fontSize: '32px', marginBottom: '8px' }}></div>
-                <div style={{ fontWeight: '700' }}>All systems healthy!</div>
-                <div style={{ fontSize: '12px', color: '#94a3b8' }}>No issues detected</div>
-              </div>
-            ) : alerts.map((alert, i) => (
-              <div
-                key={i}
-                onClick={() => onTabChange(alert.tab)}
-                style={{ padding: '12px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', borderLeft: `4px solid ${alert.type === 'error' ? '#dc2626' : '#f59e0b'}`, background: alert.type === 'error' ? '#fef2f2' : '#fffbeb' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a1a2e', marginBottom: '3px' }}>{alert.icon} {alert.title}</div>
-                    <div style={{ fontSize: '12px', color: '#64748b' }}>{alert.message}</div>
-                  </div>
-                  <span style={{ fontSize: '11px', color: ORANGE, fontWeight: '600', whiteSpace: 'nowrap', marginLeft: '8px' }}>Fix →</span>
-                </div>
-              </div>
-            ))}
-          </div>
+        {/* COMMENTED OUT - not needed
+        <div className="service-alerts-section">
+          ... entire service alerts block ...
         </div>
+        */}
+
+        {/* ── PLATFORM PULSE ── */}
+        {/* <div style={{
+          background: 'white',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+        }}>
+          <h3 style={{
+            margin: '0 0 20px',
+            color: '#1a2240',
+            fontSize: '16px'
+          }}>
+            📊 Platform Pulse
+          </h3>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>New vendors this month</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#0ea5e9' }}>{s.vendors?.newThisMonth || 0}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Subscriptions expiring this week</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#f59e0b' }}>{s.orders?.expiring || 0}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Vendors with no orders this week</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626' }}>{pulse.vendorsWithNoOrders || 0}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Commission collected this month</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#16a34a' }}>₹{(pulse.commissionCollected || 0).toLocaleString('en-IN')}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Commission pending</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#f97316' }}>₹{(pulse.commissionPending || 0).toLocaleString('en-IN')}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Avg order value this month</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#0ea5e9' }}>₹{(pulse.avgOrderValue || 0).toLocaleString('en-IN')}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f8fafc' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Most popular plan</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a2e' }}>
+              {charts.planBreakdown?.[0] ? `${charts.planBreakdown[0].plan} (${Math.round((charts.planBreakdown[0].count / charts.planBreakdown.reduce((a, b) => a + b.count, 0)) * 100)}%)` : 'N/A'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Platform health</span>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: alerts.filter(a => a.type === 'error').length > 0 ? '#dc2626' : '#16a34a' }}>
+              {alerts.filter(a => a.type === 'error').length > 0 ? `${alerts.filter(a => a.type === 'error').length} issues` : 'All systems normal'}
+            </span>
+          </div>
+        </div> */}
+
       </div>
-
-      {/* ── TOP VENDORS ── */}
-      {(charts.topVendors || []).length > 0 && (
-        <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '16px' }}> Top Vendors by Revenue</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-            {charts.topVendors.map((v, i) => {
-              const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
-              return (
-                <div key={i} style={{ background: '#f8fafc', borderRadius: '10px', padding: '14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ fontSize: '24px', flexShrink: 0 }}>{medals[i] || ''}</div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a1a2e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.kitchenName}</div>
-                    <div style={{ fontSize: '12px', color: '#16a34a', fontWeight: '700' }}>₹{(v.revenue || 0).toLocaleString('en-IN')}</div>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>{v.orders} orders</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
     </div>
   );

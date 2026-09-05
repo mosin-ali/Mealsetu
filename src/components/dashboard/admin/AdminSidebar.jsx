@@ -6,7 +6,7 @@ const AdminSidebar = ({ activeTab, onTabChange, onLogout, isOpen, onClose, alert
   const menuItems = [
     { key: 'dashboard',  label: ' Dashboard' },
     { key: 'requests',   label: ' Vendor Requests' },
-    { key: 'users',      label: ' Users' },
+    { key: 'users',      label: ' Vendors' },
     { key: 'orders',     label: ' Orders' },
     { key: 'reviews',    label: ' Reviews' },
     { key: 'delivery',   label: ' Delivery' },
