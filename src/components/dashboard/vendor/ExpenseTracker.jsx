@@ -252,7 +252,7 @@ const TrendChart = ({ trend, trendMonths, onChangePeriod }) => {
   const IW    = W - PAD_L - PAD_R;
   const IH    = H - PAD_T - PAD_B;
 
-  const allVals = trend.flatMap((d) => [d.revenue, d.totalExpenses, Math.max(0, d.profit)]);
+ const allVals = trend.flatMap((d) => [d.revenue, d.totalExpenses, Math.max(0, d.profitAfterCommission)]);
   const maxVal  = Math.max(...allVals, 1);
   const TICKS   = 4;
   const step    = Math.ceil(maxVal / TICKS / 1000) * 1000 || 1;
@@ -312,7 +312,7 @@ const TrendChart = ({ trend, trendMonths, onChangePeriod }) => {
           {trend.map((d, gi) => {
             const cx     = PAD_L + gi * GW + GW / 2;
             const startX = cx - GROUP / 2;
-            const profitPos = d.profit >= 0;
+    const profitPos = d.profitAfterCommission >= 0;
 
             return (
               <g key={d.month}>
@@ -346,10 +346,10 @@ const TrendChart = ({ trend, trendMonths, onChangePeriod }) => {
                 />
 
                 {/* Profit bar */}
-                <rect
-                  x={startX + 2 * (BW + GAP)} y={animated ? yPx(d.profit) : PAD_T + IH}
-                  width={BW}
-                  height={animated ? hPx(d.profit) : 0}
+              <rect
+  x={startX + 2 * (BW + GAP)} y={animated ? yPx(d.profitAfterCommission) : PAD_T + IH}
+  width={BW}
+  height={animated ? hPx(d.profitAfterCommission) : 0}
                   fill={profitPos ? '#22C55E' : '#EF4444'}
                   rx={2}
                   style={{ transition: 'y 0.5s ease, height 0.5s ease' }}
@@ -407,10 +407,10 @@ const TrendChart = ({ trend, trendMonths, onChangePeriod }) => {
             display: 'flex', justifyContent: 'space-between', gap: 16,
             borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 6, marginTop: 4,
           }}>
-            <span style={{ color: tooltip.d.profit >= 0 ? '#86EFAC' : '#FCA5A5' }}>Profit</span>
-            <span style={{ fontWeight: 700, color: tooltip.d.profit >= 0 ? '#86EFAC' : '#FCA5A5' }}>
-              {tooltip.d.profit < 0 ? '−' : '+'}{fmtCurrency(Math.abs(tooltip.d.profit))}
-            </span>
+           <span style={{ color: tooltip.d.profitAfterCommission >= 0 ? '#86EFAC' : '#FCA5A5' }}>Profit</span>
+<span style={{ fontWeight: 700, color: tooltip.d.profitAfterCommission >= 0 ? '#86EFAC' : '#FCA5A5' }}>
+  {tooltip.d.profitAfterCommission < 0 ? '−' : '+'}{fmtCurrency(Math.abs(tooltip.d.profitAfterCommission))}
+</span>
           </div>
         </div>
       )}
@@ -688,13 +688,13 @@ const generateInsights = (summary, budgets, trend) => {
   // 3. Profitable streak
   if (trend && trend.length >= 3) {
     const last3 = trend.slice(-3);
-    if (last3.every((m) => m.profit > 0)) {
+    if (last3.every((m) => m.profitAfterCommission > 0)) {
       list.push({
         icon: '', color: C.green, priority: 6,
         title: `${last3.length} consecutive profitable months`,
         detail: last3.map((m) => m.monthLabel).join(' → ') + ' all in profit',
       });
-    } else if (last3.every((m) => m.profit < 0)) {
+    } else if (last3.every((m) => m.profitAfterCommission < 0)) {
       list.push({
         icon: '', color: C.red, priority: 1,
         title: `${last3.length} consecutive loss months`,
@@ -1074,7 +1074,7 @@ const ExpenseTracker = () => {
     finally { setExporting((p) => ({ ...p, [type]: false })); }
   };
 
-  const profit    = summary?.profit ?? 0;
+   const profit    = summary?.profitAfterCommission ?? 0;   // real take-home, commission included
   const growth    = summary?.growth;
   const growthPos = growth === null ? null : growth >= 0;
 
@@ -1165,19 +1165,27 @@ const ExpenseTracker = () => {
           color={C.red}
         />
         <SummaryCard
-          icon={profit >= 0 ? '' : ''}
-          label="Net Profit"
-          value={fmtCurrency(profit)}
-          sub={profit < 0 ? 'Running at loss' : 'After all expenses'}
-          color={profit >= 0 ? C.green : C.red}
-        />
-        <SummaryCard
-          icon={growthPos === null ? '' : growthPos ? '' : ''}
-          label="vs Last Month"
-          value={growth === null ? '—' : `${growth > 0 ? '+' : ''}${growth}%`}
-          sub={loadingS ? 'Loading…' : `Prev: ${fmtCurrency(summary?.prevProfit)}`}
-          color={growthPos === null ? C.slate : growthPos ? C.green : C.red}
-        />
+  icon="" label="Platform Commission"
+  value={fmtCurrency(summary?.commissionAmount)}
+  sub={summary?.commissionIsFinal
+    ? `${summary?.commissionRate || 0}% · Auto-deducted`
+    : `${summary?.commissionRate || 0}% · Estimate — finalizes on the 1st`}
+  color={C.purple}
+/>
+       <SummaryCard
+  icon={profit >= 0 ? '' : ''}
+  label="Net Profit"
+  value={fmtCurrency(profit)}
+  sub={profit < 0 ? 'Running at loss' : 'After expenses & commission'}
+  color={profit >= 0 ? C.green : C.red}
+/>
+<SummaryCard
+  icon={growthPos === null ? '' : growthPos ? '' : ''}
+  label="vs Last Month"
+  value={growth === null ? '—' : `${growth > 0 ? '+' : ''}${growth}%`}
+  sub={loadingS ? 'Loading…' : `Prev: ${fmtCurrency(summary?.prevProfitAfterCommission)}`}
+  color={growthPos === null ? C.slate : growthPos ? C.green : C.red}
+/>
       </div>
 
       {/* ── 6-Month Trend Chart ── */}
@@ -1439,11 +1447,12 @@ const ExpenseTracker = () => {
             <div style={{ fontWeight: 700, fontSize: 13, color: profit >= 0 ? C.green : C.red, marginBottom: 10 }}>
               {profit >= 0 ? ' Profitable Month' : ' Loss This Month'}
             </div>
-            {[
-              { label: 'Revenue',   value: summary?.revenue,       color: C.blue },
-              { label: 'Expenses',  value: summary?.totalExpenses, color: C.red },
-              { label: 'Profit',    value: profit,                 color: profit >= 0 ? C.green : C.red, bold: true },
-            ].map(({ label, value, color, bold }) => (
+           {[
+  { label: 'Revenue',    value: summary?.revenue,          color: C.blue },
+  { label: 'Expenses',   value: summary?.totalExpenses,    color: C.red },
+  { label: 'Commission', value: summary?.commissionAmount, color: C.purple },
+  { label: 'Profit',     value: profit,                    color: profit >= 0 ? C.green : C.red, bold: true },
+].map(({ label, value, color, bold }) => (
               <div key={label} style={{
                 display: 'flex', justifyContent: 'space-between',
                 padding: '5px 0',

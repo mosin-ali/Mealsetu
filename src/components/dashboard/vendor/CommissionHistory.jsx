@@ -62,11 +62,11 @@ const CommissionHistory = ({ onGoToExpenses }) => {
       day you joined to the end of that month. Every cycle after that covers a full calendar month.
     </p>
   </div>
-</details>
+</details>  
 
 {summary?.isFirstCycle && summary?.status !== 'auto_deducted' && (
   <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', padding: '14px 18px', borderRadius: 12, marginBottom: 20 }}>
-    <strong style={{ color: '#1d4ed8' }}>👋 This is your first billing cycle</strong>
+    <strong style={{ color: '#1d4ed8' }}> This is your first billing cycle</strong>
     <p style={{ margin: '4px 0 0', color: '#1e40af', fontSize: 13 }}>
       It covers {summary?.periodStart ? new Date(summary.periodStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }) : ''} –{' '}
       {summary?.periodEnd ? new Date(summary.periodEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : ''} only
