@@ -54,8 +54,9 @@ theme: { color: '#f26522' },
         ondismiss: () => onFailure('Payment cancelled by user.')
       },
       handler: async (response) => {
+        let result;
         try {
-          const result = await verifyUserPayment({
+          result = await verifyUserPayment({
             razorpay_order_id:   response.razorpay_order_id,
             razorpay_payment_id: response.razorpay_payment_id,
             razorpay_signature:  response.razorpay_signature,
@@ -65,12 +66,19 @@ theme: { color: '#f26522' },
             mealPreference,
             deliverySlot
           });
-          onSuccess(result);
         } catch (err) {
           onFailure(
-            'Payment was deducted but activation failed. Contact support with ID: ' +
+            err.message || 'Payment verification failed. Contact support with ID: ' +
             response.razorpay_payment_id
           );
+          return;
+        }
+
+        try {
+          await onSuccess(result);
+        } catch (uiError) {
+          console.error('Payment succeeded but success UI callback failed:', uiError);
+          window.alert('Payment succeeded and your order was saved, but the page could not update. Refresh to see your order.');
         }
       }
     };

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { User, Mail, Phone, Camera, Lock, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, Phone, User } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getAuthItem, setAuthItem } from '../../../utils/authStorage';
 import './AdminProfile.css';
 
 const AdminProfile = () => {
@@ -27,7 +28,7 @@ const AdminProfile = () => {
 
   // Load admin data on mount — fetch from API for freshest data
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const token = getAuthItem('token');
     fetch('/api/admin/profile', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => {
@@ -36,7 +37,7 @@ const AdminProfile = () => {
       })
       .catch(() => {
         // Fallback to localStorage if API fails
-        const user = localStorage.getItem('user');
+        const user = getAuthItem('user');
         if (user) {
           const u = JSON.parse(user);
           setProfileData({ name: u.name || '', email: u.email || '', phone: u.phone || '' });
@@ -64,8 +65,8 @@ const AdminProfile = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const user = JSON.parse(localStorage.getItem('user'));
+      const token = getAuthItem('token');
+      const user = JSON.parse(getAuthItem('user'));
 
       const profileResponse = await fetch(`/api/admin/profile`, {
         method: 'PUT',
@@ -78,7 +79,7 @@ const AdminProfile = () => {
 
       if (profileResponse.ok) {
         const data = await profileResponse.json();
-        localStorage.setItem('user', JSON.stringify(data.user));
+        setAuthItem('user', JSON.stringify(data.user));
         setMessage('Profile updated successfully!');
         setTimeout(() => setMessage(''), 3000);
       } else {
@@ -107,8 +108,8 @@ const AdminProfile = () => {
 
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const user = JSON.parse(localStorage.getItem('user'));
+      const token = getAuthItem('token');
+      const user = JSON.parse(getAuthItem('user'));
 
       const response = await fetch(`/api/users/${user._id}/change-password`, {
         method: 'POST',

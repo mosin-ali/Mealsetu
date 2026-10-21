@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Mail, Phone, MapPin, Calendar, FileText, User, CheckCircle, Loader2, XCircle } from 'lucide-react';
+import { Calendar, CheckCircle, FileText, Loader2, Mail, MapPin, Phone, User } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getAuthItem } from '../../../utils/authStorage';
 import './VendorRequests.css';
 
 const VendorRequests = () => {
@@ -12,7 +13,7 @@ const VendorRequests = () => {
   const [rejectionReason, setRejectionReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState(null);
-  const token = localStorage.getItem('token');
+  const token = getAuthItem('token');
 
   useEffect(() => {
     fetchPendingVendors();

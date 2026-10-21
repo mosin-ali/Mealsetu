@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { getAuthItem } from '../../../utils/authStorage';
 import './VendorManagement.css';
 
 const VendorManagement = () => {
@@ -11,7 +12,7 @@ const VendorManagement = () => {
   const [actionLoading, setActionLoading] = useState({});
   const [successMessage, setSuccessMessage] = useState(null);
 
-  const token = localStorage.getItem('token');
+  const token = getAuthItem('token');
 
   useEffect(() => {
     fetchPendingVendors();

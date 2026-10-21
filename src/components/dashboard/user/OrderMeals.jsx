@@ -45,6 +45,8 @@ const OrderMeals = ({
   const [orderError, setOrderError] = useState('');
 
 const autoDetectDone = useRef(false);
+const menuDaySelectionInitialized = useRef(false);
+const menuDayManuallySelected = useRef(false);
 
   const [userLat, setUserLat] = useState(null);
   const [userLon, setUserLon] = useState(null);
@@ -105,10 +107,18 @@ const [selectedNewVendor, setSelectedNewVendor] = useState(null);
   }, [filteredTiffins]);
 
   useEffect(() => {
-    if (orderStep === 2 && weeklyPlan && orderData.startDate) {
-      setSelectedMenuDay(getDayFromDate(orderData.startDate));
-    }
-  }, [orderStep, weeklyPlan, orderData.startDate]);
+    if (
+      orderStep !== 2 ||
+      menuLoading ||
+      menuDaySelectionInitialized.current ||
+      menuDayManuallySelected.current
+    ) return;
+
+    const today = DAYS_OF_WEEK[new Date().getDay()];
+    const availableDays = DAYS_OF_WEEK.filter(day => weeklyPlan?.[day]);
+    setSelectedMenuDay(weeklyPlan?.[today] ? today : (availableDays[0] || today));
+    menuDaySelectionInitialized.current = true;
+  }, [orderStep, weeklyPlan, menuLoading]);
 
   const fetchVendorStatuses = async (tiffinsList) => {
     if (!tiffinsList || tiffinsList.length === 0) { setLoadingStatuses(false); return; }
@@ -212,6 +222,10 @@ const startOrder = async (tiffin) => {
 
   setSelectedTiffin(tiffin);
   setOrderStep(1);
+  setWeeklyPlan(null);
+  setSelectedMenuDay('');
+  menuDaySelectionInitialized.current = false;
+  menuDayManuallySelected.current = false;
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -226,7 +240,6 @@ const startOrder = async (tiffin) => {
 
   await fetchWeeklyMenu(tiffin);
 
-  setSelectedMenuDay(getDayFromDate(today));
 };
 
 const continueWithUpcomingPlan = async () => {
@@ -236,6 +249,10 @@ const continueWithUpcomingPlan = async () => {
 
   setSelectedTiffin(selectedNewVendor);
   setOrderStep(1);
+  setWeeklyPlan(null);
+  setSelectedMenuDay('');
+  menuDaySelectionInitialized.current = false;
+  menuDayManuallySelected.current = false;
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -250,7 +267,6 @@ const continueWithUpcomingPlan = async () => {
 
   await fetchWeeklyMenu(selectedNewVendor);
 
-  setSelectedMenuDay(getDayFromDate(today));
 };
 
 
@@ -740,7 +756,10 @@ const continueWithUpcomingPlan = async () => {
       {['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(day => (
         <button
           key={day}
-          onClick={() => setSelectedMenuDay(day)}
+          onClick={() => {
+            menuDayManuallySelected.current = true;
+            setSelectedMenuDay(day);
+          }}
           style={{
             padding: '8px 14px',
             borderRadius: '20px',
@@ -861,7 +880,10 @@ const continueWithUpcomingPlan = async () => {
       {['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(day => (
         <button
           key={day}
-          onClick={() => setSelectedMenuDay(day)}
+          onClick={() => {
+            menuDayManuallySelected.current = true;
+            setSelectedMenuDay(day);
+          }}
           style={{
             padding: '8px 14px',
             borderRadius: '20px',

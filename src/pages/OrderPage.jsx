@@ -1,9 +1,10 @@
 // 1. ALL imports MUST be at the very top
-import React, { useState, useRef } from 'react'; 
-import { useNavigate } from 'react-router-dom';
-import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { placeOrder } from '../utils/api';
+import { getAuthItem } from '../utils/authStorage';
 
 // 2. ONLY ONE export default per file
 export default function OrderPage() {
@@ -171,7 +172,7 @@ export default function OrderPage() {
                         const backendPlan = planMap[planType] || 'ONEDAY';
                         
                         // Get vendor ID from localStorage or use a default
-                        const userData = JSON.parse(localStorage.getItem('user') || '{}');
+                        const userData = JSON.parse(getAuthItem('user') || '{}');
                         
                         // For demo, we'll use a placeholder vendor ID since OrderPage doesn't have vendor selection
                         // In production, this should come from the vendor the user selected

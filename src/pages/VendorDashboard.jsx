@@ -1,24 +1,25 @@
-import React, { useState, useMemo, useEffect, useContext } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import AddManualCustomer from '../components/dashboard/vendor/AddManualCustomer';
-import DeliveryManagement from '../components/dashboard/vendor/DeliveryManagement';
-import FinanceDashboard from '../components/dashboard/vendor/FinanceDashboard';
-import ExpenseTracker from '../components/dashboard/vendor/ExpenseTracker';
-import SubscriptionAnalytics from '../components/dashboard/vendor/SubscriptionAnalytics';
-import CustomerLoyalty from '../components/dashboard/vendor/CustomerLoyalty';
-import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import './VendorDashboard.css';
-import { getVendorProfile, updateVendorProfile, updateVendorProfilePic, updateKitchenPoster, getVendorOrders, getVendorReviews, addMenu, updateOrderStatus, getVendorCustomers, getCustomerPlans, getVendorComplaints, resolveVendorComplaint, getVendorReports, getDashboardStats, getWeeklyPlan, saveWeeklyPlan, getFilteredOrders, toggleShopStatus, getVendorShopStatus, createOffer, getVendorOffers, deleteOffer, updateVendorTrialSettings, submitVendorCompliance, getJainMenu, saveJainMenu, getPricing, savePricing, addManualCustomer, getManualCustomers, calculateManualOrderAmount, getCashPayments } from '../utils/api';
-import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
-import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
-import CashPayments from '../components/dashboard/vendor/CashPayments';
-import VendorOffers from '../components/dashboard/vendor/VendorOffers';
-import TrialSettings from '../components/dashboard/vendor/TrialSettings';
-import LoyaltySettings from '../components/dashboard/vendor/LoyaltySettings';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '../components/common/Toast';
-import { connectSocket, disconnectSocket, onEvent, offEvent } from '../utils/socket';
+import AddManualCustomer from '../components/dashboard/vendor/AddManualCustomer';
+import CashPayments from '../components/dashboard/vendor/CashPayments';
+import CommissionHistory from '../components/dashboard/vendor/CommissionHistory';
+import CustomerLoyalty from '../components/dashboard/vendor/CustomerLoyalty';
+import DashboardOverview from '../components/dashboard/vendor/DashboardOverview';
+import DeliveryManagement from '../components/dashboard/vendor/DeliveryManagement';
+import ExpenseTracker from '../components/dashboard/vendor/ExpenseTracker';
+import FinanceDashboard from '../components/dashboard/vendor/FinanceDashboard';
+import LoyaltySettings from '../components/dashboard/vendor/LoyaltySettings';
+import SubscriptionAnalytics from '../components/dashboard/vendor/SubscriptionAnalytics';
+import TrialSettings from '../components/dashboard/vendor/TrialSettings';
+import VendorOffers from '../components/dashboard/vendor/VendorOffers';
+import { getCashPayments, getCustomerPlans, getDashboardStats, getFilteredOrders, getJainMenu, getPricing, getVendorComplaints, getVendorCustomers, getVendorOrders, getVendorProfile, getVendorReviews, getVendorShopStatus, getWeeklyPlan, resolveVendorComplaint, saveJainMenu, savePricing, saveWeeklyPlan, submitVendorCompliance, updateKitchenPoster, updateVendorProfile, updateVendorProfilePic } from '../utils/api';
+import { getAuthItem, removeAuthItem, setAuthItem } from '../utils/authStorage';
+import { connectSocket, disconnectSocket, offEvent, onEvent } from '../utils/socket';
+import './VendorDashboard.css';
 
 const VendorDashboard = () => {
   const { addToast } = useToast();
@@ -119,8 +120,8 @@ const VendorDashboard = () => {
 
   // Load vendor data on mount
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
+    const token = getAuthItem('token');
+    const userData = getAuthItem('user');
 
     if (!token || !userData) {
       navigate('/login');
@@ -140,7 +141,7 @@ const VendorDashboard = () => {
   // Connect socket once vendor ID is known
   useEffect(() => {
     if (!vendorSocketId) return;
-    const userData = localStorage.getItem('user');
+    const userData = getAuthItem('user');
     if (!userData) return;
     const parsedUser = JSON.parse(userData);
     connectSocket(parsedUser._id, 'vendor', vendorSocketId);
@@ -623,7 +624,7 @@ const handleSavePricing = async () => {
       setImageLoading(false);
       
       // Update localStorage with new user data to persist profile image across refreshes
-      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const currentUser = JSON.parse(getAuthItem('user') || '{}');
       const updatedUser = {
         ...currentUser,
         kitchenName: updatedVendor.kitchenName,
@@ -633,7 +634,7 @@ const handleSavePricing = async () => {
         kitchenPoster: displayKitchenPoster,
         profilePic: displayImage // Also update profilePic for consistency
       };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setAuthItem('user', JSON.stringify(updatedUser));
       
       addToast('Profile updated successfully! Changes will persist after refresh.', 'success');
     } catch (err) {
@@ -770,8 +771,8 @@ const handleSavePricing = async () => {
 
   const handleLogout = () => {
     if (window.confirm("Are you sure you want to logout?")) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      removeAuthItem('token');
+      removeAuthItem('user');
       navigate('/login');
     }
   };

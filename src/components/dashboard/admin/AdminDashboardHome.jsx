@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { downloadCSV } from '../../../utils/api';
+import { getAuthItem } from '../../../utils/authStorage';
 
 const ORANGE = '#f26522';
 
 const apiFetch = async (url, opts = {}) => {
   const r = await fetch(url, {
     ...opts,
-    headers: { Authorization: 'Bearer ' + localStorage.getItem('token'), 'Content-Type': 'application/json', ...opts.headers },
+    headers: { Authorization: 'Bearer ' + getAuthItem('token'), 'Content-Type': 'application/json', ...opts.headers },
   });
   const data = await r.json();
   if (!r.ok) throw new Error(data.message || `Request failed (${r.status})`);
@@ -87,7 +88,7 @@ const AdminDashboardHome = ({ onTabChange }) => {
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = getAuthItem('token');
         const res = await fetch(
           '/api/admin/dashboard/leaderboard',
           {

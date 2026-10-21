@@ -49,7 +49,7 @@ const CashPayments = () => {
       setOrders(data.orders || []);
       setPendingCount(data.pendingCount || 0);
       setError(null);
-    } catch (err) {
+    } catch {
       setError('Failed to load cash payments');
     } finally {
       setLoading(false);
@@ -94,13 +94,14 @@ const CashPayments = () => {
   };
 
   const filtered = orders.filter(o => {
-    if (filter === 'pending') return o.paymentStatus === 'Pending';
-    if (filter === 'paid')    return o.paymentStatus === 'Paid';
+    const isPaid = o.cashCollection?.collected === true || o.paymentStatus === 'Paid';
+    if (filter === 'pending') return !isPaid && o.paymentStatus === 'Pending';
+    if (filter === 'paid')    return isPaid;
     return true;
   });
 
-  const totalPending = orders.filter(o => o.paymentStatus === 'Pending').length;
-  const totalPaid    = orders.filter(o => o.paymentStatus === 'Paid').length;
+  const totalPending = orders.filter(o => o.paymentStatus === 'Pending' && o.cashCollection?.collected !== true).length;
+  const totalPaid    = orders.filter(o => o.paymentStatus === 'Paid' || o.cashCollection?.collected === true).length;
   const pendingAmount = orders
     .filter(o => o.paymentStatus === 'Pending')
     .reduce((s, o) => s + (Number(o.amount) || 0), 0);
@@ -213,8 +214,16 @@ const CashPayments = () => {
               </tr>
             ) : (
               filtered.map((order) => {
-                const isPending  = order.paymentStatus === 'Pending';
+                const riderCollected = order.cashCollection?.collected === true;
+                const isPending  = order.paymentStatus === 'Pending' && !riderCollected;
                 const isMarking  = markingPaid.has(order.orderId);
+                const collectedByRider = riderCollected &&
+                  order.cashPaymentConfirmedByType === 'DeliveryPartner';
+                const collectedAmount = riderCollected
+                  ? Number(order.cashCollection.amount)
+                  : Number(order.amount);
+                const collectedAt = order.cashCollection?.collectedAt ||
+                  order.cashPaymentConfirmedAt;
                 return (
                   <tr key={order.orderId}>
                     <td style={{ fontWeight: '700', color: '#2b3674' }}>{order.customerName}</td>
@@ -222,7 +231,12 @@ const CashPayments = () => {
                     <td>{planBadge(order.planType)}</td>
                     <td style={{ color: '#64748b', fontSize: '13px' }}>{fmt(order.startDate)}</td>
                     <td style={{ fontWeight: '700', color: isPending ? '#ea580c' : '#2b3674' }}>
-                      ₹{Number(order.amount).toLocaleString()}
+                      ₹{(Number.isFinite(collectedAmount) ? collectedAmount : 0).toLocaleString()}
+                      {riderCollected && order.cashCollection.amountMismatch && (
+                        <small style={{ display: 'block', color: '#b45309', fontWeight: 500 }}>
+                          Expected ₹{Number(order.cashCollection.expectedAmount || 0).toLocaleString()}
+                        </small>
+                      )}
                     </td>
                     <td style={{ color: '#64748b', fontSize: '13px' }}>{fmtDateTime(order.orderDate)}</td>
                     <td>
@@ -231,11 +245,16 @@ const CashPayments = () => {
                         background: isPending ? '#fff7ed' : '#dcfce7',
                         color:      isPending ? '#ea580c' : '#16a34a'
                       }}>
-                        {order.paymentStatus}
+                        {riderCollected ? 'Paid' : order.paymentStatus}
                       </span>
+                        {riderCollected && (
+                        <small style={{ display: 'block', marginTop: 3, color: '#166534', fontWeight: 600 }}>
+                          (Collected by Rider)
+                        </small>
+                      )}
                     </td>
                     <td className="hide-mobile" style={{ color: '#64748b', fontSize: '13px' }}>
-                      {fmtDateTime(order.cashPaymentConfirmedAt)}
+                      {fmtDateTime(collectedAt)}
                     </td>
                     <td>
                       {isPending ? (
@@ -255,7 +274,7 @@ const CashPayments = () => {
                         </button>
                       ) : (
                         <span style={{ color: '#16a34a', fontWeight: '700', fontSize: '13px' }}>
-                          ✓ Collected
+                          {collectedByRider ? '✓ Collected by Rider' : '✓ Collected'}
                         </span>
                       )}
                     </td>

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { getAuthItem } from '../../../utils/authStorage';
 import VendorGrid from './VendorGrid';
 
 const ORANGE = '#f26522';
@@ -6,7 +7,7 @@ const ORANGE = '#f26522';
 const apiFetch = async (url, opts = {}) => {
   const r = await fetch(url, {
     ...opts,
-    headers: { Authorization: 'Bearer ' + localStorage.getItem('token'), 'Content-Type': 'application/json', ...opts.headers },
+    headers: { Authorization: 'Bearer ' + getAuthItem('token'), 'Content-Type': 'application/json', ...opts.headers },
   });
   const data = await r.json();
   if (!r.ok) throw new Error(data.message || 'Request failed');

@@ -201,7 +201,7 @@ const DashboardOverview = ({
           <h2>{ordersToday}</h2>
         </div>
         <div className="stat-card">
-          <p>Active Customers</p>
+          <p>Active Users</p>
           <h2>{activeUsers}</h2>
         </div>
         <div

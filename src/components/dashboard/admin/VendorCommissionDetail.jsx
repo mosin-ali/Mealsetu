@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { getVendorCommissionDetail } from '../../../utils/api.js';
+import { getAuthItem } from '../../../utils/authStorage';
 
 const isSettled = (h) => h.status === 'paid' || h.status === 'auto_deducted';
 
@@ -41,7 +42,7 @@ const VendorCommissionDetail = ({ vendorId, onClose }) => {
     const fetchPayments = async () => {
       setLoadingPayments(true);
       try {
-        const token = localStorage.getItem('token');
+        const token = getAuthItem('token');
         const res = await fetch(`/api/admin/commission/vendor/${vendorId}/payments`, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -57,7 +58,7 @@ const VendorCommissionDetail = ({ vendorId, onClose }) => {
   }, [detailTab, vendorId]);
 
   const handleDownload = () => {
-    const token = localStorage.getItem('token');
+    const token = getAuthItem('token');
     const url   = `/api/admin/commission/vendor/${vendorId}/report`;
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob())

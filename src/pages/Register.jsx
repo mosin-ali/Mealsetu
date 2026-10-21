@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { verifyRegisterOTP, resendRegisterOTP } from '../utils/api';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/common/Toast';
+import { resendRegisterOTP, verifyRegisterOTP } from '../utils/api';
+import { setAuthItem } from '../utils/authStorage';
 
 import './Register.css';
 
@@ -219,6 +220,7 @@ export default function Register() {
       showToast('Geolocation not supported by your browser', 'error');
       return;
     }
+
     setIsDetectingLocation(true);
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -229,19 +231,23 @@ export default function Register() {
           const res = await fetch(
             `/api/maps/geocode/reverse?lat=${latitude}&lng=${longitude}`
           );
+          if (!res.ok) throw new Error('Reverse geocoding failed');
           const data = await res.json();
           const components = data.results?.[0]?.address_components || [];
           const get = (...types) => components.find(c => types.some(t => c.types.includes(t)))?.long_name || '';
+          const flatNo  = get('street_number');
           const street  = get('route', 'premise');
-          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood');
           const city    = get('locality', 'administrative_area_level_2');
+          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood') || city;
           const pincode = get('postal_code');
+          if (!flatNo && !street && !area && !city && !pincode) throw new Error('No address components returned');
           setFormData(prev => ({
             ...prev,
-            street:  street  || prev.street,
-            area:    area    || prev.area,
-            city:    city    || prev.city,
-            pincode: pincode || prev.pincode,
+            flatHouseNo: flatNo || prev.flatHouseNo,
+            street:      street || prev.street,
+            area:        area   || prev.area,
+            city:        city   || prev.city,
+            pincode:     pincode || prev.pincode,
           }));
           setErrors(prev => {
             const next = { ...prev };
@@ -249,7 +255,13 @@ export default function Register() {
             return next;
           });
           setUserLocationDetected(true);
-          showToast('Location detected! Please verify the fields.', 'success');
+          const missingDetails = [];
+          if (!street) missingDetails.push('street/road');
+          if (!flatNo) missingDetails.push('flat/house number');
+          showToast(missingDetails.length
+            ? `Area, city and pincode filled. ${missingDetails.join(' and ')} were not available from map data; enter them manually.`
+            : 'Location detected and address fields filled. You can still edit them before submitting.',
+          missingDetails.length ? 'warning' : 'success');
         } catch {
           showToast('Could not fetch address. Fill manually.', 'warning');
         }
@@ -269,6 +281,7 @@ export default function Register() {
       showToast('Geolocation not supported by your browser', 'error');
       return;
     }
+
     setIsDetectingVendorLocation(true);
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -277,18 +290,22 @@ export default function Register() {
           const res = await fetch(
             `/api/maps/geocode/reverse?lat=${latitude}&lng=${longitude}`
           );
+          if (!res.ok) throw new Error('Reverse geocoding failed');
           const data = await res.json();
           const components = data.results?.[0]?.address_components || [];
           const get = (...types) => components.find(c => types.some(t => c.types.includes(t)))?.long_name || '';
+          const shopNo  = get('street_number');
           const street  = get('route', 'premise');
-          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood');
           const city    = get('locality', 'administrative_area_level_2');
+          const area    = get('sublocality_level_1', 'sublocality', 'neighborhood') || city;
           const pincode = get('postal_code');
+          if (!shopNo && !street && !area && !city && !pincode) throw new Error('No address components returned');
           setFormData(prev => ({
             ...prev,
-            kitchenStreet:  street  || prev.kitchenStreet,
-            kitchenArea:    area    || prev.kitchenArea,
-            kitchenCity:    city    || prev.kitchenCity,
+            kitchenShopNo: shopNo || prev.kitchenShopNo,
+            kitchenStreet: street || prev.kitchenStreet,
+            kitchenArea:   area   || prev.kitchenArea,
+            kitchenCity:   city   || prev.kitchenCity,
             kitchenPincode: pincode || prev.kitchenPincode,
             kitchenLat: latitude,
             kitchenLng: longitude,
@@ -300,7 +317,13 @@ export default function Register() {
             delete next.kitchenCity;   delete next.kitchenPincode;
             return next;
           });
-          showToast('Kitchen location detected!', 'success');
+          const missingDetails = [];
+          if (!street) missingDetails.push('street/road');
+          if (!shopNo) missingDetails.push('shop/building number');
+          showToast(missingDetails.length
+            ? `Kitchen area, city and pincode filled. ${missingDetails.join(' and ')} were not available from map data; enter them manually.`
+            : 'Kitchen location detected and address fields filled. You can still edit them before submitting.',
+          missingDetails.length ? 'warning' : 'success');
         } catch {
           showToast('Could not fetch address. Fill manually.', 'warning');
         }
@@ -609,8 +632,8 @@ export default function Register() {
         };
 
         // Store token and user data
-        localStorage.setItem('token', responseData.token);
-        localStorage.setItem('user', JSON.stringify(storedUser));
+        setAuthItem('token', responseData.token);
+        setAuthItem('user', JSON.stringify(storedUser));
 
         alert('Registration Successful!');
         

@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { sendOTP, verifyOTP, resetPasswordWithOTP } from '../utils/api';
+import { useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { resetPasswordWithOTP, sendOTP, verifyOTP } from '../utils/api';
+import { clearAuthStorage, removeAuthItem, setAuthItem } from '../utils/authStorage';
 import socket from '../utils/socket';
 import './Login.css';
 
@@ -45,7 +46,8 @@ export default function Login() {
       const data = await response.json();
 
       if (response.ok && data.token) {
-        localStorage.setItem('token', data.token);
+        clearAuthStorage();
+        setAuthItem('token', data.token);
 
         const userData = {
           _id: data._id,
@@ -54,7 +56,7 @@ export default function Login() {
           role: data.role,
           profilePic: data.profilePic
         };
-        localStorage.setItem('user', JSON.stringify(userData));
+        setAuthItem('user', JSON.stringify(userData));
 
         // Connect to socket for real-time updates
         try {
@@ -89,9 +91,13 @@ export default function Login() {
           }
         }
       } else {
+        removeAuthItem('token');
+        removeAuthItem('user');
         setErrorMsg(data.message || "Login failed. Please check your credentials.");
       }
     } catch (error) {
+      removeAuthItem('token');
+      removeAuthItem('user');
       console.error("Login Error:", error);
       setErrorMsg("Unable to connect. Please check your internet connection and try again.");
     } finally {

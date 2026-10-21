@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { onEvent, offEvent } from '../../../utils/socket';
+import { useToast } from '../../common/Toast';
 import {
   toggleVendorDelivery,
   getVendorRiders,
@@ -241,6 +242,8 @@ const VendorLiveMap = ({ batches = [], riderLocations = {} }) => {
 
 /* ─── Batch summary card (overview) ─────────────────────────────────── */
 const BatchSummaryCard = ({ batch, riders = [], onAssign }) => {
+  const [selectedRiderId, setSelectedRiderId] = useState('');
+  const [assigning, setAssigning] = useState(false);
   const { bg, color } = batchStatusStyle(batch.batchStatus);
   const done   = (batch.orders || []).filter((o) => o.status === 'delivered').length;
   const total  = (batch.orders || []).length;
@@ -271,18 +274,33 @@ const BatchSummaryCard = ({ batch, riders = [], onAssign }) => {
         <div style={{ width: `${pct}%`, background: C.green, borderRadius: 6, height: '100%', transition: 'width 0.3s' }} />
       </div>
       <div style={{ marginTop: 4, fontSize: 11, color: C.slate, textAlign: 'right' }}>{pct}%</div>
-      {!batch.riderId && batch.batchStatus !== 'completed' && (
+      {!batch.riderId && !['completed', 'partial', 'in_progress'].includes(batch.batchStatus) && (
         <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
           <select
-            defaultValue=""
+            value={selectedRiderId}
+            disabled={assigning}
             style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13 }}
-            onChange={(e) => e.target.value && onAssign(batch._id, e.target.value)}
+            onChange={(e) => setSelectedRiderId(e.target.value)}
           >
             <option value="" disabled>Assign rider…</option>
-            {riders.map((r) => (
+            {riders.filter((r) => r.isActive !== false && r.isAvailable !== false).map((r) => (
               <option key={r._id} value={r._id}>{r.name}</option>
             ))}
           </select>
+          <Btn
+            small
+            disabled={!selectedRiderId || assigning}
+            onClick={async () => {
+              setAssigning(true);
+              try {
+                await onAssign(batch._id, selectedRiderId);
+              } finally {
+                setAssigning(false);
+              }
+            }}
+          >
+            {assigning ? 'Assigning…' : 'Assign'}
+          </Btn>
         </div>
       )}
     </Card>
@@ -605,9 +623,10 @@ const RiderCard = ({ rider, onEdit, onDelete, onMarkPaid }) => {
 };
 
 /* ─── Detailed batch card ────────────────────────────────────────────── */
-const DetailedBatchCard = ({ batch, riders = [], onAssign, onRefresh }) => {
+const DetailedBatchCard = ({ batch, riders = [], onAssign }) => {
   const [expanded,   setExpanded]   = useState(false);
   const [assigning,  setAssigning]  = useState(false);
+  const [selectedRiderId, setSelectedRiderId] = useState('');
   const [photoModal, setPhotoModal] = useState(null);
   const { bg, color } = batchStatusStyle(batch.batchStatus);
   const done       = (batch.orders || []).filter((o) => o.status === 'delivered').length;
@@ -617,8 +636,9 @@ const DetailedBatchCard = ({ batch, riders = [], onAssign, onRefresh }) => {
 
   const riderName = (() => {
     if (!batch.riderId) return null;
+    if (typeof batch.riderId === 'object' && batch.riderId.name) return batch.riderId.name;
     const id = typeof batch.riderId === 'object' ? batch.riderId._id : batch.riderId;
-    return riders.find((r) => r._id === id)?.name || 'Assigned';
+    return riders.find((r) => String(r._id) === String(id))?.name || 'Assigned';
   })();
 
   const handleAssign = async (riderId) => {
@@ -662,19 +682,26 @@ const DetailedBatchCard = ({ batch, riders = [], onAssign, onRefresh }) => {
       <div style={{ marginTop: 4, fontSize: 11, color: C.slate, textAlign: 'right' }}>{pct}% complete</div>
 
       {/* Assign rider (if not yet assigned) */}
-      {!batch.riderId && batch.batchStatus !== 'completed' && (
+      {!batch.riderId && !['completed', 'partial', 'in_progress'].includes(batch.batchStatus) && (
         <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
           <select
-            defaultValue=""
+            value={selectedRiderId}
             disabled={assigning}
             style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13 }}
-            onChange={(e) => handleAssign(e.target.value)}
+            onChange={(e) => setSelectedRiderId(e.target.value)}
           >
             <option value="" disabled>{assigning ? 'Assigning…' : 'Assign rider…'}</option>
-            {riders.filter((r) => r.isAvailable !== false).map((r) => (
+            {riders.filter((r) => r.isActive !== false && r.isAvailable !== false).map((r) => (
               <option key={r._id} value={r._id}>{r.name}</option>
             ))}
           </select>
+          <Btn
+            small
+            disabled={!selectedRiderId || assigning}
+            onClick={() => handleAssign(selectedRiderId)}
+          >
+            {assigning ? 'Assigning…' : 'Assign'}
+          </Btn>
         </div>
       )}
 
@@ -839,6 +866,7 @@ const StatChip = ({ label, value, bg, color }) => (
    TAB: Overview
 ═══════════════════════════════════════════════════════════════════════ */
 const OverviewTab = ({ riders = [] }) => {
+  const { addToast } = useToast();
   const [mealSlot, setMealSlot]     = useState('lunch');
   const [batches, setBatches]       = useState([]);
   const [loading, setLoading]       = useState(false);
@@ -892,9 +920,10 @@ const OverviewTab = ({ riders = [] }) => {
   const handleAssign = async (batchId, riderId) => {
     try {
       await assignBatchToRider(batchId, riderId);
-      fetchData();
+      await fetchData();
+      addToast('Rider assigned successfully.', 'success');
     } catch (e) {
-      alert('Assign failed: ' + e.message);
+      addToast('Assign failed: ' + e.message, 'error');
     }
   };
 
@@ -1033,6 +1062,7 @@ const RidersTab = ({ riders, loading, onRefresh }) => {
    TAB: Batches
 ═══════════════════════════════════════════════════════════════════════ */
 const BatchesTab = ({ riders = [] }) => {
+  const { addToast } = useToast();
   const [date, setDate]             = useState(todayStr());
   const [mealSlot, setMealSlot]     = useState('lunch');
   const [batches, setBatches]       = useState([]);
@@ -1121,9 +1151,10 @@ const BatchesTab = ({ riders = [] }) => {
   const handleAssign = async (batchId, riderId) => {
     try {
       await assignBatchToRider(batchId, riderId);
-      fetchBatches();
+      await fetchBatches();
+      addToast('Rider assigned successfully.', 'success');
     } catch (e) {
-      alert('Assign failed: ' + e.message);
+      addToast('Assign failed: ' + e.message, 'error');
     }
   };
 
@@ -1402,7 +1433,7 @@ const BatchesTab = ({ riders = [] }) => {
             {batches.length} batch{batches.length !== 1 ? 'es' : ''} · {batches.reduce((s, b) => s + (b.orders?.length || 0), 0)} total orders
           </p>
           {batches.map((b) => (
-            <DetailedBatchCard key={b._id} batch={b} riders={riders} onAssign={handleAssign} onRefresh={fetchBatches} />
+            <DetailedBatchCard key={b._id} batch={b} riders={riders} onAssign={handleAssign} />
           ))}
         </div>
       )}

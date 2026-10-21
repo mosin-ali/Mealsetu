@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import AdminSidebar from '../components/dashboard/admin/AdminSidebar';
-import VendorManagement from '../components/dashboard/admin/VendorManagement';
-import Reports from '../components/dashboard/admin/Reports';
-import AdminProfile from '../components/dashboard/admin/AdminProfile';
-import AdminOrders from '../components/dashboard/admin/AdminOrders';
-import AdminReviews from '../components/dashboard/admin/AdminReviews';
-import AdminDelivery from '../components/dashboard/admin/AdminDelivery';
-import AdminUsers from '../components/dashboard/admin/AdminUsers';
 import AdminDashboardHome from '../components/dashboard/admin/AdminDashboardHome';
+import AdminDelivery from '../components/dashboard/admin/AdminDelivery';
+import AdminOrders from '../components/dashboard/admin/AdminOrders';
+import AdminProfile from '../components/dashboard/admin/AdminProfile';
+import AdminReviews from '../components/dashboard/admin/AdminReviews';
+import AdminSidebar from '../components/dashboard/admin/AdminSidebar';
+import AdminUsers from '../components/dashboard/admin/AdminUsers';
+import Reports from '../components/dashboard/admin/Reports';
+import VendorManagement from '../components/dashboard/admin/VendorManagement';
+import { getAuthItem, removeAuthItem } from '../utils/authStorage';
 import './AdminDashboard.css';
 
 const ORANGE = '#f26522';
 
-const getToken = () => localStorage.getItem('token');
+const getToken = () => getAuthItem('token');
 
 const apiFetch = (url, opts = {}) =>
   fetch(url, {
@@ -37,8 +38,8 @@ export default function AdminDashboard() {
 
   // Auth check
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const user  = localStorage.getItem('user');
+    const token = getAuthItem('token');
+    const user  = getAuthItem('user');
     if (!token || !user) { navigate('/login'); return; }
     try {
       const userData = JSON.parse(user);
@@ -71,8 +72,8 @@ export default function AdminDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    removeAuthItem('token');
+    removeAuthItem('user');
     navigate('/login');
   };
 

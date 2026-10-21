@@ -1,8 +1,22 @@
+import { clearAuthStorage, getAuthItem } from './authStorage';
+
 const API_BASE_URL = '/api';
 
+export const clearStoredSession = () => {
+  clearAuthStorage();
+};
+
+const getStoredUser = () => {
+  try {
+    return JSON.parse(getAuthItem('user') || 'null');
+  } catch {
+    return null;
+  }
+};
+
 export const apiCall = async (endpoint, options = {}) => {
-  const token = localStorage.getItem('token');
-  
+  const token = getAuthItem('token');
+
   const headers = {
     ...options.headers,
   };
@@ -24,6 +38,15 @@ export const apiCall = async (endpoint, options = {}) => {
     const data = await response.json();
 
     if (!response.ok) {
+      if (response.status === 401) {
+        const currentUser = getStoredUser();
+        if (currentUser && ((endpoint.startsWith('/vendor/') && currentUser.role !== 'vendor') ||
+            (endpoint.startsWith('/admin/') && currentUser.role !== 'admin') ||
+            (endpoint.startsWith('/users/') && currentUser.role !== 'user'))) {
+          clearStoredSession();
+        }
+      }
+
       const err = new Error(data.message || data.error || 'API request failed');
       err.code = data.code || null;
       err.data = data;
@@ -137,6 +160,28 @@ export const getMenus = (date = null, pincode = null) => {
 
 export const getUserOrders = () => {
   return apiCall('/users/orders', { method: 'GET' });
+};
+
+export const downloadUserOrderInvoice = async (orderId) => {
+  const token = getAuthItem('token');
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const response = await fetch(`${API_BASE_URL}/users/orders/${orderId}/invoice`, { headers });
+
+  if (!response.ok) {
+    const body = await response.text();
+    let message = body || 'Invoice download failed';
+    try {
+      const errorData = JSON.parse(body);
+      message = errorData.message || errorData.error || message;
+    } catch {
+      // Keep the server response text when it is not JSON.
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  if (!blob.size) throw new Error('The server returned an empty invoice.');
+  return blob;
 };
 
 export const placeOrder = (vendorId, items, amount, deliverySlot, mealPreference, options = {}) => {
@@ -763,7 +808,7 @@ export const getExpenseSummary = (month) =>
   apiCall(`/vendor/expenses/summary?month=${month}`, { method: 'GET' });
 
 export const downloadExpenseCSV = async (month, type) => {
-  const token = localStorage.getItem('token');
+  const token = getAuthItem('token');
   const res = await fetch(`/api/vendor/expenses/export?month=${month}&type=${type}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -818,7 +863,7 @@ export const getVendorPaymentHistory = (vendorId) =>
 // Downloads a CSV file from an admin export endpoint.
 // `endpoint` should start with /admin/export/... (no /api prefix).
 export const downloadCSV = async (endpoint, filename) => {
-  const token = localStorage.getItem('token');
+  const token = getAuthItem('token');
   const res = await fetch(`/api${endpoint}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

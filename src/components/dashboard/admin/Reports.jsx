@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { getAdminCommissionTiers, updateAdminCommissionTiers, getAdminCommissionVendors, seedDefaultTiers, getAdminMarkCommissionPaid, getVendorCommissionDetail, getAdminCommissionDisputes, resolveAdminCommissionDispute } from '../../../utils/api.js';
-import VendorCommissionDetail from './VendorCommissionDetail';
+import { useEffect, useState } from 'react';
+import { getAdminCommissionDisputes, getAdminCommissionTiers, getAdminCommissionVendors, getAdminMarkCommissionPaid, resolveAdminCommissionDispute, seedDefaultTiers, updateAdminCommissionTiers } from '../../../utils/api.js';
+import { getAuthItem } from '../../../utils/authStorage';
 import './Reports.css';
+import VendorCommissionDetail from './VendorCommissionDetail';
 
 const getTierName = (earning, tiers) => {
   const tier = tiers
@@ -63,7 +64,7 @@ const Reports = () => {
   const downloadCommissionCSV = async () => {
     try {
       const response = await fetch('/api/admin/commission/report/csv', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        headers: { Authorization: `Bearer ${getAuthItem('token')}` }
       });
       const blob = await response.blob();
       const url  = window.URL.createObjectURL(blob);

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import jsPDF from 'jspdf';
 
@@ -15,6 +15,7 @@ import OrderMeals from '../components/dashboard/user/OrderMeals';
 import Subscription from '../components/dashboard/user/Subscription';
 
 import History from '../components/dashboard/user/History';
+import { getAuthItem, removeAuthItem, setAuthItem } from '../utils/authStorage';
 
 import Offers from '../components/dashboard/user/Offers';
 
@@ -28,9 +29,9 @@ import AllReviewsModal from '../components/dashboard/user/AllReviewsModal';
 
 import PasswordModal from '../components/dashboard/user/PasswordModal';
 
-import { getCurrentUser, updateUserProfile, updateUserProfilePic, changePassword, getUserOrders, getMenus, placeOrder, addReview, applyLeave, getUserSubscription, getActiveSubscriptionStatus, extendSubscription, getVendorWeeklyPlan, checkReviewEligibility, getApprovedVendors, getActiveOffers, getMySubscription, getUpcomingOrders, extendSubscriptionOrder, getClaimedOffers } from '../utils/api';
-import { connectSocket, disconnectSocket, onEvent, offEvent } from '../utils/socket';
 import { OrderProvider } from '../context/OrderContext';
+import { addReview, applyLeave, checkReviewEligibility, extendSubscription, getActiveOffers, getActiveSubscriptionStatus, getApprovedVendors, getClaimedOffers, getCurrentUser, getMenus, getUserOrders, getUserSubscription, getVendorWeeklyPlan, placeOrder, updateUserProfile, updateUserProfilePic, downloadUserOrderInvoice } from '../utils/api';
+import { connectSocket, disconnectSocket, offEvent, onEvent } from '../utils/socket';
 
 import './UserDashbord.css';
 
@@ -157,8 +158,8 @@ const handleViewReviews = (vendor) => {
 
   // Load user data on mount
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
+    const token = getAuthItem('token');
+    const userData = getAuthItem('user');
 
     if (!token || !userData) {
       navigate('/login');
@@ -298,8 +299,13 @@ const handleViewReviews = (vendor) => {
   const handleRedeemOffer = async (offerId) => {
     setClaimedOfferIds(prev => prev.includes(offerId) ? prev : [...prev, offerId]);
     try {
-      const userOrders = await getUserOrders();
-      setOrders(userOrders || []);
+      try {
+        const userOrders = await getUserOrders();
+        setOrders(userOrders || []);
+      } catch (refreshError) {
+        console.error('Order succeeded, but order history refresh failed:', refreshError);
+        alert('Your order was placed successfully. Refresh the page to update your order history.');
+      }
       const userData = await getCurrentUser();
       setUser(prev => ({ ...prev, expiryDate: userData.expiryDate }));
     } catch (e) {
@@ -333,8 +339,8 @@ const handleViewReviews = (vendor) => {
      
 
       // Update localStorage with fresh user data from backend
-      const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-      localStorage.setItem('user', JSON.stringify({
+      const storedUser = JSON.parse(getAuthItem('user') || '{}');
+      setAuthItem('user', JSON.stringify({
         ...storedUser,
         ...userData,
         profilePic: userData.profilePic || storedUser.profilePic
@@ -542,7 +548,7 @@ const handleViewReviews = (vendor) => {
 
     try {
 
-      const userData = JSON.parse(localStorage.getItem('user'));
+      const userData = JSON.parse(getAuthItem('user'));
 
       let newProfilePic = null;
      
@@ -579,9 +585,9 @@ const handleViewReviews = (vendor) => {
 
         // Update localStorage with both profile data and new picture URL
 
-        const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+        const storedUser = JSON.parse(getAuthItem('user') || '{}');
 
-        localStorage.setItem('user', JSON.stringify({
+        setAuthItem('user', JSON.stringify({
 
           ...storedUser,
 
@@ -617,8 +623,8 @@ const handleViewReviews = (vendor) => {
 
       
       // Update localStorage with final merged data
-      const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-      localStorage.setItem('user', JSON.stringify({
+      const storedUser = JSON.parse(getAuthItem('user') || '{}');
+      setAuthItem('user', JSON.stringify({
         ...storedUser,
         ...profileData,
         ...(newProfilePic && { profilePic: newProfilePic })
@@ -652,7 +658,7 @@ const handleViewReviews = (vendor) => {
 
 
 
-const handleDownloadInvoice = async (historyItem) => {
+const handleDownloadInvoiceLegacy = async (historyItem) => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = 210;
   const margin = 20;
@@ -968,6 +974,23 @@ const handleDownloadInvoice = async (historyItem) => {
   doc.save(`MealSetu_Invoice_${historyItem.id}_${fileStatus}.pdf`);
 };
 
+const handleDownloadInvoice = async (historyItem) => {
+  if (!historyItem.orderId) return handleDownloadInvoiceLegacy(historyItem);
+
+  try {
+    const blob = await downloadUserOrderInvoice(historyItem.orderId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `invoice-${historyItem.orderId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    alert('Invoice download failed: ' + (error.message || 'Please try again.'));
+  }
+};
 
 
 
@@ -1082,9 +1105,9 @@ const handleDownloadInvoice = async (historyItem) => {
 
   const handleLogout = () => {
 
-    localStorage.removeItem('token');
+  removeAuthItem('token');
 
-    localStorage.removeItem('user');
+  removeAuthItem('user');
 
     navigate('/login');
 
@@ -1121,34 +1144,29 @@ const handleDownloadInvoice = async (historyItem) => {
 
 
   const handleOrder = async (vendor, orderData = {}) => {
+    const vendorId = vendor.vendorId || vendor._id || vendor.id;
+    if (!vendorId) throw new Error('Unable to place order: missing vendor id');
+
+    const planTypeMap = { 'ONEDAY': 'daily', 'WEEKLY': 'weekly', 'MONTHLY': 'monthly' };
+    const selectedPlanKey = orderData?.plan || 'ONEDAY';
+    const selectedPlanType = planTypeMap[selectedPlanKey] || 'daily';
+    const activePricing = (vendor.pricing || []).filter(p => (p.active || p.is_active) && p.price > 0);
+    const matchedPlan = activePricing.find(p => p.type === selectedPlanType);
+    const amount = matchedPlan ? matchedPlan.price : (orderData?.totalAmount || orderData?.price || parseInt(vendor.price || 80, 10));
+
+    if (!amount || amount <= 0) throw new Error('Unable to place order: invalid amount');
+
+    const mealPrefRaw = (vendor.type || '').toString();
+    const mealPreference = /jain/i.test(mealPrefRaw) ? 'Jain' : 'Regular';
+
+    await placeOrder(vendorId, [], amount, 'Lunch', mealPreference, orderData);
+
     try {
-      const vendorId = vendor.vendorId || vendor._id || vendor.id;
-      if (!vendorId) return alert('Unable to place order: missing vendor id');
-
-      // ✅ FIXED: Dynamic pricing from vendor.pricing using orderData.plan
-      const planTypeMap = { 'ONEDAY': 'daily', 'WEEKLY': 'weekly', 'MONTHLY': 'monthly' };
-      const selectedPlanKey = orderData?.plan || 'ONEDAY';
-      const selectedPlanType = planTypeMap[selectedPlanKey] || 'daily';
-      const activePricing = (vendor.pricing || []).filter(p => (p.active || p.is_active) && p.price > 0);
-      const matchedPlan = activePricing.find(p => p.type === selectedPlanType);
-      const amount = matchedPlan ? matchedPlan.price : (orderData?.totalAmount || orderData?.price || parseInt(vendor.price || 80, 10));
-
-      if (!amount || amount <= 0) return alert('Unable to place order: invalid amount');
-
-      // Ensure mealPreference matches backend enum: 'Regular' or 'Jain'
-      const mealPrefRaw = (vendor.type || '').toString();
-      const mealPreference = /jain/i.test(mealPrefRaw) ? 'Jain' : 'Regular';
-
-      // Call API with optional order data (plan, startDate, etc.)
-      await placeOrder(vendorId, [], amount, 'Lunch', mealPreference, orderData);
-
-      alert('Order placed successfully');
-
       const userOrders = await getUserOrders();
       setOrders(userOrders || []);
-    } catch (e) {
-      // If backend returned structured error, show it
-      alert('Failed to place order: ' + (e.message || JSON.stringify(e)));
+    } catch (refreshError) {
+      console.error('Order succeeded, but order history refresh failed:', refreshError);
+      alert('Your order was placed successfully. Refresh the page to update your order history.');
     }
   };
 

@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable';
 const AddManualCustomer = ({ vendorProfile }) => {
   const { addToast } = useToast();
   const [manualCustomers, setManualCustomers] = useState([]);
-const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState({
     name: '',
     phone: '',
     planType: 'weekly',
@@ -15,7 +15,6 @@ const [formData, setFormData] = useState({
     paymentMethod: 'Cash',
     amount: 0,
     mealPreference: 'Regular',
-    orderType: 'delivery',  // NEW
     address: {
       flatHouseNo: '',
       street: '',
@@ -113,7 +112,7 @@ const [formData, setFormData] = useState({
       setLoading(true);
       const res = await addManualCustomer(formData);
       const savedName = formData.name;
-    setFormData({
+      setFormData({
         name: '',
         phone: '',
         planType: 'weekly',
@@ -121,7 +120,6 @@ const [formData, setFormData] = useState({
         paymentMethod: 'Cash',
         amount: 0,
         mealPreference: 'Regular',
-        orderType: 'delivery',  // NEW
         address: { flatHouseNo: '', street: '', area: '', landmark: '', city: '', pincode: '' }
       });
       fetchManualCustomers();
@@ -400,69 +398,6 @@ const [formData, setFormData] = useState({
             </div>
             <div>
               <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Meal Preference</label>
-              {/* ── Order Type selector ── */}
-<div style={{ gridColumn: '1 / -1' }}>
-  <label style={{ display: 'block', fontWeight: '700', marginBottom: '10px', color: '#374151', fontSize: '14px' }}>
-    🚚 Order Type *
-  </label>
-  <div style={{ display: 'flex', gap: '12px' }}>
-    <label style={{
-      flex: 1,
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      padding: '14px 16px',
-      border: `2px solid ${formData.orderType === 'delivery' ? '#f26522' : '#e2e8f0'}`,
-      borderRadius: '10px',
-      background: formData.orderType === 'delivery' ? '#fff7ed' : '#fff',
-      cursor: 'pointer',
-      transition: 'all 0.15s'
-    }}>
-      <input
-        type="radio"
-        name="orderType"
-        value="delivery"
-        checked={formData.orderType === 'delivery'}
-        onChange={(e) => setFormData({ ...formData, orderType: e.target.value })}
-        style={{ accentColor: '#f26522', width: '18px', height: '18px' }}
-      />
-      <div>
-        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '14px' }}>🛵 Delivery</div>
-        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-          Rider delivers to customer address
-        </div>
-      </div>
-    </label>
-
-    <label style={{
-      flex: 1,
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      padding: '14px 16px',
-      border: `2px solid ${formData.orderType === 'takeaway' ? '#f26522' : '#e2e8f0'}`,
-      borderRadius: '10px',
-      background: formData.orderType === 'takeaway' ? '#fff7ed' : '#fff',
-      cursor: 'pointer',
-      transition: 'all 0.15s'
-    }}>
-      <input
-        type="radio"
-        name="orderType"
-        value="takeaway"
-        checked={formData.orderType === 'takeaway'}
-        onChange={(e) => setFormData({ ...formData, orderType: e.target.value })}
-        style={{ accentColor: '#f26522', width: '18px', height: '18px' }}
-      />
-      <div>
-        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '14px' }}>🏠 Take Away</div>
-        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-          Customer picks up from kitchen
-        </div>
-      </div>
-    </label>
-  </div>
-</div>
               <select
                 className="v-input"
                 value={formData.mealPreference}
